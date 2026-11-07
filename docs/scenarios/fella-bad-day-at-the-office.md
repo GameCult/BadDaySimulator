@@ -13,6 +13,49 @@ Those links resolve on the PR branch until #1 merges. Layer and invariant names 
 `reflex-gain-from-drive`, `body-one-interface`, `content-is-cultcache`) are Lodur's
 ([`docs/lodur-target.md`](https://eureka.gamecult.org/forge/GameCult/Lodur/src/branch/main/docs/lodur-target.md)).
 
+## The ladder
+
+Meta's build order (2026-11-06): one system at a time, then connect, then full fat. Fella's whole bad day is the
+top rung, not the first thing built. Each rung is demonstrable alone and measured before the next starts.
+
+| Rung | What runs | Status |
+|---|---|---|
+| 1 | A Ymir body stands, falls and rests deterministically, read through the SoA view | built, draft PRs: Ymir `nibu/soa-joints` (stacked on Ymir#1), Lodur `nibu/first-slice` |
+| 2 | One withdrawal reflex; time-to-break may be the main metric | built as the pain box (BDS PR #1, unmerged) |
+| 3 | Sensory load drives the stress bar | not built |
+| 4 | The goal flip, alone | not built |
+| 5 | Fatigue and limb failure (jelly), alone | not built |
+| 6 | One coworker, one personality axis | not built |
+| 7 | Fella's whole bad day (this document) | design only |
+
+A rung may use only what lower rungs built. Black Knight is an idea after rung 5, not a rung.
+
+## Setting and cause
+
+BDS is the whole space of bad days, not the office (Meta, 2026-11-06): the park, a factory, driving, resting at
+home with a medical condition, and more. So a scenario is three things that vary independently, and neither the
+engine nor the scenario schema may hard-code any of them:
+
+- **Setting**: where and with what. Place and geometry, objects and fixtures, ambient conditions, who else is
+  present, and the *emitters* in that place (a printer, a ceiling light, a phone) by stable id. A setting knows
+  nothing about why the day is bad.
+- **Cause**: why it is a bad day. The time-varying drivers that act on the actor (stressors, injuries, threats,
+  symptoms, deadlines), the break condition, and the goal flip it triggers. A cause refers to the setting's
+  emitters by id and to the actor's drive by name; it knows nothing about the room.
+- **Fella** is a role filled by an actor document (traits, drive parameters, rig), not a hard-coded character:
+  any actor can be Fella, and the engine never tests for the name.
+
+| Setting | Cause | Reads as |
+|---|---|---|
+| office | accumulating sensory load | this document |
+| factory floor | a machine fault and an injury | pain and impairment drive, no stress bar |
+| car | a deadline and traffic | threat and time pressure |
+| home, resting | a medical condition flaring | symptoms, fatigue; no coworkers needed |
+
+The rest of this document is one pairing: the office setting with the sensory-load cause. Where a later section
+says "stressor", "stress bar" or "Smash", that is this cause's content, authored as data in the cause document,
+not engine behaviour.
+
 ## The story in two phases
 
 1. **Composure.** Fella is at work, holding it together while the office keeps adding sensory load: noise,
@@ -31,12 +74,19 @@ sensitisation (a loaded Fella notices more, which is what "overload" means mecha
 ## 1. The scenario as authored data
 
 Scenario content is CultCache documents (`content-is-cultcache`). The tables below name the fields; they are
-the shape of the documents, not a JSON format. A scenario document references actor, stressor and coworker
+the shape of the documents, not a JSON format. A scenario document references setting, cause and actor
 documents by stable id; it contains no behaviour.
 
-**Scenario** (one document): `id`, `seed` (the only randomness, SplitMix64 as in the pain box), `actor` (Fella),
-`coworkers` (list), `stressors` (the schedule), `breakCondition`, `flip` (the actor state change),
-`endConditions`, `testHooks`.
+**Scenario** (one document): `id`, `seed` (the only randomness, SplitMix64 as in the pain box), `setting`
+(reference), `cause` (reference), `actor` (reference; the Fella role), `endConditions`, `testHooks`.
+
+**Setting** (one document): `id`, `place` (geometry and fixtures), `emitters` (id, kind, position: the printer,
+the ceiling light, the phone), `ambient`, `present` (coworker references). No schedule, no thresholds.
+
+**Cause** (one document): `id`, `drivers` (here the stressor schedule below, each referring to a setting emitter
+or a coworker by id), `breakCondition`, `flip` (the actor state change), `driveMapping` (which actor drive state
+each driver feeds: for sensory load, `resolve`). Swap the cause and the same setting gives a different day; swap
+the setting and the same cause plays somewhere else.
 
 **Phases** are derived from actor state, not from a clock: phase 1 is "goal is KeepComposure", phase 2 is "goal
 is Smash". There is no phase variable to desync.
@@ -50,6 +100,8 @@ is Smash". There is no phase variable to desync.
 | Ends when | break, or end of schedule (outcome `Endured`) | nothing smashable in reach, or strength below the effective floor |
 
 ### Stressor schedule
+
+These rows are the cause document's `drivers`; the sources named are the setting's emitters.
 
 A stressor is a document: `id`, `channel` (`audio`, `visual`, `interrupt`, `proximity`), `source` (an object or a
 coworker id), `region` (ears, eyes, torso), `onsetSeconds`, `rampSeconds`, `intensity` (0..1), `durationSeconds`,
