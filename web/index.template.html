@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bad Day Simulator: the pain box</title>
+<meta name="description" content="Open the pain box and watch a virtual human's pain, drive and will until the will breaks or you switch the box off.">
+<link rel="stylesheet" href="%BASE%style.css">
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">Bad Day Simulator / first slice</p>
+    <h1>The pain box</h1>
+    <p class="lede">A virtual human puts a hand in the box and tries to keep it there. Nerves carry the signal, pain builds, the will pays for holding it down. Open the box, watch the readout, and decide whether to switch it off before the will breaks.</p>
+  </header>
+
+  <section class="stage" aria-label="Scene">
+    <svg id="scene" viewBox="0 0 640 360" role="img" aria-labelledby="scene-title">
+      <title id="scene-title">A person with an arm in a box; a nerve runs from the hand to the brain.</title>
+      <defs>
+        <radialGradient id="glow"><stop offset="0" stop-color="#ff8a2a" stop-opacity=".9"/><stop offset="1" stop-color="#ff8a2a" stop-opacity="0"/></radialGradient>
+      </defs>
+      <rect x="0" y="318" width="640" height="42" fill="#0c1823"/>
+      <!-- the box -->
+      <g id="box">
+        <circle id="box-glow" cx="520" cy="262" r="90" fill="url(#glow)" opacity="0"/>
+        <rect x="460" y="232" width="110" height="86" rx="4" fill="#16212c" stroke="#63758a"/>
+        <g id="lid"><rect x="456" y="222" width="118" height="12" rx="3" fill="#1d2d3c" stroke="#63758a"/></g>
+        <text x="515" y="282" text-anchor="middle" class="svg-label">PAIN BOX</text>
+      </g>
+      <!-- the person -->
+      <g id="person">
+        <line x1="190" y1="170" x2="190" y2="290" class="limb"/>
+        <line x1="190" y1="290" x2="165" y2="318" class="limb"/>
+        <line x1="190" y1="290" x2="215" y2="318" class="limb"/>
+        <line x1="190" y1="190" x2="150" y2="238" class="limb"/>
+        <g id="arm"><polyline id="arm-line" points="190,190 330,205 505,262" class="limb" fill="none"/><circle id="hand" cx="505" cy="262" r="9" fill="#eef5ff"/></g>
+        <circle id="head" cx="190" cy="130" r="38" fill="#16212c" stroke="#b7c7d9" stroke-width="3"/>
+        <circle cx="176" cy="124" r="4" id="eye-l" fill="#eef5ff"/>
+        <circle cx="204" cy="124" r="4" id="eye-r" fill="#eef5ff"/>
+        <path id="brow-l" d="M166 114 L186 114" class="brow"/>
+        <path id="brow-r" d="M194 114 L214 114" class="brow"/>
+        <path id="mouth" d="M176 148 Q190 148 204 148" class="brow" fill="none"/>
+      </g>
+      <!-- the nerve -->
+      <polyline id="nerve" points="505,262 400,236 300,216 215,195 190,170 190,150" fill="none" stroke="#6d60ff" stroke-width="2" stroke-dasharray="3 5" opacity=".7"/>
+      <g id="pulses"></g>
+      <text x="505" y="338" text-anchor="middle" class="svg-label">hand: nociceptor</text>
+      <text x="190" y="52" text-anchor="middle" class="svg-label">centre: reflex, drive, will</text>
+    </svg>
+    <p id="senses" class="senses" aria-live="off"></p>
+  </section>
+
+  <section class="panel" aria-label="Nervous-system readout">
+    <h2>Nervous system</h2>
+    <div class="meters" id="meters"></div>
+    <div class="counter" id="counter-block">
+      <span class="label">Time until</span>
+      <output id="counter" aria-live="off">--</output>
+      <span id="counter-note" class="note"></span>
+    </div>
+    <div class="actions">
+      <button id="toggle" type="button">Open the pain box</button>
+      <button id="reset" type="button" class="quiet">Reset</button>
+    </div>
+    <p id="status" class="sr-only" role="status"></p>
+  </section>
+
+  <section class="panel history" aria-label="History">
+    <h2>History</h2>
+    <canvas id="chart" width="800" height="200"></canvas>
+    <p class="legend"><span class="sw pain"></span>pain <span class="sw drive"></span>drive <span class="sw will"></span>will <span class="sw flinch"></span>flinch</p>
+  </section>
+
+  <section class="panel settings" aria-label="Settings">
+    <h2>Settings</h2>
+    <label>Seed <input id="seed" type="number" min="0" step="1" value="1"></label>
+    <label>Box intensity <input id="intensity" type="range" min="0.1" max="1" step="0.05" value="0.8"><output id="intensity-v"></output></label>
+    <label>Objective pull <input id="pull" type="range" min="0" max="0.95" step="0.05" value="0.5"><output id="pull-v"></output></label>
+    <label>Box switches off at (s, 0 = never) <input id="autooff" type="number" min="0" step="1" value="0"></label>
+    <label>Speed
+      <select id="speed"><option value="1">1x</option><option value="4" selected>4x</option><option value="16">16x</option></select>
+    </label>
+    <p class="note">Changing a setting restarts the run. The same seed and settings always play out identically.</p>
+  </section>
+
+  <footer>
+    <p><strong>What this is.</strong> A deterministic toy model: one person, one hand, one stimulus. Every number is a placeholder, not physiology, and break times are properties of the model, not predictions about people. There is no body, physics, shock or impairment yet. The model is a TypeScript port of the C# reference in <code>src/BadDay.Core</code>, held to its output by parity tests.</p>
+    <p>Part of <a href="https://eureka.gamecult.org/forge/GameCult/BadDaySimulator">Bad Day Simulator</a>, driven in the long run by <a href="https://eureka.gamecult.org/forge/GameCult/Lodur">Lodur</a>.</p>
+  </footer>
+</main>
+<script type="module" src="%BASE%app.js"></script>
+</body>
+</html>

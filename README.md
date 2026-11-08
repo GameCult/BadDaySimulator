@@ -20,6 +20,27 @@ impairment) in one place where a player can poke at all of it.
 Canonical: `https://eureka.gamecult.org/forge/GameCult/BadDaySimulator`.
 GitHub `GameCult/BadDaySimulator` is a push mirror.
 
+## Try it in a browser: the pain box page
+
+`web/` is a static page (no server, no textures): a virtual human with senses, nerves and a goal, a live
+readout of **pain**, **drive** and **will**, a counter of how long until the will breaks (or a scheduled
+switch-off), and a button to open the box and switch it off. The sim is a TypeScript port of the C# core below,
+stepped one 10 ms tick at a time, held to the C# output by parity tests. Entry points:
+`web/src/painbox.ts` (the stepper), `web/src/view.ts` (counter and readout text), `web/src/main.ts` (page),
+`web/test/` (parity fixtures are C# output; `e2e.mjs` drives built output in headless Chrome under its base path).
+
+```
+cd web && npm i
+npm run typecheck && npm test
+BASE=/void/baddaysim-pain-box/ npm run build      # BASE is the URL prefix it will be served under; BASE=./ is relocatable
+PW_DIR=<dir with node_modules/playwright> node test/e2e.mjs
+```
+
+Live: pain box, nerve, reflex, drive, will, goal flip, the visitor's switch, forecast counter. Designed only:
+everything in `docs/scenarios/` (the office, sensory load, coworkers), body and physics, impairment. The C# core
+stays the reference; the port exists because a browser cannot run it without Blazor and a restore the build host
+cannot do.
+
 ## What runs today: the pain box
 
 A headless, deterministic simulation of one virtual human with a hand in a
