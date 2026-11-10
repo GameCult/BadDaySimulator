@@ -5,11 +5,10 @@ readable; none is measured physiology or tuned play. Nothing here is canon until
 
 Concept: Meta, 2026-11-06. The protagonist's name, **Fella**, is by **Deru**.
 
-Built on the first slice: the pain box (`PainBoxSimulation`, PR
-[GameCult/BadDaySimulator#1](https://eureka.gamecult.org/forge/GameCult/BadDaySimulator/pulls/1), branch
-`nibu/pain-box-first-slice`, not yet on `main`) and its sweep,
-[`docs/pain-sweep.md`](https://eureka.gamecult.org/forge/GameCult/BadDaySimulator/src/branch/nibu/pain-box-first-slice/docs/pain-sweep.md).
-Those links resolve on the PR branch until #1 merges. Layer and invariant names (`drive-is-state`,
+Built on the first slice: the pain box (`PainBoxSimulation`, merged in
+[GameCult/BadDaySimulator#1](https://eureka.gamecult.org/forge/GameCult/BadDaySimulator/pulls/1)) and its sweep,
+[`docs/pain-sweep.md`](https://eureka.gamecult.org/forge/GameCult/BadDaySimulator/src/branch/main/docs/pain-sweep.md).
+Layer and invariant names (`drive-is-state`,
 `reflex-gain-from-drive`, `body-one-interface`, `content-is-cultcache`) are Lodur's
 ([`docs/lodur-target.md`](https://eureka.gamecult.org/forge/GameCult/Lodur/src/branch/main/docs/lodur-target.md)).
 
