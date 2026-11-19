@@ -62,6 +62,12 @@ public sealed class PainBoxSession
     /// <summary>True from the tick the deliberate withdrawal begins.</summary>
     public bool Withdrew { get; private set; }
 
+    /// <summary>Sets the box intensity the ramp scales; it takes effect on the next <see cref="Tick"/>.</summary>
+    public void SetIntensity(double level) => _box.Level = level;
+
+    /// <summary>Switches the box off from the next tick; the <see cref="Disabled"/> check then ends the run if the will still holds.</summary>
+    public void SwitchOff() => _box.SwitchOff(TickIndex);
+
     /// <summary>
     /// The disable check, before ticking: if the box switches off now while the will still holds, the run ends
     /// with the will intact and this returns true. A will already broken is not given back by the box going off.
