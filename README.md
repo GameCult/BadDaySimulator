@@ -52,7 +52,10 @@ dotnet run --project tests/BadDay.Tests          # exits non-zero on failure
 withdrawal events) and a one-line summary. Options: `--intensity`, `--pull`,
 `--disable-at`, `--max`, `--every`. `--body` runs it on the ragdoll (1/120 s
 steps; the native Ymir library builds with cmake and a C compiler on first
-build) and adds a line with the time the hand left the box. Nothing renders the puppet yet.
+build) and adds a line with the time the hand left the box. The body run is also a stepping
+session, `BodyPainBoxSession` (create, `Step`, read `Hand` and the world's lanes, `SetIntensity`,
+`SwitchOff`, dispose), that the Godot client drives and `run --body` steps to the end; `BadDay.Core` and
+`BadDay.Ymir` target net8.0 for Godot, the executables and tests net10.0. Nothing renders the puppet yet.
 
 ### Modeled
 
