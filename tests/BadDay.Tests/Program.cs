@@ -260,6 +260,27 @@ public static class Program
             try { Run("run"); } catch (ArgumentException) { threw = true; }
             Check(threw, "missing --seed should be rejected");
         }),
+
+        ("office: a stressor is silent before its onset, on for its duration, and back every period", () =>
+        {
+            var printer = Cause.Office.Stressors.Single(s => s.Id == "printer"); // 5 s on, 8 s period, 1 s long, 0.25
+            double V(double seconds) => printer.Value((long)Math.Round(seconds * 100), 0.01, 0.0);
+            Check(V(4.99) == 0.0 && V(5.0) == 0.25 && V(5.99) == 0.25 && V(6.0) == 0.0, "first burst is not [5 s, 6 s)");
+            Check(V(12.99) == 0.0 && V(13.0) == 0.25 && V(13.99) == 0.25 && V(14.0) == 0.0, "second burst is not [13 s, 14 s)");
+            var once = printer with { PeriodSeconds = null };
+            Check(once.Value(1300, 0.01, 0.0) == 0.0 && once.Value(500, 0.01, 0.0) == 0.25, "a stressor with no period repeated");
+            var ramped = printer with { RampSeconds = 0.5 };
+            Check(ramped.Value(525, 0.01, 0.0) == 0.125 && ramped.Value(560, 0.01, 0.0) == 0.25, "the ramp does not rise over its seconds");
+        }),
+
+        ("office: the setting holds the emitters and no schedule, the cause refers to them by id", () =>
+        {
+            var ids = Setting.Office.Emitters.Select(e => e.Id).ToHashSet();
+            Check(Cause.Office.Stressors.All(s => ids.Contains(s.EmitterId)), "a stressor names an emitter the setting lacks");
+            Check(Setting.Office.Emitters.All(e => e.Emitter.Intensity == 0.0), "the setting carries an intensity");
+            Check(Cause.Office.Senses.Threshold == 0.05 && Cause.Office.Senses.SensitisationGrowth == 0.0 && Cause.Office.Senses.ConductionDelaySeconds == 0.0,
+                "the office does not pass its own sense parameters");
+        }),
     };
 
     private static int Tick(long ms) => (int)Math.Round(ms * Hz / 1000.0);
@@ -281,15 +302,17 @@ public static class Program
         return Math.Sqrt(sum / (to - from - 1));
     }
 
-    public static int Main()
+    /// <summary>Runs every test; with an argument, only the tests whose name contains it (the body tests take minutes).</summary>
+    public static int Main(string[] args)
     {
         int failed = 0;
-        foreach (var (name, body) in Tests)
+        var tests = args.Length > 0 ? Tests.Where(t => t.Name.Contains(args[0])).ToArray() : Tests;
+        foreach (var (name, body) in tests)
         {
             try { body(); Console.WriteLine($"PASS {name}"); }
             catch (Exception e) { failed++; Console.WriteLine($"FAIL {name}: {e.Message}"); }
         }
-        Console.WriteLine($"{Tests.Length - failed}/{Tests.Length} passed");
+        Console.WriteLine($"{tests.Length - failed}/{tests.Length} passed");
         return failed == 0 ? 0 : 1;
     }
 
