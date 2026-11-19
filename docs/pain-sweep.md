@@ -39,7 +39,7 @@ Is time-to-break the right measure? It collapses a whole run to one number and
 treats "never" as an outcome of equal weight to "late". Candidates: time to
 first flinch, flinch count, area under the pain curve before the hand leaves,
 peak strain, or the fraction of seeds that break by a deadline. Which one says
-what a player should feel?
+what a player should feel? The open question is `lodur:question:pain-sweep-measure`.
 
 ## Build and run
 

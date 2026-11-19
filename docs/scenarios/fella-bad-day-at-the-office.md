@@ -19,8 +19,8 @@ top rung, not the first thing built. Each rung is demonstrable alone and measure
 
 | Rung | What runs | Status |
 |---|---|---|
-| 1 | A Ymir body stands, falls and rests deterministically, read through the SoA view | built, draft PRs: Ymir `nibu/soa-joints` (stacked on Ymir#1), Lodur `nibu/first-slice` |
-| 2 | One withdrawal reflex; time-to-break may be the main metric | built as the pain box (BDS PR #1, unmerged) |
+| 1 | A Ymir body stands, falls and rests deterministically, read through the SoA view | merged (Ymir #2, Lodur #2) |
+| 2 | One withdrawal reflex; time-to-break may be the main metric | built as the pain box, on Lodur's Actor; connected to rung 1: the pain box runs on the Ymir ragdoll (`baddaysim run --body`) |
 | 3 | Sensory load drives the stress bar | not built |
 | 4 | The goal flip, alone | not built |
 | 5 | Fatigue and limb failure (jelly), alone | not built |
@@ -237,16 +237,15 @@ Lodur (all under Lodur's layer rules; none of it is built):
 - Coworker perception of another actor's visible state (strain, flinch, goal) and the shared behaviour
   selection weighted by axes.
 
-Ymir (the pinned-Box3D boundary, `GameCult/Ymir`; the SoA world is PR
-[GameCult/Ymir#1](https://eureka.gamecult.org/forge/GameCult/Ymir/pulls/1)):
+Ymir (the pinned-Box3D boundary, `GameCult/Ymir`). The SoA world is merged (Ymir #2) with capsule and box
+bodies, spheres, joints with state lanes (angle, speed, rotation), per-body force and torque write lanes, an
+in-place state view and same-input same-bits stepping; Lodur's ragdoll and the pain box on it run on that.
+Still missing:
 - Contact facts per body pair with relative speed (the planar session has Begin/Hit/End; the 3D SoA world has
-  none yet) to compute impact impulse for `impulseDelivered` and breaking.
-- Breakable objects: a break threshold on a joint or weld, or removal of a body on a destroy call. Today the SoA
+  none) to compute impact impulse for `impulseDelivered` and breaking.
+- Breakable objects: a break threshold on a joint or weld, or removal of a body on a destroy call. The SoA
   world has a fixed capacity and no removal.
-- Body layout beyond spheres: capsule limbs, boxes, joints with state lanes (angle, speed, motor target), and
-  per-body force and torque write lanes. Follow-up `nibu-body:follow_up:ymir-soa-lodur-needs` lists these.
-- Same-input same-bits stepping and an in-place state view, so metrics read lanes without copying and a seed
-  reproduces a run.
+- Joint springs, for stiff limbs without explicit PD torques.
 - Stable ids for actors and objects so scenario documents refer to them.
 
 ## 5. Three tuning checks

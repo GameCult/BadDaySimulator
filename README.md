@@ -22,32 +22,44 @@ GitHub `GameCult/BadDaySimulator` is a push mirror.
 
 ## What runs today: the pain box
 
-A headless, deterministic simulation of one virtual human with a hand in a
-pain box. Question it answers: **how long until the will breaks, or the box is
-disabled first?** Entry points:
+A deterministic simulation of one virtual human with a hand in a pain box,
+run headless or on a Ymir ragdoll. Question it answers: **how long until the
+will breaks, or the box is disabled first?** The nervous model is Lodur's
+(`Lodur.Actor`); this game holds the box, the seed, the restraint and the
+recorder. It needs sibling checkouts of Lodur and Ymir (`LODUR_ROOT`, else
+`..\Lodur`; Lodur finds `..\Ymir`, or `YMIR_ROOT`). Entry points:
 
-- `src/BadDay.Core/PainBoxSimulation.cs`: the model and the tick loop.
-- `src/BadDay.Core/PainBoxParameters.cs`: every tunable, with defaults.
+- `src/BadDay.Core/PainBoxSimulation.cs`: the headless run over Lodur's Actor.
+- `src/BadDay.Core/PainBoxSession.cs`: the run's seed, traits, box and recorder; both runs drive it.
+- `src/BadDay.Core/PainBox.cs`: the box schedule (ramp, jitter, disable time).
+- `src/BadDay.Core/PainBoxParameters.cs`: the box and clock tunables, plus Lodur's parameter records as members.
 - `src/BadDay.Core/Sweep.cs`: consecutive seeds, break-time min/median/max.
+- `src/BadDay.Ymir/BodyPainBox.cs`: the same run on the Ymir ragdoll, with the hand-out time.
 - `src/BadDay.Cli`: `baddaysim`.
-- `tests/BadDay.Tests`: determinism, break-time and monotonicity tests.
+- `tests/BadDay.Tests`: determinism, break-time, monotonicity and body tests.
+- `tools/PainSweep`: the intensity x suppression table.
 
 ```
 dotnet run --project src/BadDay.Cli -- run   --seed 1
 dotnet run --project src/BadDay.Cli -- sweep --seed 1 --count 50 --pull 0.3
 dotnet run --project src/BadDay.Cli -- run   --seed 1 --disable-at 5
+dotnet run --project src/BadDay.Cli -- run   --seed 1 --body
+dotnet run --project tools/PainSweep
 dotnet run --project tests/BadDay.Tests          # exits non-zero on failure
 ```
 
 `run` prints a timeline (samples every second, plus flinch, break and
 withdrawal events) and a one-line summary. Options: `--intensity`, `--pull`,
-`--disable-at`, `--max`, `--every`.
+`--disable-at`, `--max`, `--every`. `--body` runs it on the ragdoll (1/120 s
+steps; the native Ymir library builds with cmake and a C compiler on first
+build) and adds a line with the time the hand left the box. Nothing renders the puppet yet.
 
 ### Modeled
 
-Fixed 10 ms tick, seeded SplitMix64 (the only randomness; integer arithmetic,
-so a seed means the same stream anywhere). Following the layers in Lodur's
-target, flattened to one loop:
+Fixed 10 ms tick headless (1/120 s on the body), seeded SplitMix64 (the only
+randomness; integer arithmetic, so a seed means the same stream anywhere). The
+layers are Lodur's, run by its Actor (see Lodur's target); each timeline row is the
+Actor's state at the end of its tick:
 
 - **Perception / nerve:** the box emits an intensity (ramped in, with seeded
   jitter). A nociceptor applies a threshold and sensitises under sustained
@@ -67,7 +79,8 @@ target, flattened to one loop:
 
 ### Not modeled
 
-No body, physics, balance, joints or ragdoll; no shock, adrenaline or blood
+The headless run has no body, physics or balance (the body run has a ragdoll
+held on a stool: it cannot balance); no shock, adrenaline or blood
 loss; no impairment or crawling; no Unity binding; no puppets or objects other
 than the box; no learning. The reflex never removes the hand by itself: only a
 broken will does. All parameter values are **placeholders**, not physiology;
