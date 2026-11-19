@@ -242,6 +242,59 @@ public static class Program
             Check(r.Run.Outcome == Outcome.BoxDisabled && r.Hand.Count == 1 && !r.Hand[0].InBox, $"{r.Run.Outcome}, {r.Hand.Count} samples");
         }),
 
+        ("body: a live SwitchOff at tick T equals BoxDisableAtSeconds = T/120: before the break the will holds, after it the box goes to 0 and the run still ends WillBroke", () =>
+        {
+            var full = BodyPainBox.Run(OnBody, 1);
+            int breakTick = Tick(full.Run.TimeToBreakMs!.Value);
+            foreach (int t in new[] { 5 * Hz, breakTick + 2 })
+            {
+                var scripted = BodyPainBox.Run(OnBody with { BoxDisableAtSeconds = t / (double)Hz }, 1);
+                var live = RunLive(OnBody, 1, s => { if (s.Session.TickIndex == t) s.SwitchOff(); });
+                SameRun(scripted, live, $"switch-off at tick {t}");
+            }
+            Check(BodyPainBox.Run(OnBody with { BoxDisableAtSeconds = 5.0 }, 1).Run.Outcome == Outcome.BoxDisabled, "a switch-off with the will holding should end BoxDisabled");
+            Check(BodyPainBox.Run(OnBody with { BoxDisableAtSeconds = (breakTick + 2) / (double)Hz }, 1).Run.Outcome == Outcome.WillBroke, "a switch-off after the break should leave the run to end WillBroke");
+        }),
+
+        ("body: SetIntensity(x) before the first Step equals BoxIntensity = x", () =>
+        {
+            var set = RunLive(OnBody, 1, s => { if (s.Session.TickIndex == 0) s.SetIntensity(0.5); });
+            SameRun(BodyPainBox.Run(OnBody with { BoxIntensity = 0.5 }, 1), set, "intensity 0.5");
+        }),
+
+        ("body: SetIntensity mid-run takes effect on the next tick only", () =>
+        {
+            const int at = 4 * Hz; // well after the 2 s ramp
+            using var control = new BodyPainBoxSession(OnBody, 1);
+            using var live = new BodyPainBoxSession(OnBody, 1);
+            for (int i = 0; i < at; i++) { control.Step(); live.Step(); }
+            double scheduled = control.Session.Box.Intensity;
+            Check(scheduled > 0.3 && live.Session.Box.Intensity == scheduled, $"before the command the tick's intensity is the schedule's: {live.Session.Box.Intensity} against {scheduled}");
+            live.SetIntensity(0.0);
+            Check(live.Session.Box.Intensity == scheduled, "the command rewrote a tick that had already run");
+            control.Step(); live.Step();
+            Check(control.Session.Box.Intensity > 0.3 && live.Session.Box.Intensity == 0.0, $"next tick: control {control.Session.Box.Intensity}, live {live.Session.Box.Intensity}");
+        }),
+
+        ("body: stepping past Finished keeps the world moving and the result frozen", () =>
+        {
+            using var s = new BodyPainBoxSession(OnBody, 1);
+            while (!s.Finished) s.Step();
+            string render = s.Result().Render();
+            long? handOut = s.HandOutMs;
+            int excursions = s.Excursions;
+            var atEnd = s.Hand;
+            bool moved = false;
+            for (int i = 0; i < Hz; i++)
+            {
+                s.Step();
+                moved |= s.Hand != atEnd;
+            }
+            Check(moved, "the world did not step after Finished");
+            Check(s.Result().Render() == render && s.HandOutMs == handOut && s.Excursions == excursions && s.LastEvents == Lodur.TickEvents.None,
+                "the result, hand-out, excursions or events changed after Finished");
+        }),
+
         ("the seed's trait multiplies the caller's nerve gain and drain trait instead of replacing them", () =>
         {
             Check(PainBoxSimulation.Run(Default with { Nerve = new Lodur.NerveParameters { Gain = 0.0 }, MaxSeconds = 20.0 }, 1).Outcome == Outcome.Endured, "gain 0 should leave no pain");
@@ -547,6 +600,27 @@ public static class Program
             sum += (dx * dx + dy * dy + dz * dz) * Hz * Hz;
         }
         return Math.Sqrt(sum / (to - from - 1));
+    }
+
+    /// <summary>Steps a body session to its end, calling <paramref name="beforeStep"/> before every step, and records the hand per tick as <see cref="BodyPainBox.Run"/> does.</summary>
+    private static BodyPainBoxResult RunLive(PainBoxParameters p, ulong seed, Action<BodyPainBoxSession> beforeStep)
+    {
+        using var s = new BodyPainBoxSession(p, seed);
+        var hand = new List<HandSample>();
+        while (!s.Finished)
+        {
+            beforeStep(s);
+            long before = s.Session.TickIndex;
+            s.Step();
+            if (s.Session.TickIndex != before || hand.Count == 0) hand.Add(s.Hand);
+        }
+        return new BodyPainBoxResult(s.Result(), s.Excursions, hand);
+    }
+
+    private static void SameRun(BodyPainBoxResult a, BodyPainBoxResult b, string who)
+    {
+        Check(a.Run.Render() == b.Run.Render() && a.Run.Summary() == b.Run.Summary() && a.Excursions == b.Excursions, $"{who}: results differ: '{a.Run.Summary()}' against '{b.Run.Summary()}'");
+        Check(a.Hand.Count == b.Hand.Count && a.Hand.Zip(b.Hand).All(h => h.First == h.Second), $"{who}: hand tracks differ ({a.Hand.Count} and {b.Hand.Count} samples)");
     }
 
     /// <summary>Runs every test; with an argument, only the tests whose name contains it (the body tests take minutes).</summary>
