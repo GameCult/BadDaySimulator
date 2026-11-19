@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using BadDay.Core;
+using Lodur;
 
 // Grid sweep: stimulus intensity (rows) x withdrawal-reflex suppression strength
 // (columns, PainBoxParameters.MaxSuppression). Each cell runs Seeds consecutive
@@ -17,7 +18,7 @@ double[] suppressions = { 0.0, 0.25, 0.5, 0.75, 0.95, 1.0 };
 
 var inv = CultureInfo.InvariantCulture;
 var sb = new StringBuilder();
-sb.Append($"time to break, s (median over {Seeds} seeds from {FirstSeed}; max {new PainBoxParameters().MaxSeconds:F0} s; pull {new PainBoxParameters().ObjectivePull:F2})\n");
+sb.Append($"time to break, s (median over {Seeds} seeds from {FirstSeed}; max {new PainBoxParameters().MaxSeconds:F0} s; pull {new PainBoxParameters().Drive.ObjectivePull:F2})\n");
 sb.Append("intensity\\suppr ");
 foreach (var s in suppressions) sb.Append(s.ToString("F2", inv).PadLeft(10));
 sb.Append('\n');
@@ -26,7 +27,7 @@ foreach (var i in intensities)
     sb.Append(i.ToString("F2", inv).PadRight(16));
     foreach (var s in suppressions)
     {
-        var p = new PainBoxParameters { BoxIntensity = i, MaxSuppression = s };
+        var p = new PainBoxParameters { BoxIntensity = i, Reflex = new WithdrawalParameters { MaxSuppression = s } };
         var sweep = SweepSummary.Run(p, FirstSeed, Seeds);
         string cell = sweep.MedianBreakMs is { } ms
             ? (ms / 1000.0).ToString("F1", inv) + (sweep.Broke < Seeds ? $"({sweep.Broke}/{Seeds})" : "")

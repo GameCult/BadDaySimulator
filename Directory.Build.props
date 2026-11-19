@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <!-- Sibling Lodur checkout (main, from the nervous-layers merge on): the nervous model BDS consumes. Set LODUR_ROOT to override. -->
+    <LodurRoot Condition="'$(LodurRoot)' == '' and '$(LODUR_ROOT)' != ''">$(LODUR_ROOT)</LodurRoot>
+    <LodurRoot Condition="'$(LodurRoot)' == ''">$(MSBuildThisFileDirectory)..\Lodur</LodurRoot>
+  </PropertyGroup>
+</Project>

@@ -2,7 +2,7 @@
 
 `tools/PainSweep/Program.cs` runs the pain box puppet over a grid of box
 intensity (rows) and withdrawal-reflex suppression strength (columns,
-`PainBoxParameters.MaxSuppression`: the largest fraction of the reflex the will
+`PainBoxParameters.Reflex.MaxSuppression`: the largest fraction of the reflex the will
 can hold down). It is engine-free and deterministic; the same build prints the
 same table.
 
@@ -41,14 +41,11 @@ first flinch, flinch count, area under the pain curve before the hand leaves,
 peak strain, or the fraction of seeds that break by a deadline. Which one says
 what a player should feel?
 
-## Build and run (no `dotnet restore`)
+## Build and run
 
 ```
-D=/opt/commons/opt/dotnet; REF=$D/packs/Microsoft.NETCore.App.Ref/10.0.14/ref/net10.0
-dotnet $D/sdk/10.0.403/Roslyn/bincore/csc.dll -nologo -nullable:enable -target:exe \
-  -out:$TMPDIR/painsweep/PainSweep.dll -noconfig -nostdlib+ $(for f in $REF/*.dll; do echo -n "-r:$f "; done) \
-  src/BadDay.Core/*.cs tools/PainSweep/Program.cs
-printf '{"runtimeOptions":{"tfm":"net10.0","framework":{"name":"Microsoft.NETCore.App","version":"10.0.14"}}}' \
-  > $TMPDIR/painsweep/PainSweep.runtimeconfig.json
-dotnet $TMPDIR/painsweep/PainSweep.dll
+dotnet run --project tools/PainSweep
 ```
+
+The project references `BadDay.Core` and through it the sibling Lodur checkout (`LODUR_ROOT`, else
+`..\Lodur`); it needs no Ymir and no native build.

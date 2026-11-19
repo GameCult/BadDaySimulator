@@ -66,7 +66,7 @@ public static class Program
         ("a stronger objective pull holds the will longer", () =>
         {
             long Break(double pull) =>
-                PainBoxSimulation.Run(Default with { ObjectivePull = pull }, 5).TimeToBreakMs ?? long.MaxValue;
+                PainBoxSimulation.Run(Default with { Drive = Default.Drive with { ObjectivePull = pull } }, 5).TimeToBreakMs ?? long.MaxValue;
             Check(Break(0.0) < Break(0.5) && Break(0.5) < Break(0.8), "break times not ordered by pull");
         }),
 

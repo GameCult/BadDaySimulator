@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using BadDay.Core;
+using Lodur;
 
 namespace BadDay.Cli;
 
@@ -39,7 +40,7 @@ public static class Program
         var p = new PainBoxParameters
         {
             BoxIntensity = Num(opts, "intensity", 0.8),
-            ObjectivePull = Num(opts, "pull", 0.5),
+            Drive = new DriveParameters { ObjectivePull = Num(opts, "pull", 0.5) },
             BoxDisableAtSeconds = opts.ContainsKey("disable-at") ? Num(opts, "disable-at", 0) : null,
             MaxSeconds = Num(opts, "max", 120),
             SampleEverySeconds = Num(opts, "every", 1),

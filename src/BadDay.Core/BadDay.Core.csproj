@@ -5,4 +5,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <RootNamespace>BadDay.Core</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(LodurRoot)\src\Lodur.Core\Lodur.Core.csproj" />
+  </ItemGroup>
 </Project>

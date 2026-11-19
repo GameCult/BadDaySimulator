@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The sweep runs headless: BadDay.Core and through it Lodur.Core, no Ymir. Run: dotnet run (project path tools/PainSweep). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BadDay.Core\BadDay.Core.csproj" />
+  </ItemGroup>
+</Project>
