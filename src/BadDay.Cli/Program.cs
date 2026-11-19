@@ -58,9 +58,9 @@ public static class Program
             output.WriteLine(Title);
             output.Write(b.Run.Render());
             output.WriteLine(b.Run.Summary());
-            output.WriteLine(b.HandOutMs is { } out_
+            output.WriteLine(b.Run.HandOutMs is { } out_
                 ? $"hand out at {out_} ms, {out_ - b.Run.TimeToBreakMs} ms after the will broke; {b.Excursions} excursions from the box before the break"
-                : $"hand still in the box at {b.Run.EndMs} ms; {b.Excursions} excursions from the box before the break");
+                : $"hand not out for good by {b.Run.EndMs} ms; {b.Excursions} excursions from the box before the break");
             return 0;
         }
         if (opts.ContainsKey("body")) throw new ArgumentException("--body applies to run");

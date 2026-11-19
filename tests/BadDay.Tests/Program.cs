@@ -115,7 +115,7 @@ public static class Program
         {
             var a = BodyPainBox.Run(OnBody, 1);
             var b = BodyPainBox.Run(OnBody, 1);
-            Check(a.Run.Render() == b.Run.Render() && a.HandOutMs == b.HandOutMs && a.Excursions == b.Excursions, "body runs differ");
+            Check(a.Run.Render() == b.Run.Render() && a.Run.HandOutMs == b.Run.HandOutMs && a.Excursions == b.Excursions, "body runs differ");
             Check(a.Hand.Count == b.Hand.Count && a.Hand[^1] == b.Hand[^1], "hand tracks differ");
         }),
 
@@ -133,15 +133,15 @@ public static class Program
             bool moved = flinches.Any(f => r.Hand.Skip(f).Take(Hz / 5 + 1).Any(h => Dist(h) > 0.023f));
             Check(moved, "no flinch moved the hand over 2.3 cm from the hold point");
 
-            Check(r.HandOutMs is { } o && o - broke <= 300, $"hand out at {r.HandOutMs}, will broke at {broke}");
-            Check(r.Run.EndMs == r.HandOutMs, "the run should end when the hand is out");
+            Check(r.Run.HandOutMs is { } o && o - broke <= 300, $"hand out at {r.Run.HandOutMs}, will broke at {broke}");
+            Check(r.Run.EndMs >= r.Run.HandOutMs, "the run ended before the hand was out");
         }),
 
         ("body: switching the box off at 5 s ends the run with the will intact and the hand still in the box", () =>
         {
             var r = BodyPainBox.Run(OnBody with { BoxDisableAtSeconds = 5.0 }, 1);
             Check(r.Run.Outcome == Outcome.BoxDisabled && r.Run.TimeToBreakMs is null, $"outcome {r.Run.Outcome}");
-            Check(r.HandOutMs is null && r.Hand[^1].InBox, "the hand left the box");
+            Check(r.Run.HandOutMs is null && r.Hand[^1].InBox, "the hand left the box");
             Check(r.Run.Timeline.Last().Resolve > 0.0, "resolve should be above zero");
         }),
 
@@ -153,11 +153,16 @@ public static class Program
             Check(late > early, $"speed RMS {late:F4} m/s in the 2 s before the break, {early:F4} m/s in the 2 s after the ramp");
         }),
 
-        ("body: a box at intensity 0 for 10 s: no flinch, no break, the hand holds still", () =>
+        ("body: a box at intensity 0 for 10 s: no flinch, no break, the hand stays near its hold point", () =>
         {
             var r = BodyPainBox.Run(OnBody with { BoxIntensity = 0.0, MaxSeconds = 10.0 }, 1);
             Check(r.Run.Outcome == Outcome.Endured && r.Run.Flinches == 0 && r.Run.TimeToBreakMs is null, r.Run.Summary());
-            for (int i = 3 * Hz; i < r.Hand.Count; i++) Check(Dist(r.Hand[i]) <= 0.023f, $"drift {Dist(r.Hand[i]):F3} m at tick {i}");
+            // Measured idle drift from the hold point (seed-independent without pain), substeps 1 to 8: the arm settles
+            // slowly and sags about 1 cm under gravity, so from 3 s the largest drift is 2.0 to 2.3 cm (2.31 at 8 substeps),
+            // from 8 s 1.1 to 1.5 cm. A flinch moves the hand over 2.3 cm from where a leak-free arm is; the limits sit
+            // 50% and 35% above the largest measurement.
+            for (int i = 3 * Hz; i < r.Hand.Count; i++) Check(Dist(r.Hand[i]) <= 0.035f, $"drift {Dist(r.Hand[i]):F3} m at tick {i}");
+            for (int i = 8 * Hz; i < r.Hand.Count; i++) Check(Dist(r.Hand[i]) <= 0.020f, $"late drift {Dist(r.Hand[i]):F3} m at tick {i}");
         }),
 
         ("body: the stimulus and the flinches are the right hand's: the timeline's stimulus column is live while the hand is in the box", () =>
@@ -174,10 +179,10 @@ public static class Program
             for (ulong seed = 1; seed <= 6; seed++)
             {
                 var r = BodyPainBox.Run(heavy, seed);
-                Check(r.Run.Outcome == Outcome.WillBroke, $"seed {seed}: outcome {r.Run.Outcome}, break {r.Run.TimeToBreakMs}, hand out {r.HandOutMs}");
+                Check(r.Run.Outcome == Outcome.WillBroke, $"seed {seed}: outcome {r.Run.Outcome}, break {r.Run.TimeToBreakMs}, hand out {r.Run.HandOutMs}");
                 var withdrew = r.Run.Timeline.Single(e => e.Kind == EntryKind.Withdrew);
                 Check(withdrew.TimeMs - r.Run.TimeToBreakMs == 100, $"seed {seed}: Withdrew row {withdrew.TimeMs - r.Run.TimeToBreakMs} ms after the break");
-                Check(r.Run.EndMs >= withdrew.TimeMs && (r.HandOutMs is null || r.Run.EndMs >= r.HandOutMs), $"seed {seed}: ended before the withdrawal or the hand-out");
+                Check(r.Run.EndMs >= withdrew.TimeMs && (r.Run.HandOutMs is null || r.Run.EndMs >= r.Run.HandOutMs), $"seed {seed}: ended before the withdrawal or the hand-out");
             }
         }),
 
@@ -195,6 +200,39 @@ public static class Program
                 Check(after > 0.023f, $"seed {seed}: the largest gap from the control after a flinch is {after:F4} m");
                 Check(before < after / 2, $"seed {seed}: the gap before the first flinch is {before:F4} m, after {after:F4} m");
             }
+        }),
+
+        ("body: hand-out is the start of a sustained exit: under five non-default holds over 30 seeds a reported hand-out is never followed by re-entry and starts at the first step out", () =>
+        {
+            var sets = new (string Name, PainBoxParameters P)[]
+            {
+                ("heavy", OnBody with { Hold = new Lodur.HoldParameters { FlinchGain = 1.0, StrainShake = 0.3 } }),
+                ("flinch 1", OnBody with { Hold = new Lodur.HoldParameters { FlinchGain = 1.0 } }),
+                ("shake 0.3", OnBody with { Hold = new Lodur.HoldParameters { StrainShake = 0.3 } }),
+                ("flinch 2 shake 0.5", OnBody with { Hold = new Lodur.HoldParameters { FlinchGain = 2.0, StrainShake = 0.5 } }),
+                ("intensity 1 heavy", OnBody with { BoxIntensity = 1.0, Hold = new Lodur.HoldParameters { FlinchGain = 1.0, StrainShake = 0.3 } }),
+            };
+            int broke = 0, exited = 0;
+            foreach (var (name, p0) in sets)
+            {
+                var p = p0 with { MaxSeconds = 30.0 }; // a hand that flinches out of the box early stops the pain, and the will may never break
+                for (ulong seed = 1; seed <= 30; seed++)
+                {
+                    var r = BodyPainBox.Run(p, seed);
+                    string who = $"{name} seed {seed}";
+                    if (r.Run.Outcome != Outcome.WillBroke) continue;
+                    broke++;
+                    string summary = r.Run.Summary();
+                    Check(r.Run.HandOutMs is null == summary.Contains("hand not out"), $"{who}: summary '{summary}' disagrees with hand-out {r.Run.HandOutMs}");
+                    if (r.Run.HandOutMs is not { } ms) continue;
+                    exited++;
+                    int outTick = Tick(ms), breakTick = Tick(r.Run.TimeToBreakMs!.Value);
+                    for (int i = outTick; i < r.Hand.Count; i++) Check(!r.Hand[i].InBox, $"{who}: hand out at tick {outTick} but back in the box at tick {i}");
+                    Check(outTick >= breakTick && (outTick == breakTick || r.Hand[outTick - 1].InBox), $"{who}: hand-out at tick {outTick} is not the first step out of the exit (break {breakTick})");
+                    Check(r.Hand.Count - outTick >= (int)Math.Round(BodyPainBox.OutHoldSeconds * Hz), $"{who}: the exit was held {r.Hand.Count - outTick} ticks");
+                }
+            }
+            Check(broke >= 75 && exited >= 50, $"only {broke} of 150 runs broke the will and {exited} got the hand out; the test no longer exercises the rule");
         }),
 
         ("body: a box disabled at tick 0 ends at once with the will intact and a hand track to read", () =>

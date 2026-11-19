@@ -13,13 +13,14 @@ public readonly record struct HandSample(float X, float Y, float Z, bool InBox);
 /// <summary>
 /// The body run's result: the same timeline and outcome as the headless run, plus what only a body has.
 /// The outcome comes from the Actor's events (the run goes on to the deliberate withdrawal, then settles up to a second
-/// for the hand to come out), so <see cref="Run"/>'s EndMs is the later of the Withdrew event and the hand-out time.
+/// for the hand to leave the box for good). <see cref="PainBoxResult.HandOutMs"/> is the start of the first exit after the break
+/// that the hand held for <see cref="OutHoldSeconds"/> without re-entering (a flinch excursion is not an exit); null if there was none.
+/// <see cref="Run"/>'s EndMs is when the run stopped.
 /// </summary>
-/// <param name="HandOutMs">First step at or after the will broke with the hand point outside the box; null if it did not come out by the end of the settle. It can precede the Withdrew event.</param>
 /// <param name="Excursions">Times the hand left the box between the end of the ramp and the break.</param>
 /// <param name="Hand">The hand after every step; the index is the tick.</param>
 public sealed record BodyPainBoxResult(
-    PainBoxResult Run, long? HandOutMs, int Excursions, IReadOnlyList<HandSample> Hand);
+    PainBoxResult Run, int Excursions, IReadOnlyList<HandSample> Hand);
 
 /// <summary>
 /// The pain box on the body: BDS creates the Ymir world (a ground, a static stool box welded to the pelvis
@@ -43,6 +44,9 @@ public static class BodyPainBox
 
     /// <summary>After the deliberate withdrawal begins the run waits this long for the hand to come out.</summary>
     private const double SettleSeconds = 1.0;
+
+    /// <summary>The hand is out when it has stayed outside the box this long after the break.</summary>
+    public const double OutHoldSeconds = 0.2;
 
     public static BodyPainBoxResult Run(PainBoxParameters p, ulong seed)
     {
@@ -77,11 +81,13 @@ public static class BodyPainBox
 
         var samples = new List<HandSample>();
         long rampEnd = (long)Math.Round(p.BoxRampSeconds / p.TickSeconds);
+        long outSince = -1; // first tick of the current continuous stay outside the box after the break
         long? handOut = null;
         int excursions = 0;
         bool wasIn = false;
         long breakTick = -1, withdrewTick = -1;
         long settleTicks = (long)Math.Round(SettleSeconds / p.TickSeconds);
+        long outHoldTicks = Math.Max(1, (long)Math.Round(OutHoldSeconds / p.TickSeconds));
 
         HandSample ReadHand()
         {
@@ -113,9 +119,15 @@ public static class BodyPainBox
                 if (tick > rampEnd && wasIn && !inBox) excursions++;
                 wasIn = inBox;
             }
-            else if (!inBox && handOut is null)
+            else if (inBox)
             {
-                handOut = session.Ms(tick);
+                outSince = -1; // back in: whatever exit this was, it was a flinch
+                handOut = null;
+            }
+            else
+            {
+                if (outSince < 0) outSince = tick;
+                if (tick - outSince + 1 >= outHoldTicks) handOut = session.Ms(outSince);
             }
 
             // The run ends on the Actor's events, never on the hand: after the deliberate withdrawal, once the
@@ -127,6 +139,6 @@ public static class BodyPainBox
             }
         }
 
-        return new BodyPainBoxResult(session.Result(), handOut, excursions, samples);
+        return new BodyPainBoxResult(session.Result() with { HandOutMs = handOut }, excursions, samples);
     }
 }

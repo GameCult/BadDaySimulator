@@ -22,6 +22,8 @@ public static class PainBoxSimulation
             session.Tick(point, point, point, strengths, targets);
             if (session.Withdrew) break;
         }
-        return session.Result();
+        var r = session.Result();
+        // The headless hand is fixed in the box; the deliberate withdrawal is what takes it out.
+        return r.Outcome == Outcome.WillBroke ? r with { HandOutMs = r.EndMs } : r;
     }
 }

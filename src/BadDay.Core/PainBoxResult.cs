@@ -29,7 +29,9 @@ public sealed record PainBoxResult(
     /// <summary>Time resolve hit zero, ms; null unless <see cref="Outcome"/> is WillBroke.</summary>
     long? TimeToBreakMs,
     int Flinches,
-    IReadOnlyList<TimelineEntry> Timeline)
+    IReadOnlyList<TimelineEntry> Timeline,
+    /// <summary>Time the hand was out of the box for good, ms; null if it never was. Headless: the deliberate withdrawal. Body: the start of a sustained exit.</summary>
+    long? HandOutMs = null)
 {
     /// <summary>
     /// Deterministic text form (invariant culture, fixed precision). Two runs
@@ -54,7 +56,9 @@ public sealed record PainBoxResult(
 
     public string Summary() => Outcome switch
     {
-        Outcome.WillBroke => $"seed {Seed}: will broke at {TimeToBreakMs} ms, hand out at {EndMs} ms, {Flinches} flinches",
+        Outcome.WillBroke => HandOutMs is { } out_
+            ? $"seed {Seed}: will broke at {TimeToBreakMs} ms, hand out at {out_} ms, {Flinches} flinches"
+            : $"seed {Seed}: will broke at {TimeToBreakMs} ms, hand not out by {EndMs} ms, {Flinches} flinches",
         Outcome.BoxDisabled => $"seed {Seed}: box disabled at {EndMs} ms, will held, {Flinches} flinches",
         _ => $"seed {Seed}: endured to {EndMs} ms, will held, {Flinches} flinches",
     };
