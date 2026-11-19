@@ -7,7 +7,7 @@ using BadDay.Core;
 using Lodur;
 
 // Grid sweep: stimulus intensity (rows) x withdrawal-reflex suppression strength
-// (columns, PainBoxParameters.MaxSuppression). Each cell runs Seeds consecutive
+// (columns, PainBoxParameters.Reflex.MaxSuppression). Each cell runs Seeds consecutive
 // seeds and prints the median time-to-break in seconds over the runs that broke,
 // "never" if none broke within MaxSeconds, and "(k/N)" when only k of N broke.
 // Engine-free and deterministic: same build, same table, byte for byte.

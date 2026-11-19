@@ -20,10 +20,10 @@ impairment) in one place where a player can poke at all of it.
 Canonical: `https://eureka.gamecult.org/forge/GameCult/BadDaySimulator`.
 GitHub `GameCult/BadDaySimulator` is a push mirror.
 
-## What runs today: the pain box
+## What runs today: the Synaptic Induction Chamber (the pain box)
 
-A deterministic simulation of one virtual human with a hand in a pain box,
-run headless or on a Ymir ragdoll. Question it answers: **how long until the
+A deterministic simulation of one virtual human with a hand in the Synaptic
+Induction Chamber (the pain box), run headless or on a Ymir ragdoll. Question it answers: **how long until the
 will breaks, or the box is disabled first?** The nervous model is Lodur's
 (`Lodur.Actor`); this game holds the box, the seed, the restraint and the
 recorder. It needs sibling checkouts of Lodur and Ymir (`LODUR_ROOT`, else
@@ -87,8 +87,15 @@ broken will does. All parameter values are **placeholders**, not physiology;
 the figures in Lodur's target are marked unverified and so are these. Break
 times in the output are properties of this toy model, not predictions about people.
 Bit-exact output across CPU architectures is not claimed; same-machine runs
-are byte-identical (the loop uses only `+ - * /` and comparisons, no
-transcendental functions).
+are byte-identical. The headless arithmetic is Lodur's and uses only `+ - * /`
+and comparisons; the hold behaviour's shake uses `Math.Sin`, and the body run
+adds native physics, so neither is claimed bit-exact across machines (Windows
+and Linux x64 agreed on seeds 1-5, the sweep and `run --body` when compared).
+
+The timeline of a run differs from the pre-Lodur slice only in that each row is the
+Actor's state at the end of its tick: a Flinch row shows strain and resolve after the
+tick's update, and when a Flinch and the will's break fall on the same tick the Flinch
+row's goal column reads Withdraw.
 
 Persistent content (puppet definitions, drive parameters, saved levels) will
 be CultCache per Lodur's `content-is-cultcache`; this slice has none, so it
@@ -96,8 +103,9 @@ has no cache layer and no JSON.
 
 ### Build note
 
-The core has no engine reference (`core-engine-free`). The slice has no
-package dependencies, so the tests are a plain console program rather than
-xunit. On the Yggdrasil mind host `dotnet restore` currently fails on a
-NuGet named mutex (read-only `/dev/shm`); the slice was compiled there with
-Roslyn's `csc` directly, which is why the `.csproj` files are the unverified part.
+The core has no engine reference (`core-engine-free`). It references the sibling Lodur checkout
+(`LODUR_ROOT`, else `..\Lodur`) and nothing else, so `dotnet build` and `dotnet run` work with the
+.NET SDK alone; the tests are a plain console program rather than xunit. Only `BadDay.Ymir` (and what
+references it: the CLI and the tests) builds Ymir's native library, which needs cmake and a C compiler
+(on Windows MinGW: `CMAKE_GENERATOR="Ninja Multi-Config" CC=gcc`). The projects were built and the tests
+run on Windows and on Linux.

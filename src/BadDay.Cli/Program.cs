@@ -10,6 +10,8 @@ namespace BadDay.Cli;
 public static class Program
 {
     private const string Usage = """
+        baddaysim: the Synaptic Induction Chamber (the pain box)
+
         baddaysim run   --seed N [options]        one run, full timeline
         baddaysim run   --seed N --body [options] the same run on the Ymir ragdoll, with the hand-out time
         baddaysim sweep --seed N --count M [options]   seeds N..N+M-1, break-time summary
@@ -21,6 +23,8 @@ public static class Program
           --max S         give up after S               (default 120)
           --every S       timeline sample interval      (default 1)
         """;
+
+    private const string Title = "Synaptic Induction Chamber (the pain box)";
 
     public static int Main(string[] args)
     {
@@ -51,6 +55,7 @@ public static class Program
         if (args[0] == "run" && opts.ContainsKey("body"))
         {
             var b = BodyPainBox.Run(p with { TickSeconds = BodyPainBox.TickSeconds }, seed);
+            output.WriteLine(Title);
             output.Write(b.Run.Render());
             output.WriteLine(b.Run.Summary());
             output.WriteLine(b.HandOutMs is { } out_
@@ -63,6 +68,7 @@ public static class Program
         if (args[0] == "run")
         {
             var r = PainBoxSimulation.Run(p, seed);
+            output.WriteLine(Title);
             output.Write(r.Render());
             output.WriteLine(r.Summary());
             return 0;

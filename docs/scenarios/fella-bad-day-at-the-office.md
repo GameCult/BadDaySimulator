@@ -5,7 +5,7 @@ readable; none is measured physiology or tuned play. Nothing here is canon until
 
 Concept: Meta, 2026-11-06. The protagonist's name, **Fella**, is by **Deru**.
 
-Built on the first slice: the pain box (`PainBoxSimulation`, merged in
+Built on the first slice: the Synaptic Induction Chamber (the pain box) (`PainBoxSimulation`, merged in
 [GameCult/BadDaySimulator#1](https://eureka.gamecult.org/forge/GameCult/BadDaySimulator/pulls/1)) and its sweep,
 [`docs/pain-sweep.md`](https://eureka.gamecult.org/forge/GameCult/BadDaySimulator/src/branch/main/docs/pain-sweep.md).
 Layer and invariant names (`drive-is-state`,
@@ -224,7 +224,7 @@ resolve, so the personality effect can be isolated in testing.
 
 ## 4. What Lodur and Ymir must expose
 
-Lodur (all under Lodur's layer rules; none of it is built):
+Lodur (all under Lodur's layer rules; the nervous layers and the hold stand-in exist, and none of what follows is built):
 - Actor drive state readable and writable per tick: `resolve`, `adrenaline`, per-limb-group `strength`, `goal`,
   goal weights, objective pull. The goal as first-class state with a typed `GoalFlipped` event.
 - Perception of non-contact stimuli by channel and region (audio, visual, interrupt, proximity), feeding the same
@@ -246,7 +246,8 @@ Still missing:
 - Breakable objects: a break threshold on a joint or weld, or removal of a body on a destroy call. The SoA
   world has a fixed capacity and no removal.
 - Joint springs, for stiff limbs without explicit PD torques.
-- Stable ids for actors and objects so scenario documents refer to them.
+- An id convention for actors and objects: the SoA world carries a StableId lane, so ids exist; scenario
+  documents still need BDS to allocate and name them.
 
 ## 5. Three tuning checks
 

@@ -1,6 +1,6 @@
 # Pain sweep: time to break over intensity and suppression
 
-`tools/PainSweep/Program.cs` runs the pain box puppet over a grid of box
+`tools/PainSweep/Program.cs` runs the Synaptic Induction Chamber (the pain box) puppet over a grid of box
 intensity (rows) and withdrawal-reflex suppression strength (columns,
 `PainBoxParameters.Reflex.MaxSuppression`: the largest fraction of the reflex the will
 can hold down). It is engine-free and deterministic; the same build prints the
