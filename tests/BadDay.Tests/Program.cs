@@ -160,6 +160,58 @@ public static class Program
             for (int i = 3 * Hz; i < r.Hand.Count; i++) Check(Dist(r.Hand[i]) <= 0.023f, $"drift {Dist(r.Hand[i]):F3} m at tick {i}");
         }),
 
+        ("body: the stimulus and the flinches are the right hand's: the timeline's stimulus column is live while the hand is in the box", () =>
+        {
+            var r = BodyPainBox.Run(OnBody, 1);
+            var at3 = r.Run.Timeline.Single(e => e.Kind == EntryKind.Sample && e.TimeMs == 3000);
+            Check(at3.Stimulus > 0.3 && at3.Pain > 0.3, $"stimulus {at3.Stimulus}, pain {at3.Pain} at 3 s");
+            Check(r.Hand[3 * Hz].InBox && r.Run.Flinches > 0, "right hand not in the box, or no flinch");
+        }),
+
+        ("body: a heavy hold (flinch gain 1, shake 0.3) still ends by the Actor's events: WillBroke, one Withdrew row, hand out reported separately", () =>
+        {
+            var heavy = OnBody with { Hold = new Lodur.HoldParameters { FlinchGain = 1.0, StrainShake = 0.3 } };
+            for (ulong seed = 1; seed <= 6; seed++)
+            {
+                var r = BodyPainBox.Run(heavy, seed);
+                Check(r.Run.Outcome == Outcome.WillBroke, $"seed {seed}: outcome {r.Run.Outcome}, break {r.Run.TimeToBreakMs}, hand out {r.HandOutMs}");
+                var withdrew = r.Run.Timeline.Single(e => e.Kind == EntryKind.Withdrew);
+                Check(withdrew.TimeMs - r.Run.TimeToBreakMs == 100, $"seed {seed}: Withdrew row {withdrew.TimeMs - r.Run.TimeToBreakMs} ms after the break");
+                Check(r.Run.EndMs >= withdrew.TimeMs && (r.HandOutMs is null || r.Run.EndMs >= r.HandOutMs), $"seed {seed}: ended before the withdrawal or the hand-out");
+            }
+        }),
+
+        ("body: the flinch moves the hand: against a flinch-gain-0 control on the same seed the tracks part by over 2.3 cm within 200 ms of a flinch, and not before the first flinch", () =>
+        {
+            for (ulong seed = 1; seed <= 3; seed++)
+            {
+                var full = BodyPainBox.Run(OnBody, seed);
+                var control = BodyPainBox.Run(OnBody with { Hold = new Lodur.HoldParameters { FlinchGain = 0.0 } }, seed);
+                Check(full.Run.Flinches == control.Run.Flinches, $"seed {seed}: the nervous state changed with the arm");
+                var flinches = full.Run.Timeline.Where(e => e.Kind == EntryKind.Flinch).Select(e => Tick(e.TimeMs)).ToList();
+                float Gap(int i) => MathF.Sqrt(MathF.Pow(full.Hand[i].X - control.Hand[i].X, 2) + MathF.Pow(full.Hand[i].Y - control.Hand[i].Y, 2) + MathF.Pow(full.Hand[i].Z - control.Hand[i].Z, 2));
+                float after = flinches.Max(f => Enumerable.Range(f, Hz / 5 + 1).Max(Gap));
+                float before = Enumerable.Range(0, flinches[0]).Max(Gap);
+                Check(after > 0.023f, $"seed {seed}: the largest gap from the control after a flinch is {after:F4} m");
+                Check(before < after / 2, $"seed {seed}: the gap before the first flinch is {before:F4} m, after {after:F4} m");
+            }
+        }),
+
+        ("body: a box disabled at tick 0 ends at once with the will intact and a hand track to read", () =>
+        {
+            var r = BodyPainBox.Run(OnBody with { BoxDisableAtSeconds = 0.0 }, 1);
+            Check(r.Run.Outcome == Outcome.BoxDisabled && r.Hand.Count == 1 && !r.Hand[0].InBox, $"{r.Run.Outcome}, {r.Hand.Count} samples");
+        }),
+
+        ("the seed's trait multiplies the caller's nerve gain and drain trait instead of replacing them", () =>
+        {
+            Check(PainBoxSimulation.Run(Default with { Nerve = new Lodur.NerveParameters { Gain = 0.0 }, MaxSeconds = 20.0 }, 1).Outcome == Outcome.Endured, "gain 0 should leave no pain");
+            long Break(double gain) => PainBoxSimulation.Run(Default with { Nerve = new Lodur.NerveParameters { Gain = gain } }, 1).TimeToBreakMs ?? long.MaxValue;
+            Check(Break(2.0) < PainBoxSimulation.Run(Default, 1).TimeToBreakMs, "a caller's nerve gain of 2 did not shorten the break");
+            long Drain(double d) => PainBoxSimulation.Run(Default with { Drive = new Lodur.DriveParameters { DrainTrait = d } }, 1).TimeToBreakMs ?? long.MaxValue;
+            Check(Drain(2.0) < Drain(1.0) && Drain(1.0) == 14730, "a caller's drain trait did not scale the drain");
+        }),
+
         ("CLI run is deterministic and sweep reports a break-time line", () =>
         {
             string Run(params string[] a) { var w = new StringWriter(); BadDay.Cli.Program.Execute(a, w); return w.ToString(); }

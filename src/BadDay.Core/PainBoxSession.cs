@@ -33,12 +33,13 @@ public sealed class PainBoxSession
         _handRegion = handRegion;
         _p = p;
         var rng = new SplitMix64(seed);
-        // Per-seed traits, drawn first and in fixed order so the stream never shifts.
+        // Per-seed traits, drawn first and in fixed order so the stream never shifts. They multiply the caller's
+        // Nerve.Gain and Drive.DrainTrait (1.0 by default), so a caller's own value is a baseline, never overwritten.
         double gainTrait = 1.0 + p.TraitJitter * rng.NextSigned();
         double drainTrait = 1.0 + p.TraitJitter * rng.NextSigned();
         Seed = seed;
-        Actor = new Actor(p.TickSeconds, regionCount, p.Nerve with { Gain = gainTrait }, p.Reflex,
-            p.Drive with { DrainTrait = drainTrait }, p.Hold, holdPose, withdrawPose);
+        Actor = new Actor(p.TickSeconds, regionCount, p.Nerve with { Gain = p.Nerve.Gain * gainTrait }, p.Reflex,
+            p.Drive with { DrainTrait = p.Drive.DrainTrait * drainTrait }, p.Hold, holdPose, withdrawPose);
         _box = new PainBox(p, rng);
         _sources = new[] { box };
         _maxTick = Ticks(p.MaxSeconds);

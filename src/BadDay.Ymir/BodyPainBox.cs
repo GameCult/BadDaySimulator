@@ -12,9 +12,10 @@ public readonly record struct HandSample(float X, float Y, float Z, bool InBox);
 
 /// <summary>
 /// The body run's result: the same timeline and outcome as the headless run, plus what only a body has.
-/// <see cref="Run"/>'s EndMs is the hand-out time when the hand came out.
+/// The outcome comes from the Actor's events (the run goes on to the deliberate withdrawal, then settles up to a second
+/// for the hand to come out), so <see cref="Run"/>'s EndMs is the later of the Withdrew event and the hand-out time.
 /// </summary>
-/// <param name="HandOutMs">First step at or after the will broke with the hand point outside the box; null if it never came out.</param>
+/// <param name="HandOutMs">First step at or after the will broke with the hand point outside the box; null if it did not come out by the end of the settle. It can precede the Withdrew event.</param>
 /// <param name="Excursions">Times the hand left the box between the end of the ramp and the break.</param>
 /// <param name="Hand">The hand after every step; the index is the tick.</param>
 public sealed record BodyPainBoxResult(
@@ -36,6 +37,12 @@ public static class BodyPainBox
     public static readonly (float X, float Y, float Z) HoldPoint = (-0.21f, 1.19f, 0.46f);
 
     private const float BoxHalf = 0.12f;
+
+    /// <summary>Physics substeps per 1/120 s step. The ragdoll gains were tuned against 4; the behaviour tests, not this number, are the rule.</summary>
+    private const int Substeps = 4;
+
+    /// <summary>After the deliberate withdrawal begins the run waits this long for the hand to come out.</summary>
+    private const double SettleSeconds = 1.0;
 
     public static BodyPainBoxResult Run(PainBoxParameters p, ulong seed)
     {
@@ -73,36 +80,53 @@ public static class BodyPainBox
         long? handOut = null;
         int excursions = 0;
         bool wasIn = false;
-        long breakTick = -1;
+        long breakTick = -1, withdrewTick = -1;
+        long settleTicks = (long)Math.Round(SettleSeconds / p.TickSeconds);
+
+        HandSample ReadHand()
+        {
+            ragdoll.ReadRegions(x, y, z);
+            float hx = x[(int)Region.HandR], hy = y[(int)Region.HandR], hz = z[(int)Region.HandR];
+            return new HandSample(hx, hy, hz, session.Box.Contains(hx, hy, hz));
+        }
 
         while (!session.Finished)
         {
-            if (session.Disabled()) break;
+            if (session.Disabled())
+            {
+                if (samples.Count == 0) samples.Add(ReadHand()); // disabled at tick 0: the track still holds the rest pose
+                break;
+            }
             long tick = session.TickIndex;
             ragdoll.ReadRegions(x, y, z);
             var events = session.Tick(x, y, z, strengths, targets);
             ragdoll.Drive(strengths, targets);
-            world.Step((float)p.TickSeconds, 4);
+            world.Step((float)p.TickSeconds, Substeps);
 
             if ((events & TickEvents.WillBroke) != 0) breakTick = tick;
-            ragdoll.ReadRegions(x, y, z);
-            var hand = (X: x[(int)Region.HandR], Y: y[(int)Region.HandR], Z: z[(int)Region.HandR]);
-            var inBox = session.Box.Contains(hand.X, hand.Y, hand.Z);
-            samples.Add(new HandSample(hand.X, hand.Y, hand.Z, inBox));
+            var sample = ReadHand();
+            var inBox = sample.InBox;
+            samples.Add(sample);
 
             if (breakTick < 0)
             {
                 if (tick > rampEnd && wasIn && !inBox) excursions++;
                 wasIn = inBox;
             }
-            else if (!inBox)
+            else if (!inBox && handOut is null)
             {
                 handOut = session.Ms(tick);
-                session.EndAt(tick);
+            }
+
+            // The run ends on the Actor's events, never on the hand: after the deliberate withdrawal, once the
+            // hand is out or the settle is over.
+            if (session.Withdrew)
+            {
+                if (withdrewTick < 0) withdrewTick = tick;
+                if (handOut is not null || tick - withdrewTick >= settleTicks) session.EndAt(tick);
             }
         }
 
-        if (handOut is null && session.Withdrew) session.EndAt(session.TickIndex - 1);
         return new BodyPainBoxResult(session.Result(), handOut, excursions, samples);
     }
 }

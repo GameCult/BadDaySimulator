@@ -26,7 +26,7 @@ public sealed record PainBoxParameters
     public Lodur.WithdrawalParameters Reflex { get; init; } = new();
     public Lodur.HoldParameters Hold { get; init; } = new();
 
-    // Per-seed trait spread (fraction): nociceptor gain (Nerve.Gain) and resolve drain (Drive.DrainTrait).
+    // Per-seed trait spread (fraction): nociceptor gain and resolve drain. The seed's draw multiplies Nerve.Gain and Drive.DrainTrait.
     public double TraitJitter { get; init; } = 0.2;
 
     public double SampleEverySeconds { get; init; } = 1.0;
