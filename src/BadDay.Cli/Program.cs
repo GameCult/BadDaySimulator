@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using BadDay.Core;
+using BadDay.Ymir;
 using Lodur;
 
 namespace BadDay.Cli;
@@ -10,6 +11,7 @@ public static class Program
 {
     private const string Usage = """
         baddaysim run   --seed N [options]        one run, full timeline
+        baddaysim run   --seed N --body [options] the same run on the Ymir ragdoll, with the hand-out time
         baddaysim sweep --seed N --count M [options]   seeds N..N+M-1, break-time summary
 
         options (all numbers, seconds unless noted):
@@ -46,6 +48,18 @@ public static class Program
             SampleEverySeconds = Num(opts, "every", 1),
         };
 
+        if (args[0] == "run" && opts.ContainsKey("body"))
+        {
+            var b = BodyPainBox.Run(p with { TickSeconds = BodyPainBox.TickSeconds }, seed);
+            output.Write(b.Run.Render());
+            output.WriteLine(b.Run.Summary());
+            output.WriteLine(b.HandOutMs is { } out_
+                ? $"hand out at {out_} ms, {out_ - b.Run.TimeToBreakMs} ms after the will broke; {b.Excursions} excursions from the box before the break"
+                : $"hand still in the box at {b.Run.EndMs} ms; {b.Excursions} excursions from the box before the break");
+            return 0;
+        }
+        if (opts.ContainsKey("body")) throw new ArgumentException("--body applies to run");
+
         if (args[0] == "run")
         {
             var r = PainBoxSimulation.Run(p, seed);
@@ -70,10 +84,12 @@ public static class Program
     private static Dictionary<string, string> ParseOptions(string[] args)
     {
         var o = new Dictionary<string, string>();
-        for (int i = 1; i < args.Length; i += 2)
+        for (int i = 1; i < args.Length;)
         {
+            if (args[i] == "--body") { o["body"] = ""; i++; continue; } // the one flag
             if (!args[i].StartsWith("--") || i + 1 >= args.Length) throw new ArgumentException($"bad option near '{args[i]}'");
             o[args[i][2..]] = args[i + 1];
+            i += 2;
         }
         return o;
     }

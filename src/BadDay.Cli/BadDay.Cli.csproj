@@ -8,5 +8,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\BadDay.Core\BadDay.Core.csproj" />
+    <ProjectReference Include="..\BadDay.Ymir\BadDay.Ymir.csproj" />
   </ItemGroup>
 </Project>

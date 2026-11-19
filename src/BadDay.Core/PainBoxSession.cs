@@ -18,6 +18,7 @@ public sealed class PainBoxSession
     private readonly List<TimelineEntry> _timeline = new();
     private readonly long _maxTick;
     private readonly long _sampleEvery;
+    private readonly int _handRegion;
     private double _stimulus;
     private long _breakTick = -1;
     private int _flinches;
@@ -25,9 +26,11 @@ public sealed class PainBoxSession
     private long _endTick;
 
     /// <param name="box">The stimulus volume the hand is held in; its intensity is the session's to write.</param>
+    /// <param name="handRegion">The region of the hand in the box; the timeline's stimulus column is the stimulus there.</param>
     public PainBoxSession(PainBoxParameters p, ulong seed, BoxStimulus box, int regionCount,
-        ReadOnlySpan<Quat> holdPose, ReadOnlySpan<Quat> withdrawPose)
+        ReadOnlySpan<Quat> holdPose, ReadOnlySpan<Quat> withdrawPose, int handRegion = 0)
     {
+        _handRegion = handRegion;
         _p = p;
         var rng = new SplitMix64(seed);
         // Per-seed traits, drawn first and in fixed order so the stream never shifts.
@@ -84,7 +87,7 @@ public sealed class PainBoxSession
         long tick = TickIndex;
         _box.Write(tick, ref _sources[0]);
         var events = Actor.Tick(x, y, z, _sources, strengths, targets);
-        _stimulus = Actor.Stimulus(0);
+        _stimulus = Actor.Stimulus(_handRegion);
 
         if ((events & TickEvents.Flinch) != 0)
         {

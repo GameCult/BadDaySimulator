@@ -3,12 +3,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using BadDay.Core;
+using BadDay.Ymir;
 
 namespace BadDay.Tests;
 
 public static class Program
 {
     private static readonly PainBoxParameters Default = new();
+    private static readonly PainBoxParameters OnBody = new() { TickSeconds = BodyPainBox.TickSeconds };
+    private const int Hz = 120;
 
     private static readonly (string Name, Action Body)[] Tests =
     {
@@ -107,6 +110,56 @@ public static class Program
             Check(s.Results[0].Seed == 1 && s.Results[24].Seed == 25, "seeds not consecutive");
         }),
 
+        // The body: the same pain box on the Ymir ragdoll, through BodyPainBox. Hands are read from body lanes.
+        ("body: the same seed twice in one process gives the same timeline and hand-out time", () =>
+        {
+            var a = BodyPainBox.Run(OnBody, 1);
+            var b = BodyPainBox.Run(OnBody, 1);
+            Check(a.Run.Render() == b.Run.Render() && a.HandOutMs == b.HandOutMs && a.Excursions == b.Excursions, "body runs differ");
+            Check(a.Hand.Count == b.Hand.Count && a.Hand[^1] == b.Hand[^1], "hand tracks differ");
+        }),
+
+        ("body: the hand stays in the box until the will breaks, a flinch moves it, the broken will pulls it out within 300 ms", () =>
+        {
+            var r = BodyPainBox.Run(OnBody, 1);
+            Check(r.Run.Outcome == Outcome.WillBroke && r.Run.TimeToBreakMs is not null, $"outcome {r.Run.Outcome}");
+            long broke = r.Run.TimeToBreakMs!.Value;
+            Check(r.Excursions == 0, $"{r.Excursions} excursions before the break");
+            int breakTick = Tick(broke);
+            for (int i = 2 * Hz; i < breakTick; i++) Check(r.Hand[i].InBox, $"hand left the box at tick {i}, will broke at {breakTick}");
+
+            var flinches = r.Run.Timeline.Where(e => e.Kind == EntryKind.Flinch).Select(e => Tick(e.TimeMs)).ToList();
+            Check(flinches.Count > 0, "no flinch");
+            bool moved = flinches.Any(f => r.Hand.Skip(f).Take(Hz / 5 + 1).Any(h => Dist(h) > 0.023f));
+            Check(moved, "no flinch moved the hand over 2.3 cm from the hold point");
+
+            Check(r.HandOutMs is { } o && o - broke <= 300, $"hand out at {r.HandOutMs}, will broke at {broke}");
+            Check(r.Run.EndMs == r.HandOutMs, "the run should end when the hand is out");
+        }),
+
+        ("body: switching the box off at 5 s ends the run with the will intact and the hand still in the box", () =>
+        {
+            var r = BodyPainBox.Run(OnBody with { BoxDisableAtSeconds = 5.0 }, 1);
+            Check(r.Run.Outcome == Outcome.BoxDisabled && r.Run.TimeToBreakMs is null, $"outcome {r.Run.Outcome}");
+            Check(r.HandOutMs is null && r.Hand[^1].InBox, "the hand left the box");
+            Check(r.Run.Timeline.Last().Resolve > 0.0, "resolve should be above zero");
+        }),
+
+        ("body: holding costs strain and strain shows: hand speed before the break exceeds hand speed after the ramp", () =>
+        {
+            var r = BodyPainBox.Run(OnBody, 1);
+            int breakTick = Tick(r.Run.TimeToBreakMs!.Value);
+            double early = SpeedRms(r, 2 * Hz, 4 * Hz), late = SpeedRms(r, breakTick - 2 * Hz, breakTick);
+            Check(late > early, $"speed RMS {late:F4} m/s in the 2 s before the break, {early:F4} m/s in the 2 s after the ramp");
+        }),
+
+        ("body: a box at intensity 0 for 10 s: no flinch, no break, the hand holds still", () =>
+        {
+            var r = BodyPainBox.Run(OnBody with { BoxIntensity = 0.0, MaxSeconds = 10.0 }, 1);
+            Check(r.Run.Outcome == Outcome.Endured && r.Run.Flinches == 0 && r.Run.TimeToBreakMs is null, r.Run.Summary());
+            for (int i = 3 * Hz; i < r.Hand.Count; i++) Check(Dist(r.Hand[i]) <= 0.023f, $"drift {Dist(r.Hand[i]):F3} m at tick {i}");
+        }),
+
         ("CLI run is deterministic and sweep reports a break-time line", () =>
         {
             string Run(params string[] a) { var w = new StringWriter(); BadDay.Cli.Program.Execute(a, w); return w.ToString(); }
@@ -118,6 +171,25 @@ public static class Program
             Check(threw, "missing --seed should be rejected");
         }),
     };
+
+    private static int Tick(long ms) => (int)Math.Round(ms * Hz / 1000.0);
+
+    private static float Dist(HandSample h)
+    {
+        var c = BodyPainBox.HoldPoint;
+        return MathF.Sqrt((h.X - c.X) * (h.X - c.X) + (h.Y - c.Y) * (h.Y - c.Y) + (h.Z - c.Z) * (h.Z - c.Z));
+    }
+
+    private static double SpeedRms(BodyPainBoxResult r, int from, int to)
+    {
+        double sum = 0;
+        for (int i = from + 1; i < to; i++)
+        {
+            double dx = r.Hand[i].X - r.Hand[i - 1].X, dy = r.Hand[i].Y - r.Hand[i - 1].Y, dz = r.Hand[i].Z - r.Hand[i - 1].Z;
+            sum += (dx * dx + dy * dy + dz * dz) * Hz * Hz;
+        }
+        return Math.Sqrt(sum / (to - from - 1));
+    }
 
     public static int Main()
     {

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The pain box on the Ymir ragdoll. Builds Ymir's native library through Lodur.Body.Ymir (cmake and a C compiler needed). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>BadDay.Ymir</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\BadDay.Core\BadDay.Core.csproj" />
+    <ProjectReference Include="$(LodurRoot)\src\Lodur.Body.Ymir\Lodur.Body.Ymir.csproj" />
+  </ItemGroup>
+</Project>

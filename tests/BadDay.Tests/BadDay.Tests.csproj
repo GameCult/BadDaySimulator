@@ -10,5 +10,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\BadDay.Core\BadDay.Core.csproj" />
     <ProjectReference Include="..\..\src\BadDay.Cli\BadDay.Cli.csproj" />
+    <ProjectReference Include="..\..\src\BadDay.Ymir\BadDay.Ymir.csproj" />
   </ItemGroup>
 </Project>
