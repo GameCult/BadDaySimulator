@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using CultMath;
 using Godot;
 using Ymir.Box3D;
@@ -7,28 +8,34 @@ using Ymir.Box3D;
 namespace BadDay.Client;
 
 /// <summary>
-/// The puppet: its drawn surface is one skinned SDF isosurface mesh (<see cref="PuppetField"/>) over the dynamic bodies,
-/// flat-shaded, built once and rebuilt only when the topology signature (the shape bodies and the joints that blend them)
-/// changes. Per-StableId Node3D carriers hold the pose lanes so physics interpolation has something to interpolate, and
-/// every frame the bones are those carriers' interpolated transforms relative to the spread bind pose.
+/// The puppet: its drawn surface is one SDF isosurface mesh (<see cref="PuppetField"/>) over the dynamic bodies, flat-shaded
+/// with a soft bevel, built once and rebuilt only when the topology signature (the shape bodies and the joints that blend them)
+/// changes. Per-StableId Node3D carriers hold the pose lanes so physics interpolation has something to interpolate, and every
+/// frame <see cref="PuppetSkin"/> skins the surface on the CPU by those carriers' interpolated transforms relative to the spread
+/// bind pose and derives its facets, creases and vertex normals; this class uploads the result into the mesh's two streams in place.
 /// </summary>
 public partial class Puppet : Node3D
 {
+    /// <summary>Bytes per triangle corner in the vertex stream (VERTEX, float3) and in the attribute stream (CUSTOM0 float4, CUSTOM1..3 float3 each).</summary>
+    private const int VertexBytes = 12, AttributeBytes = 52;
+
     private readonly Dictionary<ulong, Node3D> _nodes = new();
     private readonly HashSet<ulong> _seen = new();
     private readonly ShaderMaterial _material = new() { Shader = GD.Load<Shader>("res://puppet.gdshader") };
     private readonly MeshInstance3D _skin = new MeshInstance3D { Name = "Skin" };
-    private readonly Godot.Collections.Array _bones = new();
     private readonly PuppetModel _model = new(Look.SminRadius, Look.JointBallScale, Look.BoxRound);
     private ArrayMesh? _mesh;
     private Node3D[] _boneNodes = Array.Empty<Node3D>();
     private Transform3D[] _inverseBind = Array.Empty<Transform3D>();
+    private Rigid[] _bones = Array.Empty<Rigid>();
+    private PuppetSkin? _surface;
+    private byte[] _vertexStream = Array.Empty<byte>(), _attributeStream = Array.Empty<byte>();
 
     public Puppet()
     {
         _material.SetShaderParameter("albedo", Look.Figure);
-        _material.SetShaderParameter("bevel_width", Look.BevelWidth);
-        for (int i = 0; i < PuppetModel.MaxBones; i++) _bones.Add(new Projection(Transform3D.Identity));
+        _material.SetShaderParameter("bevel_screen", Look.BevelScreen);
+        _material.SetShaderParameter("bevel_min", Look.BevelMin);
         _skin.MaterialOverride = _material;
     }
 
@@ -104,22 +111,18 @@ public partial class Puppet : Node3D
 
     public override void _Process(double delta)
     {
-        if (Shape is null) return;
-        // The bones take a body from the spread bind to its world pose. VERTEX is in the skin's model space, which Godot then
-        // carries to the world with the skin's own transform, so the bones are taken into that space first: the puppet is right
-        // under any parent, not only at the origin.
+        if (_surface is null || _mesh is null) return;
+        // The bones take a body from the spread bind to its pose in the skin's model space, which Godot then carries to the world with
+        // the skin's own transform: the puppet is right under any parent, not only at the origin.
         var toModel = _skin.GetGlobalTransformInterpolated().AffineInverse();
-        var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
-        var hi = new Vector3(float.MinValue, float.MinValue, float.MinValue);
-        for (int i = 0; i < _boneNodes.Length; i++)
-        {
-            var t = toModel * _boneNodes[i].GetGlobalTransformInterpolated();
-            _bones[i] = new Projection(t * _inverseBind[i]);
-            lo = lo.Min(t.Origin); hi = hi.Max(t.Origin);
-        }
-        _material.SetShaderParameter("bones", _bones);
-        var pad = new Vector3(Shape.Reach, Shape.Reach, Shape.Reach);
-        _mesh!.CustomAabb = new Aabb(lo - pad, hi - lo + 2 * pad);
+        for (int i = 0; i < _boneNodes.Length; i++) _bones[i] = ToRigid(toModel * _boneNodes[i].GetGlobalTransformInterpolated() * _inverseBind[i]);
+        _surface.Update(_bones);
+        Pack(_surface, Shape!.Corners, _vertexStream, _attributeStream);
+        var rid = _mesh.GetRid();
+        RenderingServer.MeshSurfaceUpdateVertexRegion(rid, 0, 0, _vertexStream);
+        RenderingServer.MeshSurfaceUpdateAttributeRegion(rid, 0, 0, _attributeStream);
+        var lo = _surface.Lo; var hi = _surface.Hi;
+        _mesh.CustomAabb = new Aabb(new Vector3(lo.x, lo.y, lo.z), new Vector3(hi.x - lo.x, hi.y - lo.y, hi.z - lo.z));
     }
 
     private static bool IsPuppet(uint kind) => (Box3DSoaKind)kind != Box3DSoaKind.StaticBox;
@@ -137,65 +140,73 @@ public partial class Puppet : Node3D
         return true;
     }
 
-    /// <summary>Takes up the model's new shape: the carriers that are its bones, their inverse bind, and the mesh.</summary>
+    /// <summary>Takes up the model's new shape: the carriers that are its bones, their inverse bind, the skin's buffers and the mesh layout.</summary>
     private void Rebuild()
     {
         if (_model.Shape is not { } shape)
         {
-            GD.PushError($"BadDay: the puppet has more than {PuppetModel.MaxBones} shape bodies, which is the skin's bone count; drawing no puppet.");
-            _mesh = null; _skin.Mesh = null;
+            GD.PushError($"BadDay: the puppet has more than {PuppetModel.MaxBones} shape bodies, which is the most it draws; drawing no puppet.");
+            _mesh = null; _surface = null; _skin.Mesh = null;
             return;
         }
-        _boneNodes = new Node3D[shape.Ids.Length]; _inverseBind = new Transform3D[shape.Ids.Length];
+        _boneNodes = new Node3D[shape.Ids.Length]; _inverseBind = new Transform3D[shape.Ids.Length]; _bones = new Rigid[shape.Ids.Length];
         for (int i = 0; i < shape.Ids.Length; i++) { _boneNodes[i] = _nodes[shape.Ids[i]]; _inverseBind[i] = ToTransform(shape.SpreadBind[i].Inverse()); }
-        _mesh = MeshOf(shape);
+        _surface = new PuppetSkin(shape);
+        _vertexStream = new byte[VertexBytes * shape.Corners.Length]; _attributeStream = new byte[AttributeBytes * shape.Corners.Length];
+        _mesh = LayoutOf(shape.Corners.Length);
+        var surface = RenderingServer.MeshGetSurface(_mesh.GetRid(), 0);
+        int vertexLength = surface["vertex_data"].AsByteArray().Length, attributeLength = surface["attribute_data"].AsByteArray().Length;
+        if (vertexLength != _vertexStream.Length || attributeLength != _attributeStream.Length)
+            throw new InvalidOperationException($"BadDay: the puppet mesh holds {vertexLength} and {attributeLength} bytes of vertex and attribute data, not the {_vertexStream.Length} and {_attributeStream.Length} it is filled with.");
         MeshBuilds++;
         _skin.Mesh = _mesh;
     }
 
     /// <summary>
-    /// The shape as one surface: VERTEX in the spread bind, the facet NORMAL, CUSTOM0 (the edge-distance basis: vertex k of a triangle holds
-    /// its altitude h_k = 2 * area / |edge k| in component k and 0 in the others, the triangle's smallest altitude in w), CUSTOM1 (bone A,
-    /// bone B, weight A) and CUSTOM2 (the triangle's three creases: zero until PuppetSkin derives them, so the bevel does nothing here).
+    /// A surface of <paramref name="corners"/> vertices that only fixes the layout the frames fill in place (nothing is rebuilt per frame):
+    /// the vertex stream is VERTEX alone, the attribute stream CUSTOM0 (RgbaFloat: component k holds the altitude h_k of corner k, w the
+    /// triangle's smallest altitude), CUSTOM1 (the triangle's three creases), CUSTOM2 (the facet normal) and CUSTOM3 (the corner's vertex
+    /// normal), all in the skin's model space.
     /// </summary>
-    private static ArrayMesh MeshOf(PuppetShape s)
+    private static ArrayMesh LayoutOf(int corners)
     {
-        int n = s.Corners.Length;
-        var vertex = new Vector3[n]; var normal = new Vector3[n]; var edge = new float[4 * n]; var skin = new float[3 * n]; var crease = new float[3 * n];
-        for (int t = 0; t < n; t += 3)
-        {
-            var p = new[] { s.Vertices[s.Corners[t]], s.Vertices[s.Corners[t + 1]], s.Vertices[s.Corners[t + 2]] };
-            var cross = CultMath.math.cross(p[1] - p[0], p[2] - p[0]);
-            float twiceArea = CultMath.math.length(cross);
-            var facet = -cross / twiceArea;
-            var h = new float[3];
-            for (int k = 0; k < 3; k++)
-            {
-                float length = CultMath.math.length(p[(k + 1) % 3] - p[(k + 2) % 3]);
-                h[k] = length > 0 ? twiceArea / length : 0;
-            }
-            float smallest = Mathf.Min(h[0], Mathf.Min(h[1], h[2]));
-            for (int k = 0; k < 3; k++)
-            {
-                int i = t + k, c = s.Corners[i];
-                vertex[i] = new Vector3(p[k].x, p[k].y, p[k].z);
-                normal[i] = new Vector3(facet.x, facet.y, facet.z);
-                skin[3 * i] = s.BoneA[c]; skin[3 * i + 1] = s.BoneB[c]; skin[3 * i + 2] = s.WeightA[c];
-                edge[4 * i + k] = h[k]; edge[4 * i + 3] = smallest;
-            }
-        }
         var arrays = new Godot.Collections.Array();
         arrays.Resize((int)Mesh.ArrayType.Max);
-        arrays[(int)Mesh.ArrayType.Vertex] = vertex;
-        arrays[(int)Mesh.ArrayType.Normal] = normal;
-        arrays[(int)Mesh.ArrayType.Custom0] = edge;
-        arrays[(int)Mesh.ArrayType.Custom1] = skin;
-        arrays[(int)Mesh.ArrayType.Custom2] = crease;
+        arrays[(int)Mesh.ArrayType.Vertex] = new Vector3[corners];
+        arrays[(int)Mesh.ArrayType.Custom0] = new float[4 * corners];
+        arrays[(int)Mesh.ArrayType.Custom1] = new float[3 * corners];
+        arrays[(int)Mesh.ArrayType.Custom2] = new float[3 * corners];
+        arrays[(int)Mesh.ArrayType.Custom3] = new float[3 * corners];
         var format = (Mesh.ArrayFormat)(((int)Mesh.ArrayCustomFormat.RgbaFloat << (int)Mesh.ArrayFormat.FormatCustom0Shift)
             | ((int)Mesh.ArrayCustomFormat.RgbFloat << (int)Mesh.ArrayFormat.FormatCustom1Shift)
-            | ((int)Mesh.ArrayCustomFormat.RgbFloat << (int)Mesh.ArrayFormat.FormatCustom2Shift));
+            | ((int)Mesh.ArrayCustomFormat.RgbFloat << (int)Mesh.ArrayFormat.FormatCustom2Shift)
+            | ((int)Mesh.ArrayCustomFormat.RgbFloat << (int)Mesh.ArrayFormat.FormatCustom3Shift));
         var mesh = new ArrayMesh();
         mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays, null, null, format);
         return mesh;
+    }
+
+    /// <summary>Writes the skin's surface, one triangle corner after another, into the two streams (no allocation).</summary>
+    private static void Pack(PuppetSkin skin, int[] corners, byte[] vertexStream, byte[] attributeStream)
+    {
+        var vertex = MemoryMarshal.Cast<byte, float>(vertexStream);
+        var attribute = MemoryMarshal.Cast<byte, float>(attributeStream);
+        for (int t = 0; t < corners.Length / 3; t++)
+        {
+            var facet = skin.Facet[t];
+            for (int k = 0; k < 3; k++)
+            {
+                int slot = 3 * t + k, c = corners[slot];
+                var p = skin.Skinned[c];
+                vertex[3 * slot] = p.x; vertex[3 * slot + 1] = p.y; vertex[3 * slot + 2] = p.z;
+                int o = AttributeBytes / 4 * slot;
+                attribute[o] = k == 0 ? skin.Altitude[3 * t] : 0; attribute[o + 1] = k == 1 ? skin.Altitude[3 * t + 1] : 0; attribute[o + 2] = k == 2 ? skin.Altitude[3 * t + 2] : 0;
+                attribute[o + 3] = skin.SmallestAltitude[t];
+                attribute[o + 4] = skin.Crease[3 * t]; attribute[o + 5] = skin.Crease[3 * t + 1]; attribute[o + 6] = skin.Crease[3 * t + 2];
+                attribute[o + 7] = facet.x; attribute[o + 8] = facet.y; attribute[o + 9] = facet.z;
+                var n = skin.VertexNormal[c];
+                attribute[o + 10] = n.x; attribute[o + 11] = n.y; attribute[o + 12] = n.z;
+            }
+        }
     }
 }

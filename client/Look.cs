@@ -23,11 +23,16 @@ public static class Look
     public const float BoxRound = 0.03f;
 
     /// <summary>
-    /// The width (m) each side of a puppet edge over which the facet normal turns to the edge's bisector: 4 mm, the recommended
-    /// option of the open question lodur:question:bds-puppet-bevel-width (0 keeps hard facets; 10 mm makes curved limbs read as smooth).
-    /// An answer changes this constant and nothing else.
+    /// The bevel's width each side of a puppet edge, as a fraction of the viewport's height: 2 px of a 720-line screen. The recommended
+    /// option (screen-2px) of the open question lodur:question:bds-puppet-bevel-look-width: at the play camera a pixel is about 3.5 mm
+    /// and the facets about 11 px, so a fixed 4 mm bevel is one pixel and reads as hard facets, while a width on the screen keeps the soft
+    /// edge visible there and narrow close up. 0 with <see cref="BevelMin"/> as the width is a world width; an answer changes these two
+    /// constants and nothing else.
     /// </summary>
-    public const float BevelWidth = 0.004f;
+    public const float BevelScreen = 2f / 720f;
+
+    /// <summary>The narrowest bevel (m) however near the camera is: 3 mm, so a puppet filling the screen still has soft edges.</summary>
+    public const float BevelMin = 0.003f;
 
     public static Godot.Environment Environment() => new()
     {

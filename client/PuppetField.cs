@@ -73,9 +73,6 @@ public sealed class PuppetShape
     /// </summary>
     public required int[] Across { get; init; }
 
-    /// <summary>How far a skinned vertex can lie from its bone's origin.</summary>
-    public required float Reach { get; init; }
-
     /// <summary>The mesher's own account of its untangle: how many vertices it pulled back toward their net position, and the worst distance (m) of one of them from the isosurface.</summary>
     public required int Pulled { get; init; }
     public required float OffSurface { get; init; }
@@ -160,12 +157,10 @@ public static class PuppetField
     {
         int n = bodies.Count;
         var lo = new float3(float.MaxValue, float.MaxValue, float.MaxValue); var hi = new float3(float.MinValue, float.MinValue, float.MinValue);
-        float reach = 0;
         for (int i = 0; i < n; i++)
         {
             float r = f.Extent(i);
             lo = math.min(lo, t[i].T - r); hi = math.max(hi, t[i].T + r);
-            reach = MathF.Max(reach, r);
             if (f.BallR[i] > 0) { lo = math.min(lo, f.Ball[i] - f.BallR[i]); hi = math.max(hi, f.Ball[i] + f.BallR[i]); }
         }
         float pad = smin + 2 * cell;
@@ -208,8 +203,6 @@ public static class PuppetField
             }
         var across = Across(corners);
 
-        float maxBall = 0;
-        for (int i = 0; i < n; i++) maxBall = MathF.Max(maxBall, f.BallR[i]);
         var ids = new ulong[n];
         for (int i = 0; i < n; i++) ids[i] = bodies[i].Id;
         var js = new (Box3DSoaJointKind, int, int, float3)[joints.Count];
@@ -218,7 +211,7 @@ public static class PuppetField
         {
             Ids = ids, SpreadBind = t, Joints = js,
             Vertices = vertices.ToArray(), BoneA = ba.ToArray(), BoneB = bb.ToArray(), WeightA = wa.ToArray(), Corners = corners, Across = across,
-            Reach = 2 * reach + 2 * maxBall + smin, Pulled = pulled, OffSurface = offSurface,
+            Pulled = pulled, OffSurface = offSurface,
         };
     }
 

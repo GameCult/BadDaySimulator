@@ -1,36 +1,39 @@
 shader_type spatial;
 render_mode cull_back;
 
-// The puppet is one mesh skinned to the bodies: each vertex carries two bones and the first one's weight in CUSTOM1
-// (x: bone A, y: bone B, z: weight of A). bones[i] is world-from-spread-bind for body i. The shadow and depth passes
-// run vertex() too, so they skin the same way. NORMAL is the facet normal, turned by the skin blend.
+// The puppet is one mesh that the CPU skins and shapes every frame (PuppetSkin), so the shader draws what it is given and moves
+// nothing: VERTEX is already where the body is, and the colour, depth and shadow passes all draw those positions.
 //
-// The soft bevel is the facet normal tilted toward each edge's bisector, within bevel_width of the edge. Two more attributes
-// carry what it needs from the mesh, the same at the three corners of a triangle where noted:
-//   CUSTOM0: vertex k holds its own altitude h_k in component k and 0 in the others (so the interpolated component k is the
-//            distance, in bind metres, to edge k, the edge opposite vertex k); w is the triangle's smallest altitude.
-//   CUSTOM2: the triangle's three creases, crease[k] for edge k: half the turn from this facet's normal to the neighbour's,
-//            positive where the edge is convex (PuppetShape.Crease).
-// The in-plane direction to each edge comes from screen derivatives of the distances, so the shader never evaluates the SDF.
-// At an edge the tilt is exactly the bisector from both sides, so the normal is continuous across it.
-const int MAX_BONES = 32;
-uniform mat4 bones[MAX_BONES];
+// The soft bevel is the facet normal tilted toward each edge's bisector, within a width of the edge, and blended to the smooth
+// vertex normal where edges meet. Each corner of a triangle carries:
+//   CUSTOM0: corner k holds its own altitude h_k in component k and 0 in the others (so the interpolated component k is the
+//            distance, in metres, to edge k, the edge opposite corner k); w is the triangle's smallest altitude.
+//   CUSTOM1: the triangle's three creases, crease[k] for edge k: half the turn from this facet to the neighbour's across that edge,
+//            positive where the edge is convex, the same on both sides of the edge.
+//   CUSTOM2: the facet normal (NORMAL in vertex()).
+//   CUSTOM3: this corner's vertex normal, the area-weighted mean of the facets that meet there; interpolated, it is the same on both
+//            sides of an edge.
+// All of it is in model space and derived from the pose being drawn, never from the bind. The in-plane direction to each edge comes from
+// screen derivatives of the distances, so the shader never evaluates the SDF. At an edge the tilt is exactly the bisector from both
+// sides, so the normal is continuous across it.
+//
+// The width is on the screen: bevel_screen is a fraction of the viewport's height and the distance across one pixel (metres per pixel,
+// from the derivatives of the distance to the edge) turns it into metres; bevel_min floors it, and half the triangle's smallest altitude
+// caps it so the bands of one triangle never meet. A world width is bevel_screen 0 and bevel_min the width.
 uniform vec3 albedo : source_color = vec3(0.9, 0.9, 0.88);
-uniform float bevel_width = 0.0;
+uniform float bevel_screen = 0.0;
+uniform float bevel_min = 0.0;
 uniform bool show_normals = false; // RenderCheck's view of the shading normal: the normal in view space as emission, rgb = n * 0.5 + 0.5.
 
 varying vec4 edge;
 varying vec3 crease;
+varying vec3 vertex_normal;
 
 void vertex() {
-	int a = int(CUSTOM1.x + 0.5);
-	int b = int(CUSTOM1.y + 0.5);
-	float w = CUSTOM1.z;
-	mat4 m = bones[a] * w + bones[b] * (1.0 - w);
-	VERTEX = (m * vec4(VERTEX, 1.0)).xyz;
-	NORMAL = normalize(mat3(m) * NORMAL);
+	NORMAL = CUSTOM2.xyz;
 	edge = CUSTOM0;
-	crease = CUSTOM2.xyz;
+	crease = CUSTOM1.xyz;
+	vertex_normal = (MODELVIEW_MATRIX * vec4(CUSTOM3.xyz, 0.0)).xyz;
 }
 
 void fragment() {
@@ -38,24 +41,40 @@ void fragment() {
 	// Derivatives are undefined in non-uniform control flow: take them all here, branch afterwards.
 	vec3 dx = dFdx(VERTEX);
 	vec3 dy = dFdy(VERTEX);
+	vec3 fx = dFdx(edge.xyz);
+	vec3 fy = dFdy(edge.xyz);
 	vec3 r1 = cross(dy, n);
 	vec3 r2 = cross(n, dx);
 	float det = dot(dx, r1);
-	vec3 fx = dFdx(edge.xyz);
-	vec3 fy = dFdy(edge.xyz);
-	float width = min(bevel_width, 0.5 * edge.w);
-	if (width > 0.0 && abs(det) > 1e-20) {
+	if (abs(det) > 1e-20) {
+		vec3 g[3];
+		float width[3];
 		vec3 tilt = vec3(0.0);
 		for (int k = 0; k < 3; k++) {
 			// The in-plane gradient of the distance to edge k points into the facet; the normal tips the other way.
 			vec3 grad = (fx[k] * r1 + fy[k] * r2) / det;
 			float len = length(grad);
-			if (crease[k] != 0.0 && len > 1e-12) {
-				float s = 1.0 - smoothstep(0.0, width, edge[k]);
-				tilt += s * tan(clamp(crease[k], -1.4, 1.4)) * grad / len;
+			g[k] = len > 1e-12 ? grad / len : vec3(0.0);
+			float metres_per_pixel = length(vec2(fx[k], fy[k]));
+			width[k] = min(max(bevel_screen * VIEWPORT_SIZE.y * metres_per_pixel, bevel_min), 0.5 * edge.w);
+			if (crease[k] != 0.0 && width[k] > 0.0) {
+				float s = 1.0 - smoothstep(0.0, width[k], edge[k]);
+				tilt += s * tan(clamp(crease[k], -1.4, 1.4)) * g[k];
 			}
 		}
-		n = normalize(n - tilt);
+		// Near a corner two edges' bands overlap and their tilts add up to a notch; there the normal goes to the smooth vertex normal instead.
+		// Corner k is where edges i and j meet, and its exact distance from the pixel follows from the two edge distances and the angle between them.
+		float corner = 0.0;
+		for (int k = 0; k < 3; k++) {
+			int i = (k + 1) % 3;
+			int j = (k + 2) % 3;
+			float c = dot(g[i], g[j]);
+			float r_squared = (edge[i] * edge[i] + edge[j] * edge[j] - 2.0 * edge[i] * edge[j] * c) / max(1.0 - c * c, 1e-6);
+			float reach = 1.5 * max(width[i], width[j]);
+			if (reach > 0.0) corner = max(corner, 1.0 - smoothstep(0.0, reach, sqrt(max(r_squared, 0.0))));
+		}
+		n = normalize(n - (1.0 - corner) * tilt);
+		n = normalize(mix(n, normalize(vertex_normal), corner));
 	}
 	NORMAL = n;
 	ALBEDO = show_normals ? vec3(0.0) : albedo;

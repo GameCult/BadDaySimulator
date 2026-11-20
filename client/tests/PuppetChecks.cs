@@ -124,6 +124,7 @@ public static class PuppetChecks
 
         Mesher(puppet, Check);
         AcrossIsPositionWeld(puppet, Check);
+        SkinnedSurface(puppet, Check);
     }
 
     /// <summary>The corner slot's vertex, in the spread bind.</summary>
@@ -227,6 +228,78 @@ public static class PuppetChecks
         check(shape.Across.Length == shape.Corners.Length, $"the puppet has {shape.Across.Length} Across entries for {shape.Corners.Length} corner slots");
         check(shared > 1000, $"the Across check is vacuous: {shared} shared edges and {loose} not");
         check(wrong == 0, $"{wrong} corner slots' Across differs from the edge match a weld by position makes");
+    }
+
+    /// <summary>
+    /// <see cref="PuppetSkin"/> against the geometry it should describe, measured from its own skinned corners and the bones alone, at
+    /// bends of 0, 45 and 90 degrees (seeds 0 to 19): every vertex where the bones put it; per edge the same crease on both sides, half
+    /// the angle between the skinned facets with the sign of the edge's convexity there, or 0 on a skinned fold and on an edge with
+    /// no neighbour (a bind-time crease fails this at the bends: Soul counted 1368 sign flips at 90); the altitudes as 2 * area over the
+    /// edge's length; the facet and area-weighted vertex normals.
+    /// </summary>
+    private static void SkinnedSurface(PuppetShape shape, Action<bool, string> check)
+    {
+        var skin = new PuppetSkin(shape);
+        int moved = 0, shared = 0, creased = 0, folds = 0, badFold = 0, asymmetric = 0, notHalf = 0, badSign = 0, badLoose = 0, badAltitude = 0, badFacet = 0, badVertexNormal = 0;
+        foreach (float degrees in new[] { 0f, 45f, 90f })
+            for (int seed = 0; seed < 20; seed++)
+            {
+                var bones = Bend(shape, seed, degrees * MathF.PI / 180f);
+                skin.Update(bones);
+                var at = new float3[shape.Vertices.Length];
+                for (int v = 0; v < at.Length; v++)
+                {
+                    float w = shape.WeightA[v];
+                    at[v] = bones[shape.BoneA[v]].Apply(shape.Vertices[v]) * w + bones[shape.BoneB[v]].Apply(shape.Vertices[v]) * (1 - w);
+                    if (math.length(skin.Skinned[v] - at[v]) > 1e-5f) moved++;
+                }
+                float3 P(int slot) => at[shape.Corners[slot]];
+                float3 Outward(int t) => -math.cross(P(3 * t + 1) - P(3 * t), P(3 * t + 2) - P(3 * t));
+                var normal = new float3[shape.Triangles];
+                var vertexSum = new float3[at.Length];
+                for (int t = 0; t < normal.Length; t++)
+                {
+                    var outward = Outward(t);
+                    normal[t] = outward / math.length(outward);
+                    if (math.length(skin.Facet[t] - normal[t]) > 1e-4f) badFacet++;
+                    for (int k = 0; k < 3; k++) vertexSum[shape.Corners[3 * t + k]] += outward;
+                    for (int k = 0; k < 3; k++)
+                    {
+                        float h = math.length(outward) / math.length(P(3 * t + (k + 1) % 3) - P(3 * t + (k + 2) % 3));
+                        if (MathF.Abs(skin.Altitude[3 * t + k] - h) > 1e-6f) badAltitude++;
+                    }
+                    float smallest = MathF.Min(skin.Altitude[3 * t], MathF.Min(skin.Altitude[3 * t + 1], skin.Altitude[3 * t + 2]));
+                    if (skin.SmallestAltitude[t] != smallest) badAltitude++;
+                }
+                for (int v = 0; v < at.Length; v++) if (math.length(skin.VertexNormal[v] - vertexSum[v] / math.length(vertexSum[v])) > 1e-4f) badVertexNormal++;
+                for (int s = 0; s < shape.Across.Length; s++)
+                {
+                    int o = shape.Across[s];
+                    if (o < 0) { if (skin.Crease[s] != 0) badLoose++; continue; }
+                    if (o < s) continue;
+                    shared++;
+                    if (MathF.Abs(skin.Crease[s] - skin.Crease[o]) > 1e-5f) asymmetric++;
+                    float3 na = normal[s / 3], nb = normal[o / 3];
+                    float angle = MathF.Atan2(math.length(math.cross(na, nb)), math.dot(na, nb));
+                    if (angle < 1e-2f) continue; // a flat edge has no convexity to speak of, and its crease is below the float noise of the sign
+                    bool convexA = math.dot(na, P(o) - P(3 * (s / 3) + (s % 3 + 1) % 3)) < 0;
+                    bool convexB = math.dot(nb, P(s) - P(3 * (o / 3) + (o % 3 + 1) % 3)) < 0;
+                    if (convexA != convexB) { folds++; if (skin.Crease[s] != 0 || skin.Crease[o] != 0) badFold++; continue; }
+                    creased++;
+                    if (MathF.Abs(MathF.Abs(skin.Crease[s]) - 0.5f * angle) > 1e-4f) notHalf++;
+                    if ((skin.Crease[s] > 0) != convexA || (skin.Crease[o] > 0) != convexB) badSign++;
+                }
+            }
+        check(shared > 60 * 1000 && creased > 60 * 100, $"the skin check is vacuous: {shared} shared edges, {creased} turning more than a hundredth of a radian, over 60 poses");
+        check(moved == 0, $"{moved} skinned vertices are not where the bones put them");
+        check(badFacet == 0, $"{badFacet} facet normals differ from the skinned corners'");
+        check(badVertexNormal == 0, $"{badVertexNormal} vertex normals differ from the area-weighted sum of their skinned facets");
+        check(badAltitude == 0, $"{badAltitude} altitudes differ from 2 * area / edge length of the skinned triangle");
+        check(asymmetric == 0, $"{asymmetric} of {shared} shared edges carry different creases on their two sides");
+        check(notHalf == 0, $"{notHalf} of {creased} turning edges have a crease that is not half the angle between the skinned facets");
+        check(badSign == 0, $"{badSign} of {creased} turning edges have a crease whose sign does not match the skinned convexity");
+        check(badFold == 0, $"{badFold} of {folds} skinned folds carry a crease");
+        check(badLoose == 0, $"{badLoose} edges without exactly one neighbour carry a crease");
     }
 
     /// <summary>The mesh's connected pieces.</summary>
