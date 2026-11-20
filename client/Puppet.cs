@@ -143,12 +143,7 @@ public partial class Puppet : Node3D
     /// <summary>Takes up the model's new shape: the carriers that are its bones, their inverse bind, the skin's buffers and the mesh layout.</summary>
     private void Rebuild()
     {
-        if (_model.Shape is not { } shape)
-        {
-            GD.PushError($"BadDay: the puppet has more than {PuppetModel.MaxBones} shape bodies, which is the most it draws; drawing no puppet.");
-            _mesh = null; _surface = null; _skin.Mesh = null;
-            return;
-        }
+        var shape = _model.Shape!;
         _boneNodes = new Node3D[shape.Ids.Length]; _inverseBind = new Transform3D[shape.Ids.Length]; _bones = new Rigid[shape.Ids.Length];
         for (int i = 0; i < shape.Ids.Length; i++) { _boneNodes[i] = _nodes[shape.Ids[i]]; _inverseBind[i] = ToTransform(shape.SpreadBind[i].Inverse()); }
         _surface = new PuppetSkin(shape);
