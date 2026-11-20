@@ -1,5 +1,6 @@
 shader_type spatial;
 render_mode cull_back;
+#include "res://studio.gdshaderinc"
 
 // The puppet is one mesh that the CPU skins and shapes every frame (PuppetSkin), so the shader draws what it is given and moves
 // nothing: VERTEX is already where the body is, and the colour, depth and shadow passes all draw those positions.
@@ -20,9 +21,20 @@ render_mode cull_back;
 // The width is on the screen: bevel_screen is a fraction of the viewport's height and the distance across one pixel (metres per pixel,
 // from the derivatives of the distance to the edge) turns it into metres; bevel_min floors it, and half the triangle's smallest altitude
 // caps it so the bands of one triangle never meet. A world width is bevel_screen 0 and bevel_min the width.
+//
+// The puppet is glazed porcelain. The bisque is the PBR surface (roughness, specular, backlight) lit by Look's studio lights. The glaze
+// is analytic: Fresnel times the studio (studio.gdshaderinc) in the direction the shading normal reflects the view, added as emission, so
+// it needs no radiance map and draws the same under gl_compatibility, whose clearcoat sees punctual lights only. The bevel's tilted
+// normal feeds it, so the chamfers glint. Where two facets meet in a concave crease the glaze pools: the albedo goes darker and cooler,
+// and warmer over a convex bevel. Every number comes from Look.Glaze.
 uniform vec3 albedo : source_color = vec3(0.9, 0.9, 0.88);
 uniform float bevel_screen = 0.0;
 uniform float bevel_min = 0.0;
+uniform float roughness = 1.0;
+uniform float specular = 0.0;
+uniform vec3 backlight = vec3(0.0);
+uniform float glaze = 0.0; // 0 is the bisque alone
+uniform float glaze_pool = 0.0;
 uniform bool show_normals = false; // RenderCheck's view of the shading normal: the normal in view space as emission, rgb = n * 0.5 + 0.5.
 
 varying vec4 edge;
@@ -77,8 +89,26 @@ void fragment() {
 		n = normalize(mix(n, normalize(vertex_normal), corner));
 	}
 	NORMAL = n;
-	ALBEDO = show_normals ? vec3(0.0) : albedo;
+	// The creases within 6 mm of an edge: concave tints the albedo cooler and darker, convex warmer.
+	float convex = 0.0, concave = 0.0;
+	for (int k = 0; k < 3; k++) {
+		float near = 1.0 - smoothstep(0.0, 0.006, edge[k]);
+		convex = max(convex, near * clamp(crease[k] * 2.0, 0.0, 1.0));
+		concave = max(concave, near * clamp(-crease[k] * 2.0, 0.0, 1.0));
+	}
+	vec3 a = albedo;
+	a = mix(a, a * vec3(0.80, 0.82, 0.86), glaze_pool * concave);
+	a = mix(a, a * vec3(1.02, 0.99, 0.94), glaze_pool * convex);
+	ALBEDO = show_normals ? vec3(0.0) : a;
+	// RenderCheck's normal view is the emission alone: no light, however shiny the bisque, may add to it.
+	ROUGHNESS = show_normals ? 1.0 : roughness;
+	SPECULAR = show_normals ? 0.0 : specular;
+	BACKLIGHT = show_normals ? vec3(0.0) : backlight;
 	EMISSION = show_normals ? n * 0.5 + 0.5 : vec3(0.0);
-	ROUGHNESS = 1.0;
-	SPECULAR = 0.0;
+	if (!show_normals && glaze > 0.0) {
+		vec3 r = reflect(-VIEW, n);
+		if (!studio_in_view) r = mat3(INV_VIEW_MATRIX) * r;
+		float f = 0.04 + 0.96 * pow(1.0 - clamp(dot(n, VIEW), 0.0, 1.0), 5.0);
+		EMISSION += glaze * f * studio(r);
+	}
 }
