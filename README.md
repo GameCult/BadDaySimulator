@@ -54,8 +54,8 @@ withdrawal events) and a one-line summary. Options: `--intensity`, `--pull`,
 steps; the native Ymir library builds with cmake and a C compiler on first
 build) and adds a line with the time the hand left the box. The body run is also a stepping
 session, `BodyPainBoxSession` (create, `Step`, read `Hand` and the world's lanes, `SetIntensity`,
-`SwitchOff`, dispose), that the Godot client drives and `run --body` steps to the end; `BadDay.Core` and
-`BadDay.Ymir` target net8.0 for Godot, the executables and tests net10.0. Nothing renders the puppet yet.
+`SwitchOff`, `DrainEvents`, dispose), that the Godot client drives and `run --body` steps to the end; `BadDay.Core` and
+`BadDay.Ymir` target net8.0 for Godot, the executables and tests net10.0. Events queue per tick until drained, so a frame spanning several steps loses none. Stepping past the end keeps the body moving; that free motion is float arithmetic on the platform's math and is not bit-identical across operating systems (the run itself is). Nothing renders the puppet yet.
 
 ### Modeled
 
