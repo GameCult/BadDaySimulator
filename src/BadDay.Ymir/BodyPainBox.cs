@@ -155,8 +155,11 @@ public sealed class BodyPainBoxSession : IDisposable
     /// <summary>Ticks run so far; the tick the next <see cref="Step"/> runs.</summary>
     public long TickIndex { get { Live(); return _session.TickIndex; } }
 
-    /// <summary>The box's intensity as written on the latest tick.</summary>
-    public double BoxIntensity { get { Live(); return _session.Box.Intensity; } }
+    /// <summary>Whether the box is on: until a switch-off (<see cref="SwitchOff"/>, the disable time), which counts from the call even after the run has ended.</summary>
+    public bool BoxOn { get { Live(); return _session.BoxOn; } }
+
+    /// <summary>The box's intensity as written on the latest tick, and 0 once the box is off: what a player sees the box doing.</summary>
+    public double BoxIntensity { get { Live(); return _session.BoxOn ? _session.Box.Intensity : 0.0; } }
 
     /// <summary>The stimulus volume the hand is held in (a copy), for drawing the chamber.</summary>
     public BoxStimulus Chamber { get { Live(); return _session.Box; } }

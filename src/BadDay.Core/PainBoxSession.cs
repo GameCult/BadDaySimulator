@@ -62,6 +62,13 @@ public sealed class PainBoxSession
     /// <summary>True from the tick the Brain's withdraw goal takes over, its deliberate latency after the will breaks.</summary>
     public bool Withdrew { get; private set; }
 
+    /// <summary>
+    /// Whether the box is on: until it is switched off (by <see cref="SwitchOff"/> or the parameters' disable time), from the
+    /// tick that switch names. It is the box's state, not the run's: a run that ended on the will breaking still has a box
+    /// the player can switch off.
+    /// </summary>
+    public bool BoxOn => TickIndex < _box.DisableTick;
+
     /// <summary>Sets the box intensity the ramp scales; it takes effect on the next <see cref="Tick"/>. <see cref="PainBox.Level"/> owns the range and refuses a level outside it.</summary>
     public void SetIntensity(double level) => _box.Level = level;
 

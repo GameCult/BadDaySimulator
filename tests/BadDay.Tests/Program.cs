@@ -295,6 +295,30 @@ public static class Program
             Check(control.BoxIntensity > 0.3 && live.BoxIntensity == 0.0, $"next tick: control {control.BoxIntensity}, live {live.BoxIntensity}");
         }),
 
+        ("body: the session owns whether the box is on: on until switched off or its disable time, off at once for the reader after a SwitchOff even when the run is over, and a run ended by the will breaking still takes the switch", () =>
+        {
+            using var live = new BodyPainBoxSession(OnBody, 1);
+            for (int i = 0; i < 4 * Hz; i++) live.Step();
+            Check(live.BoxOn && live.BoxIntensity > 0.3, $"on {live.BoxOn}, intensity {live.BoxIntensity}");
+            live.SwitchOff();
+            Check(!live.BoxOn && live.BoxIntensity == 0.0, "a switched-off box still reads on");
+            live.Step();
+            Check(live.Finished && live.Result().Outcome == Outcome.BoxDisabled && !live.BoxOn && live.BoxIntensity == 0.0, "a box that ended the run is not off");
+
+            using var scheduled = new BodyPainBoxSession(OnBody with { BoxDisableAtSeconds = 5.0 }, 1);
+            for (int i = 0; i < 5 * Hz - 1; i++) scheduled.Step();
+            Check(scheduled.BoxOn, "the box was off before its disable tick");
+            scheduled.Step();
+            Check(!scheduled.BoxOn, "the box was still on once the next tick is its disable tick");
+
+            using var broke = new BodyPainBoxSession(OnBody, 1);
+            while (!broke.Finished) broke.Step();
+            string render = broke.Result().Render();
+            Check(broke.Result().Outcome == Outcome.WillBroke && broke.BoxOn && broke.BoxIntensity > 0.3, "a run ended by the will breaking should leave the box on");
+            broke.SwitchOff();
+            Check(!broke.BoxOn && broke.BoxIntensity == 0.0 && broke.Result().Render() == render && broke.Result().Outcome == Outcome.WillBroke, "switching off after the run changed the box, or the result");
+        }),
+
         ("body: stepping past Finished keeps the world moving, the arm driven and the result frozen", () =>
         {
             using var s = new BodyPainBoxSession(OnBody, 1);
@@ -440,7 +464,7 @@ public static class Program
                 ("SwitchOff", () => s.SwitchOff()), ("DrainEvents", () => s.DrainEvents(new BodyEvent[4])), ("View", () => _ = s.View),
                 ("Finished", () => _ = s.Finished), ("TickIndex", () => _ = s.TickIndex), ("Excursions", () => _ = s.Excursions),
                 ("HandOutMs", () => _ = s.HandOutMs), ("BoxIntensity", () => _ = s.BoxIntensity), ("Pain", () => _ = s.Pain),
-                ("Chamber", () => _ = s.Chamber), ("Strain", () => _ = s.Strain), ("Resolve", () => _ = s.Resolve), ("Goal", () => _ = s.Goal),
+                ("Chamber", () => _ = s.Chamber), ("BoxOn", () => _ = s.BoxOn), ("Strain", () => _ = s.Strain), ("Resolve", () => _ = s.Resolve), ("Goal", () => _ = s.Goal),
             };
             foreach (var (name, call) in members)
             {
