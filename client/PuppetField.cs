@@ -296,7 +296,9 @@ public static class PuppetField
     public static PuppetShape Build(IReadOnlyList<PuppetBody> bodies, IReadOnlyList<PuppetJoint> joints)
     {
         var set = Pieces(bodies, joints);
-        return Assemble(set, set.Fields.Select(f => PuppetPieces.Get(f.Key, f).Result).ToArray());
+        var tasks = set.Fields.Select(f => PuppetPieces.Get(f.Key, f)).ToArray(); // all asked for before any is waited on: the keys build side by side
+        Task.WaitAll(tasks);
+        return Assemble(set, tasks.Select(t => t.Result).ToArray());
     }
 
     /// <summary>Places the pieces' meshes in the bind and welds them into one shape (no vertex is shared across pieces): a body's vertex is its bind applied, a ball's the joint origin plus it.</summary>
