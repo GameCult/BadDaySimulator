@@ -62,8 +62,12 @@ public sealed class PainBoxSession
     /// <summary>True from the tick the deliberate withdrawal begins.</summary>
     public bool Withdrew { get; private set; }
 
-    /// <summary>Sets the box intensity the ramp scales; it takes effect on the next <see cref="Tick"/>.</summary>
-    public void SetIntensity(double level) => _box.Level = level;
+    /// <summary>Sets the box intensity the ramp scales; it takes effect on the next <see cref="Tick"/>. Refuses a non-finite or negative level.</summary>
+    public void SetIntensity(double level)
+    {
+        if (!double.IsFinite(level) || level < 0.0) throw new ArgumentOutOfRangeException(nameof(level), level, "The box intensity is finite and not negative.");
+        _box.Level = level;
+    }
 
     /// <summary>Switches the box off from the next tick; the <see cref="Disabled"/> check then ends the run if the will still holds.</summary>
     public void SwitchOff() => _box.SwitchOff(TickIndex);
