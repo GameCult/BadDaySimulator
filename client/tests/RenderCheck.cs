@@ -12,9 +12,10 @@ namespace BadDay.Client.Tests;
 /// puppet alone on black, and compares the rendered silhouette with the silhouette of the same mesh skinned on the CPU from the
 /// carriers and the spread bind (not from anything Puppet computed) and projected through the camera. Intersection over union must be
 /// at least <see cref="MinIou"/>. It also looks at the light, with the chamber near full glow: the puppet's faces must not clip to white and must differ from each other, and the chamber's light must lift the puppet over the same frame with that light off (so the glow is bounded from below as well).
-/// It also reads the shading normal the shader draws (ShowNormals: the view-space normal as emission) close up and from afar on the torso and compares it
-/// pixel by pixel with a CPU reference of the whole formula (see <see cref="NormalCheck"/>), and the drawn normals of adjacent pixels across triangle boundaries.
-/// <c>godot --path client res://tests/RenderCheck.tscn [-- --png=path] [-- --normals-png=path] [-- --normals-far-png=path]</c>; exit code 0 passes, 1 fails. It needs a window, so it is
+/// It also reads the shading normal the shader draws (ShowNormals: the view-space normal as emission) on the torso in the <see cref="Views"/> (close, far,
+/// bent 90 degrees, and at 1920x1080 mid and far) and compares it pixel by pixel with a CPU reference of the whole formula (see <see cref="NormalCheck"/>), on all the interior pixels
+/// and on the pixels of the corner blend and of sharp creases alone, and the drawn normals of adjacent pixels across triangle boundaries.
+/// <c>godot --path client res://tests/RenderCheck.tscn [-- --png=path] [-- --normals-png=path] [-- --normals-far-png=path] [-- --normals-bend90-png=path] [-- --normals-mid-png=path] [-- --normals-far1080-png=path]</c>; exit code 0 passes, 1 fails. It needs a window, so it is
 /// not part of the headless smoke.
 /// </summary>
 public partial class RenderCheck : Node
@@ -23,7 +24,7 @@ public partial class RenderCheck : Node
     /// A correct render measures 1.0000 in this pose, on every run so far, so the floor sits at the measurement's noise. Soul's
     /// gross skinning mutants (a flipped weight, no inverse bind, the creation pose as the bind, an inverted CUSTOM1 weight, an
     /// ignored parent) measure 0.10 to 0.61; the localized ones (a forearm bone 10 degrees off 0.982, a bone 2 cm off 0.973, hard
-    /// weights 0.998) were under a floor of 0.95 and only fail at this one. Gap that remains: the culling box (the puppet stays on screen with a 1 cm box).
+    /// weights 0.998) were under a floor of 0.95 and only fail at this one. Gap that remains: the culling box (a box of half the skinned bounds around their centre passes; a 1 cm box culls the close view and fails).
     /// </summary>
     private const float MinIou = 0.999f;
 
@@ -46,14 +47,23 @@ public partial class RenderCheck : Node
     private const float MaxClampedMedian = 1.5f;
 
     /// <summary>
-    /// Vacuity floors: the check must reach this many interior pixels, band pixels and pixels of capped triangles, and the band's reference
-    /// normal must lie this many degrees (median) from the facet's, or a bevel that is off would pass. Far is the view at about 3.7 m.
+    /// Vacuity: the band's reference normal must lie this many degrees (median) from the facet's, or a bevel that is off would pass; each
+    /// <see cref="Views"/> entry also says how many interior, band, width-capped, corner-blend and sharp-crease pixels it must reach.
     /// </summary>
-    private const int MinKept = 200000, MinBand = 20000, MinClamped = 200, MinKeptFar = 10000, MinBandFar = 100, MinClampedFar = 150;
     private const float MinBandTilt = 4f;
 
-    /// <summary>Across triangle boundaries (close view): the share of adjacent pixel pairs differing by over 30 degrees, their 90th percentile, and the pairs the check must reach.</summary>
-    private const float MaxAcrossOver30 = 0.005f, MaxAcrossP90 = 6f;
+    /// <summary>
+    /// The corner blend, the part that takes the bevel to the smooth vertex normal where edges meet, is held on its own pixels (those it moves
+    /// past <see cref="CornerBlendFloor"/>), in a space and a radius the percentiles over all interior pixels do not see: the median angular error
+    /// there is at most <see cref="MaxCornerMedian"/>, and the blend must move the normal by at least <see cref="MinCornerEffect"/> degrees (median) or
+    /// the check cannot tell a blend that is off. The crease clamp is held the same way on the band pixels of edges whose half turn is
+    /// between <see cref="SharpCrease"/> and <see cref="SharpCreaseTop"/> radians (115 to 137 degrees of turn: a clamp under 1 rad bites there, and
+    /// the reference is still well conditioned, while at the clamp itself, 1.4 rad, the tilt is tan(c) = 5.8 and a pixel of drift in the
+    /// distance moves the normal by tens of degrees), at most <see cref="MaxClampedMedian"/>.
+    /// </summary>
+    private const float CornerBlendFloor = 0.05f, MaxCornerMedian = 0.7f, MinCornerEffect = 0.8f, SharpCrease = 1.0f, SharpCreaseTop = 1.2f;
+
+    /// <summary>Across triangle boundaries: the pairs of adjacent pixels the check must reach (the shares and percentiles each view allows are in <see cref="Views"/>).</summary>
     private const int MinPairs = 20000;
 
     private const int BendSeed = 7;
@@ -101,15 +111,8 @@ public partial class RenderCheck : Node
         // is wrong in the next, and nothing here would see it if the bent pose were the first.
         for (int i = 0; i < 3; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
 
-        var bones = PuppetChecks.Bend(shape, BendSeed, BendDegrees * Mathf.Pi / 180f);
-        var carriers = new Node3D[shape.Ids.Length];
-        for (int i = 0; i < carriers.Length; i++)
-        {
-            carriers[i] = main.Bodies.GetNode<Node3D>($"Puppet/Body{shape.Ids[i]}");
-            carriers[i].Transform = Puppet.ToTransform(bones[i].After(shape.SpreadBind[i]));
-            carriers[i].ResetPhysicsInterpolation();
-        }
-        for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+        var carriers = shape.Ids.Select(id => main.Bodies.GetNode<Node3D>($"Puppet/Body{id}")).ToArray();
+        var world = await Pose(shape, carriers, BendDegrees);
         var image = GetViewport().GetTexture().GetImage();
         image.Convert(Image.Format.Rgba8);
         foreach (var arg in OS.GetCmdlineUserArgs())
@@ -129,7 +132,6 @@ public partial class RenderCheck : Node
         var camera = GetViewport().GetCamera3D();
         var scale = new Vector2(w, h) / GetViewport().GetVisibleRect().Size;
         var skinned = new Vector3[shape.Vertices.Length];
-        var world = carriers.Select((c, i) => c.GlobalTransform * Puppet.ToTransform(shape.SpreadBind[i].Inverse())).ToArray();
         for (int v = 0; v < skinned.Length; v++)
         {
             var p = new Vector3(shape.Vertices[v].x, shape.Vertices[v].y, shape.Vertices[v].z);
@@ -185,22 +187,98 @@ public partial class RenderCheck : Node
         return ok;
     }
 
+    /// <summary>The reference surface in the world: the carriers' skin of the shape, welded by position, with its own facets, altitudes, vertex normals and creases.</summary>
+    private sealed record Surface(Vector3[] P, int[] Weld, Vector3[] Facet, float[] Altitude, float[] Smallest, Vector3[] VertexNormal, float[] Crease);
+
+    /// <summary>
+    /// One look at the drawn normal: where from (the offset from the torso and the field of view), in which pose and at which window size, and
+    /// what it must reach to prove anything (interior, bevel-band, width-capped, corner-blend and sharply creased pixels) and, if it
+    /// reads the continuity across triangles, the bar for it in that pose.
+    /// </summary>
+    private readonly record struct NormalViewSpec(string Label, Vector3 Offset, float Fov, int Bend, Vector2I Size, string PngArg, bool Continuity, float MaxAcross30, float MaxAcrossP90,
+        int MinKept, int MinBand, int MinClamped, int MinCorner, int MinSharp);
+
+    private static readonly Vector2I Hd = new(1280, 720), FullHd = new(1920, 1080);
+
+    /// <summary>
+    /// The views. Close (0.35, 0.2, 0.55 m off body 101, FOV 30) is at the 3 mm floor of the bevel; far (about 3.7 m) is where the screen width
+    /// decides, and the same far view at 1080 lines is where a width fixed at 720 lines is wrong; mid (2.2 m) is in between, where the floor and
+    /// the screen width are within a tenth of each other and the width changes across the frame. Bend 90 is a pose of sharp creases: the
+    /// crease clamp is reached there, and the continuity across triangles has its own bar, since some edges fold past 120 degrees and 2 px
+    /// cannot soften them.
+    /// </summary>
+    private static readonly NormalViewSpec[] Views =
+    {
+        new("close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 60, Hd, "--normals-png=", true, 0.005f, 6f, 200000, 20000, 200, 5000, 1000),
+        new("far", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, Hd, "--normals-far-png=", false, 0f, 0f, 10000, 100, 150, 400, 0),
+        new("bend 90 close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 90, Hd, "--normals-bend90-png=", true, 0.03f, 7f, 200000, 20000, 200, 5000, 100),
+        new("mid 1080", new Vector3(1.13f, 0.645f, 1.77f), 30f, 60, FullHd, "--normals-mid-png=", false, 0f, 0f, 30000, 100, 100, 3000, 40),
+        new("far 1080", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, FullHd, "--normals-far1080-png=", false, 0f, 0f, 20000, 1000, 150, 3000, 20),
+    };
+
+    private async Task<Transform3D[]> Pose(PuppetShape shape, Node3D[] carriers, float degrees)
+    {
+        var bones = PuppetChecks.Bend(shape, BendSeed, degrees * Mathf.Pi / 180f);
+        for (int i = 0; i < carriers.Length; i++)
+        {
+            carriers[i].Transform = Puppet.ToTransform(bones[i].After(shape.SpreadBind[i]));
+            carriers[i].ResetPhysicsInterpolation();
+        }
+        for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+        return carriers.Select((c, i) => c.GlobalTransform * Puppet.ToTransform(shape.SpreadBind[i].Inverse())).ToArray();
+    }
+
     /// <summary>
     /// The drawn shading normal against the shader's formula evaluated on the CPU, from this check's own skinning of the shape's vertices
     /// by the carriers (nothing the puppet computed): its own weld of the corners by position, its own edge match, facets, creases,
-    /// area-weighted vertex normals, altitudes, the screen width and the corner blend. The puppet is seen in the same bent pose from the
-    /// torso's front-top, close (0.35, 0.2, 0.55 m off body 101, FOV 30: the bevel is at its 3 mm floor) and at about 3.7 m (the width is
-    /// 2 px, and wider than the floor); the view-space normal is read raw from the frame (n * 0.5 + 0.5, not sRGB-decoded) and turned to
-    /// world by the camera's basis.
+    /// area-weighted vertex normals, altitudes, the screen width and the corner blend. The puppet is seen in the bent pose from the
+    /// torso's front-top in each of the <see cref="Views"/>; the view-space normal is read raw from the frame (n * 0.5 + 0.5, not
+    /// sRGB-decoded) and turned to world by the camera's basis.
     /// </summary>
     private async Task<bool> NormalCheck(Main main, PuppetShape shape, Node3D[] carriers, Transform3D[] world)
     {
         int torso = Array.IndexOf(shape.Ids, 101UL);
         if (torso < 0) { GD.PrintErr("RENDER FAIL: the puppet has no body 101 to look at"); return false; }
-        var target = carriers[torso].GlobalPosition;
         var puppet = main.Bodies.GetNode<Puppet>("Puppet");
+        var window = GetWindow(); var home = window.Size;
+        int bend = (int)BendDegrees;
+        var surface = BuildSurface(shape, world);
 
-        // The reference surface in the world.
+        bool ok = true;
+        foreach (var spec in Views)
+        {
+            if (spec.Bend != bend)
+            {
+                bend = spec.Bend;
+                surface = BuildSurface(shape, await Pose(shape, carriers, bend));
+            }
+            if (window.Size != spec.Size)
+            {
+                window.Size = spec.Size;
+                for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            }
+            var camera = new Camera3D { Fov = spec.Fov, Current = true };
+            AddChild(camera);
+            var target = carriers[torso].GlobalPosition;
+            camera.GlobalPosition = target + spec.Offset;
+            camera.LookAt(target, Vector3.Up);
+            puppet.ShowNormals = true;
+            for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            var image = GetViewport().GetTexture().GetImage();
+            image.Convert(Image.Format.Rgba8);
+            puppet.ShowNormals = false;
+            foreach (var arg in OS.GetCmdlineUserArgs())
+                if (arg.StartsWith(spec.PngArg)) image.SavePng(arg[spec.PngArg.Length..]);
+            if (image.GetSize() != spec.Size) { GD.PrintErr($"RENDER FAIL: the {spec.Label} view was drawn at {image.GetSize()}, not the {spec.Size} it is for"); ok = false; }
+            else ok &= NormalView(spec, image, camera, surface);
+            camera.QueueFree();
+        }
+        window.Size = home;
+        return ok;
+    }
+
+    private static Surface BuildSurface(PuppetShape shape, Transform3D[] world)
+    {
         int n = shape.Corners.Length, triangles = n / 3;
         var skinned = new Vector3[shape.Vertices.Length];
         for (int v = 0; v < skinned.Length; v++)
@@ -253,29 +331,13 @@ public partial class RenderCheck : Node
             float half = 0.5f * facet[a / 3].AngleTo(facet[b / 3]);
             crease[a] = crease[b] = convexA ? half : -half;
         }
-
-        bool ok = true;
-        foreach (var (label, offset, pngArg, continuity, floors) in new[] { ("close", new Vector3(0.35f, 0.2f, 0.55f), "--normals-png=", true, (MinKept, MinBand, MinClamped)), ("far", new Vector3(1.9f, 1.1f, 3.0f), "--normals-far-png=", false, (MinKeptFar, MinBandFar, MinClampedFar)) })
-        {
-            var camera = new Camera3D { Fov = 30f, Current = true };
-            AddChild(camera);
-            camera.GlobalPosition = target + offset;
-            camera.LookAt(target, Vector3.Up);
-            puppet.ShowNormals = true;
-            for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
-            var image = GetViewport().GetTexture().GetImage();
-            image.Convert(Image.Format.Rgba8);
-            puppet.ShowNormals = false;
-            foreach (var arg in OS.GetCmdlineUserArgs())
-                if (arg.StartsWith(pngArg)) image.SavePng(arg[pngArg.Length..]);
-            ok &= NormalView(label, image, camera, shape, P, weld, facet, altitude, smallest, vertexNormal, crease, continuity, floors);
-            camera.QueueFree();
-        }
-        return ok;
+        return new Surface(P, weld, facet, altitude, smallest, vertexNormal, crease);
     }
 
-    private bool NormalView(string label, Image image, Camera3D camera, PuppetShape shape, Vector3[] P, int[] weld, Vector3[] facet, float[] altitude, float[] smallest, Vector3[] vertexNormal, float[] crease, bool continuity, (int Kept, int Band, int Clamped) floors)
+    private bool NormalView(NormalViewSpec spec, Image image, Camera3D camera, Surface surface)
     {
+        string label = spec.Label;
+        var (P, weld, facet, altitude, smallest, vertexNormal, crease) = surface;
         int w = image.GetWidth(), h = image.GetHeight(), triangles = P.Length / 3;
 
         // Depth raster: the nearest triangle under each pixel centre, with its barycentrics.
@@ -324,6 +386,7 @@ public partial class RenderCheck : Node
         float screenHeight = h;
         var errors = new System.Collections.Generic.List<float>(); var band = new System.Collections.Generic.List<float>(); var bandTilt = new System.Collections.Generic.List<float>();
         var clamped = new System.Collections.Generic.List<float>();
+        var cornerErr = new System.Collections.Generic.List<float>(); var cornerEffect = new System.Collections.Generic.List<float>(); var sharp = new System.Collections.Generic.List<float>();
         var drawnNormal = new Vector3[w * h];
         for (int y = 0; y < h; y++)
             for (int x = 0; x < w; x++)
@@ -343,7 +406,7 @@ public partial class RenderCheck : Node
                 var bc = bary[y * w + x];
                 // The distance to each edge here and one pixel over in x and in y on the same plane: metres per pixel across the edge.
                 var bx = Bary(t, OnPlane(t, Ray(x + 1, y))); var by = Bary(t, OnPlane(t, Ray(x, y + 1)));
-                var tilt = Vector3.Zero; bool inBand = false, wasClamped = false;
+                var tilt = Vector3.Zero; bool inBand = false, wasClamped = false, inSharp = false;
                 var g = new Vector3[3]; var width = new float[3]; var distance = new float[3];
                 for (int k = 0; k < 3; k++)
                 {
@@ -360,6 +423,7 @@ public partial class RenderCheck : Node
                     if (cap < wanted) wasClamped = true;
                     tilt += (1f - Mathf.SmoothStep(0f, width[k], distance[k])) * Mathf.Tan(Mathf.Clamp(c, -1.4f, 1.4f)) * g[k];
                     if (distance[k] < 0.6f * width[k] && Mathf.Abs(c) > 0.1f) inBand = true;
+                    if (distance[k] < 0.6f * width[k] && Mathf.Abs(c) > SharpCrease && Mathf.Abs(c) < SharpCreaseTop) inSharp = true;
                 }
                 // Near a corner the bevel gives way to the smooth vertex normal: corner k is where edges i and j meet, at the distance
                 // sqrt((d_i^2 + d_j^2 - 2 d_i d_j cos) / sin^2) from the pixel.
@@ -376,22 +440,34 @@ public partial class RenderCheck : Node
                 var reference = (facet[t] - (1f - cornerBlend) * tilt).Normalized().Lerp(smooth, cornerBlend).Normalized();
                 float err = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(drawnNormal[y * w + x].Dot(reference), -1f, 1f)));
                 errors.Add(err);
+                if (cornerBlend > CornerBlendFloor) { cornerErr.Add(err); cornerEffect.Add(Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(reference.Dot((facet[t] - (1f - cornerBlend) * tilt).Normalized()), -1f, 1f)))); }
+                if (inSharp) sharp.Add(err);
                 if (inBand) { band.Add(err); bandTilt.Add(Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(reference.Dot(facet[t]), -1f, 1f)))); }
                 if (wasClamped) clamped.Add(err);
             }
-        errors.Sort(); band.Sort(); bandTilt.Sort(); clamped.Sort();
+        errors.Sort(); band.Sort(); bandTilt.Sort(); clamped.Sort(); cornerErr.Sort(); cornerEffect.Sort(); sharp.Sort();
         float p90 = errors.Count == 0 ? float.MaxValue : errors[(int)(errors.Count * 0.9f)];
         float bandMedian = band.Count == 0 ? float.MaxValue : band[band.Count / 2];
         float tiltMedian = bandTilt.Count == 0 ? 0 : bandTilt[bandTilt.Count / 2];
         float clampedMedian = clamped.Count == 0 ? float.MaxValue : clamped[clamped.Count / 2];
         GD.Print($"RENDER normals {label}: p90 error {p90:F2} deg over {errors.Count} interior pixels; band median error {bandMedian:F2} deg over {band.Count} pixels, reference tilt from the facet {tiltMedian:F1} deg; width-clamped triangles' median error {clampedMedian:F2} deg over {clamped.Count} pixels");
+        float cornerMedian = cornerErr.Count == 0 ? float.MaxValue : cornerErr[cornerErr.Count / 2];
+        float cornerP90 = cornerErr.Count == 0 ? float.MaxValue : cornerErr[(int)(cornerErr.Count * 0.9f)];
+        float effectMedian = cornerEffect.Count == 0 ? 0 : cornerEffect[cornerEffect.Count / 2];
+        float sharpMedian = sharp.Count == 0 ? float.MaxValue : sharp[sharp.Count / 2];
+        GD.Print($"RENDER corners {label}: median error {cornerMedian:F2} deg and p90 {cornerP90:F2} over {cornerErr.Count} pixels the corner blend reaches, which it moves by {effectMedian:F1} deg (median); sharp creases ({SharpCrease} to {SharpCreaseTop} rad): median error {sharpMedian:F2} deg over {sharp.Count} band pixels");
         bool ok = true;
+        var floors = (Kept: spec.MinKept, Band: spec.MinBand, Clamped: spec.MinClamped);
         if (errors.Count < floors.Kept || band.Count < floors.Band || clamped.Count < floors.Clamped) { GD.PrintErr($"RENDER FAIL: the {label} normal check reached {errors.Count} interior, {band.Count} band and {clamped.Count} clamped pixels, under {floors.Kept}, {floors.Band} and {floors.Clamped}; it proves nothing"); ok = false; }
         if (tiltMedian < MinBandTilt) { GD.PrintErr($"RENDER FAIL: the {label} bevel band's reference normal is {tiltMedian:F1} degrees from the facet's, under {MinBandTilt}; the check cannot see a bevel"); ok = false; }
         if (p90 > MaxNormalP90) { GD.PrintErr($"RENDER FAIL: the {label} drawn shading normal is {p90:F2} degrees from the CPU reference at the 90th percentile, over {MaxNormalP90}"); ok = false; }
         if (bandMedian > MaxBandMedian) { GD.PrintErr($"RENDER FAIL: across the {label} bevel band the drawn normal is {bandMedian:F2} degrees from the CPU reference (median), over {MaxBandMedian}; the bevel is not where or as large as the creases say"); ok = false; }
         if (clampedMedian > MaxClampedMedian) { GD.PrintErr($"RENDER FAIL: on the {label} triangles whose width the smallest altitude caps the drawn normal is {clampedMedian:F2} degrees from the CPU reference (median), over {MaxClampedMedian}; the cap is not where the shader puts it"); ok = false; }
-        if (continuity) ok &= Continuity(label, tri, depth, drawnNormal, weld, w, h);
+        if (cornerErr.Count < spec.MinCorner || sharp.Count < spec.MinSharp) { GD.PrintErr($"RENDER FAIL: the {label} normal check reached {cornerErr.Count} corner-blend and {sharp.Count} sharp-crease pixels, under {spec.MinCorner} and {spec.MinSharp}; it proves nothing about them"); ok = false; }
+        if (spec.MinCorner > 0 && effectMedian < MinCornerEffect) { GD.PrintErr($"RENDER FAIL: the {label} corner blend moves the reference normal by {effectMedian:F1} degrees (median), under {MinCornerEffect}; the check cannot see a corner blend that is off"); ok = false; }
+        if (spec.MinCorner > 0 && cornerMedian > MaxCornerMedian) { GD.PrintErr($"RENDER FAIL: where the {label} corner blend reaches, the drawn normal is {cornerMedian:F2} degrees from the CPU reference (median), over {MaxCornerMedian}; the vertex normal is in the wrong space or the blend has the wrong radius"); ok = false; }
+        if (spec.MinSharp > 0 && sharpMedian > MaxClampedMedian) { GD.PrintErr($"RENDER FAIL: across the {label} band of edges turning by {SharpCrease} to {SharpCreaseTop} rad (half) the drawn normal is {sharpMedian:F2} degrees from the CPU reference (median), over {MaxClampedMedian}; the crease clamp is not where the creases say"); ok = false; }
+        if (spec.Continuity) ok &= Continuity(spec, tri, depth, drawnNormal, weld, w, h);
         return ok;
     }
 
@@ -399,7 +475,7 @@ public partial class RenderCheck : Node
     /// The drawn normal across triangle boundaries: horizontally or vertically adjacent pixels on different triangles that share a vertex,
     /// at depths within 4 mm, must hardly differ, however the bevel falls on the two sides. Compares drawn pixels with drawn pixels.
     /// </summary>
-    private static bool Continuity(string label, int[] tri, float[] depth, Vector3[] drawnNormal, int[] weld, int w, int h)
+    private static bool Continuity(NormalViewSpec spec, int[] tri, float[] depth, Vector3[] drawnNormal, int[] weld, int w, int h)
     {
         bool Shares(int t, int u) { for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) if (weld[3 * t + i] == weld[3 * u + j]) return true; return false; }
         var angles = new System.Collections.Generic.List<float>();
@@ -415,14 +491,15 @@ public partial class RenderCheck : Node
                     angles.Add(Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(drawnNormal[i].Dot(drawnNormal[j]), -1f, 1f))));
                 }
             }
+        string label = spec.Label;
         angles.Sort();
         float over = angles.Count == 0 ? 1f : angles.Count(a => a > 30f) / (float)angles.Count;
         float p90 = angles.Count == 0 ? float.MaxValue : angles[(int)(angles.Count * 0.9f)];
         GD.Print($"RENDER continuity {label}: {angles.Count} pairs across triangle boundaries, {over:P2} over 30 deg, p90 {p90:F2} deg");
         bool ok = true;
         if (angles.Count < MinPairs) { GD.PrintErr($"RENDER FAIL: the {label} continuity check reached {angles.Count} pairs, under {MinPairs}; it proves nothing"); ok = false; }
-        if (over > MaxAcrossOver30) { GD.PrintErr($"RENDER FAIL: {over:P2} of the {label} pixel pairs across triangle boundaries differ by more than 30 degrees, over {MaxAcrossOver30:P1}"); ok = false; }
-        if (p90 > MaxAcrossP90) { GD.PrintErr($"RENDER FAIL: the {label} pixel pairs across triangle boundaries differ by {p90:F2} degrees at the 90th percentile, over {MaxAcrossP90}"); ok = false; }
+        if (over > spec.MaxAcross30) { GD.PrintErr($"RENDER FAIL: {over:P2} of the {label} pixel pairs across triangle boundaries differ by more than 30 degrees, over {spec.MaxAcross30:P1}"); ok = false; }
+        if (p90 > spec.MaxAcrossP90) { GD.PrintErr($"RENDER FAIL: the {label} pixel pairs across triangle boundaries differ by {p90:F2} degrees at the 90th percentile, over {spec.MaxAcrossP90}"); ok = false; }
         return ok;
     }
 
