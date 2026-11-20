@@ -26,10 +26,10 @@ public sealed record StressResult(
     double MinResolve,
     IReadOnlyList<StressEntry> Timeline)
 {
-    /// <summary>What the stress bar means (lodur:question:stress-bar-meaning, recommendation taken): composure already lost, 1 - resolve.</summary>
-    public const string StressBarLabel = "lost composure";
+    /// <summary>What the stress bar means (ruling lodur:ruling:stress-bar-shows-arousal-calm-silences): how wound up he is right now, his arousal. Will is not on this bar.</summary>
+    public const string StressBarLabel = "stress (arousal)";
 
-    /// <summary>Deterministic text form (invariant culture, fixed precision). The stress column is 1 - resolve, display only.</summary>
+    /// <summary>Deterministic text form (invariant culture, fixed precision). The stress column is the arousal column, display only.</summary>
     public string Render()
     {
         var sb = new StringBuilder();
@@ -37,7 +37,7 @@ public sealed record StressResult(
         foreach (var e in Timeline)
         {
             sb.Append(e.TimeMs.ToString(CultureInfo.InvariantCulture)).Append(' ').Append(e.Kind);
-            foreach (var v in new[] { e.Audio, e.Visual, e.Interrupt, e.Load, e.Arousal, e.Resolve, 1.0 - e.Resolve })
+            foreach (var v in new[] { e.Audio, e.Visual, e.Interrupt, e.Load, e.Arousal, e.Resolve, e.Arousal })
             {
                 sb.Append(' ').Append(v.ToString("F3", CultureInfo.InvariantCulture));
             }

@@ -728,17 +728,43 @@ public static class Program
             Check(s.Result().Outcome == Outcome.Endured, "the burst broke the will");
         }),
 
-        ("office: the stress column is 1 - resolve on every rendered row", () =>
+        ("office: the stress column is the arousal column on every rendered row, through the rage and the calm too (the bar shows arousal, never 1 - resolve)", () =>
         {
-            var lines = Office(new StressParameters(), 3).Render().Split('\n', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
-            Check(lines.Length > 10, "too few rows");
-            foreach (var line in lines)
+            foreach (ulong seed in new ulong[] { 1, 3 })
             {
-                var f = line.Split(' ');
-                double resolve = double.Parse(f[7], System.Globalization.CultureInfo.InvariantCulture);
-                double stress = double.Parse(f[8], System.Globalization.CultureInfo.InvariantCulture);
-                Check(f.Length == 10 && Math.Abs(stress - (1.0 - resolve)) < 0.0015, $"row '{line}'");
+                var lines = Office(new StressParameters(), seed).Render().Split('\n', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
+                Check(lines.Length > 10, "too few rows");
+                bool apart = false;
+                foreach (var line in lines)
+                {
+                    var f = line.Split(' ');
+                    Check(f.Length == 10 && f[8] == f[6], $"row '{line}'");
+                    apart |= Math.Abs(double.Parse(f[8], System.Globalization.CultureInfo.InvariantCulture) - (1.0 - double.Parse(f[7], System.Globalization.CultureInfo.InvariantCulture))) > 0.05;
+                }
+                Check(apart, "arousal never differed from 1 - resolve, so the check proved nothing");
             }
+        }),
+
+        ("office calm tail: arousal on the calm row starts from where the rage left it, falls without rising to exactly 0 by CalmFadeSeconds and stays 0 to the end, while the stressors keep sounding", () =>
+        {
+            var p = new StressParameters { SampleEverySeconds = 0.1 };
+            int sounding = 0;
+            for (ulong seed = 1; seed <= 20; seed++)
+            {
+                var r = Office(p, seed);
+                var calm = r.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm);
+                var rageLast = r.Timeline.Last(e => e.TimeMs < calm.TimeMs);
+                Check(rageLast.Arousal > 0.0 && Math.Abs(calm.Arousal - rageLast.Arousal) < 0.1 * rageLast.Arousal, $"seed {seed}: arousal on the calm row is {calm.Arousal}, the rage's last was {rageLast.Arousal}; calm did not start from where the rage left it");
+                var tail = r.Timeline.Where(e => e.TimeMs >= calm.TimeMs).ToList();
+                for (int i = 1; i < tail.Count; i++) Check(tail[i].Arousal <= tail[i - 1].Arousal, $"seed {seed}: arousal rose at {tail[i].TimeMs} ms");
+                var mid = tail.First(e => e.TimeMs >= calm.TimeMs + 2500);
+                Check(mid.Arousal > 0.0, $"seed {seed}: arousal was already {mid.Arousal} at 2.5 s into calm; the fade is a hard cut");
+                var after = tail.Where(e => e.TimeMs >= calm.TimeMs + (long)(p.CalmFadeSeconds * 1000)).ToList();
+                Check(after.Count > 40 && after.All(e => e.Arousal == 0.0), $"seed {seed}: arousal not exactly 0 from {p.CalmFadeSeconds} s after calm to the end");
+                if (after.Any(e => e.Audio > 0.0 || e.Visual > 0.0 || e.Interrupt > 0.0)) sounding++;
+            }
+            // The stressors are periodic and some seeds have a quiet 5 s window after the fade; across the seeds the office does keep sounding, so calm silenced his senses and not the office.
+            Check(sounding >= 10, $"stressors sounded after the fade on only {sounding} of 20 seeds");
         }),
 
         ("pain box parity: sweep --seed 1 --count 20 hashes to the output before rung 4, and run --seed 1 does too once the break row's goal reads Withdraw as it then did", () =>
@@ -763,7 +789,7 @@ public static class Program
             string Run(params string[] a) { var w = new StringWriter(); BadDay.Cli.Program.Execute(a, w); return w.ToString(); }
             var plain = Run("office", "--seed", "1");
             Check(plain == Run("office", "--seed", "1"), "office output differs between runs");
-            Check(plain.Contains("lost composure") && plain.Contains("time_ms kind audio visual interrupt load arousal resolve stress goal"), "no label or header");
+            Check(plain.Contains("stress (arousal)") && plain.Contains("time_ms kind audio visual interrupt load arousal resolve stress goal"), "no label or header");
             Check(plain.Contains("will broke at"), "seed 1 should break at the default settings");
             var quiet = Run("office", "--seed", "1", "--silence", "printer@0", "--silence", "desk-phone@0");
             Check(quiet.Split('\n').Count(l => l.Contains(" Silenced ")) == 2, "two --silence options should give two Silenced rows");
@@ -827,7 +853,7 @@ public static class Program
             }
         }),
 
-        ("office golden [P]: the rows up to the break are rung 3's bytes, the 50-seed sweep ends in its captured line, and the run's own bytes are captured (re-captured with the arc and again for the 8 s settle)", () =>
+        ("office golden [P]: the rows up to the break are rung 3's bytes, the 50-seed sweep ends in its captured line, and the run's own bytes are captured (re-captured with the arc, again for the 8 s settle, and again for the arousal bar)", () =>
         {
             string Out(params string[] a)
             {
@@ -839,11 +865,17 @@ public static class Program
             var lines = Out("office", "--seed", "1").Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
             int brk = lines.FindIndex(l => l.Contains(" WillBroke "));
             // Rung 3 ended at the break and named its goals HoldHand and Withdraw; what it printed up to there is what this prints, goal column aside.
-            var rung3 = new List<string> { lines[0].Replace("rung 4", "rung 3"), lines[1] };
-            for (int i = 2; i <= brk; i++) rung3.Add(lines[i].Replace(" KeepComposure", i == brk ? " Withdraw" : " HoldHand"));
+            // The stress column was 1 - resolve then, and is arousal now: each row gets its old column back, in the same format.
+            var rung3 = new List<string> { "Bad day at the office, rung 3 (stress = 1 - resolve, \"lost composure\")", lines[1] };
+            for (int i = 2; i <= brk; i++)
+            {
+                var f = lines[i].Replace(" KeepComposure", i == brk ? " Withdraw" : " HoldHand").Split(' ');
+                f[8] = (1.0 - double.Parse(f[7], System.Globalization.CultureInfo.InvariantCulture)).ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+                rung3.Add(string.Join(' ', f));
+            }
             rung3.Add(lines[^1]);
             Check(Hash(string.Join('\n', rung3) + "\n") == "66098b69834c3c8b5e5b694f0059b8ed566e31d332f36be7e57baf70ae650823", "the office's rows up to the break differ from rung 3's");
-            Check(Hash(string.Join('\n', lines) + "\n") == "14e226cbb85d68bb9104314b08802c3c20207f378456915a004b60f1ab657089", $"office --seed 1 changed: {Hash(string.Join('\n', lines) + "\n")}");
+            Check(Hash(string.Join('\n', lines) + "\n") == "f52e70b641cde4bcb5c5f6286ed022ccd31950425656b23f302a041218396db6", $"office --seed 1 changed: {Hash(string.Join('\n', lines) + "\n")}");
             var last = Out("office-sweep", "--seed", "1", "--count", "50").TrimEnd('\n').Split('\n')[^1];
             Check(last == "runs 50: broke 50, endured 0; time to break min/median/max ms: 72670/86570/113420; min resolve of endured runs: -", $"sweep line changed: {last}");
         }),
@@ -906,21 +938,20 @@ public static class Program
             Check(early.Contains("before the rage took over"), $"clipped before the rage: {early}");
         }),
 
-        ("office calm is terminal: with the release moved off calm the run goes to MaxSeconds, and after the Calm row the goal never changes again, whatever the senses and the mending will do", () =>
+        ("office calm is terminal: with the release moved off calm the run goes to MaxSeconds, and after the Calm row the goal never changes again, with the senses still pressing", () =>
         {
-            // Bursts of heavy load with quiet between: the will breaks, mends in the quiet, and breaks again, which the office's steady load never does.
+            // Calm's fade is longer than the run here, so his senses stay open and the load keeps pressing for all 180 s. A default calm silences them: since that ruling no public path
+            // breaks the will a third time after calm (its mend needs arousal under 0.1, which only the quiet fade gives, and the quiet has no load), so "whatever the mending will does" is not yet reached.
             var Bursty = Cause.Office with { Stressors = new[] { new Stressor("printer", "printer", 5.0, 0.0, 100.0, 40.0, 1.0, 0.0) } };
-            int thirdBreaks = 0;
             for (ulong seed = 1; seed <= 5; seed++)
             {
-                var r = Office(new StressParameters { ReleaseGoalId = "keep-composure", Cause = Bursty }, seed);
+                var r = Office(new StressParameters { ReleaseGoalId = "keep-composure", Cause = Bursty, CalmFadeSeconds = 1.0e6 }, seed);
                 var calm = r.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm);
                 Check(r.EndMs == 180000, $"seed {seed}: ended at {r.EndMs}");
                 Check(r.Timeline.Count(e => e.Kind == StressEntryKind.GoalChanged) == 2, $"seed {seed}: a goal changed after calm");
                 Check(r.Timeline.Where(e => e.TimeMs >= calm.TimeMs).All(e => e.Goal == OfficeGoal.Calm), $"seed {seed}: the goal column left Calm");
-                thirdBreaks += r.Timeline.Count(e => e.Kind == StressEntryKind.WillBroke && e.TimeMs > calm.TimeMs);
+                Check(r.Timeline.Where(e => e.TimeMs >= calm.TimeMs + 5000).Any(e => e.Load > 0.0), $"seed {seed}: no load after calm; the test no longer presses on the goal");
             }
-            Check(thirdBreaks > 0, "no run broke the will a third time after calm; the test no longer exercises the rule");
         }),
 
         ("office release: the run ends on the Brain's release goal, by id, not on any goal change; an id the Brain lacks is refused", () =>
