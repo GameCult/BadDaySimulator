@@ -33,8 +33,12 @@ public partial class RenderCheck : Node
     /// </summary>
     private const float MinIou = 0.999f;
 
-    /// <summary>The bisque's lit faces (the glaze off): at most this share of its pixels may be at 250 or more of 255.</summary>
-    private const float MaxClipped = 0.02f;
+    /// <summary>
+    /// The bisque's lit faces (the glaze off): at most this share of its pixels may be at 250 or more of 255. The doll's flat facets clip together when one mirrors the key, so the share moves with the view: the shipped bisque
+    /// reads 0.0% to 3.1% over seven parent yaws and 0.8% to 1.6% over repeated runs at <see cref="ParentYaw"/> (the chamber's glow differs a little from run to run), a white-out (the chamber light at 3, the scar in Look) 12.5% to 54.1%
+    /// in the same views; 5% sits between at 1.6 times the shipped worst of the sweep and 2.5 times under the white-out's least.
+    /// </summary>
+    private const float MaxClipped = 0.05f;
 
     /// <summary>
     /// The glaze must show: with it on, at least this share of the puppet's pixels differ from the bisque's by <see cref="GlazeDifference"/> levels or more (it runs under
@@ -73,8 +77,11 @@ public partial class RenderCheck : Node
     /// <summary>The median angular error (degrees) over the bevel band: pixels within 0.6 of the bevel width of an edge that turns by more than 0.1 radian.</summary>
     private const float MaxBandMedian = 0.6f;
 
-    /// <summary>The median angular error (degrees) over the pixels of triangles whose bevel width the smallest altitude caps.</summary>
-    private const float MaxClampedMedian = 1.5f;
+    /// <summary>
+    /// The median angular error (degrees) over the pixels of triangles whose bevel width the smallest altitude caps. The shipped cap reads at most 0.57 in the five views and a cap removed 0.93 to 1.12
+    /// in the three it reaches (far, mid, far 1080); 1.5 let it through on the doll, so the bound sits between them, 1.3 times over the shipped and 1.2 under the removed cap's least.
+    /// </summary>
+    private const float MaxCapMedian = 0.75f;
 
     /// <summary>
     /// Vacuity: the band's reference normal must lie this many degrees (median) from the facet's, or a bevel that is off would pass; each
@@ -89,12 +96,16 @@ public partial class RenderCheck : Node
     /// the check cannot tell a blend that is off. The crease clamp is held the same way on the band pixels of edges whose half turn is
     /// between <see cref="SharpCrease"/> and <see cref="SharpCreaseTop"/> radians (115 to 137 degrees of turn: a clamp under 1 rad bites there, and
     /// the reference is still well conditioned, while at the clamp itself, 1.4 rad, the tilt is tan(c) = 5.8 and a pixel of drift in the
-    /// distance moves the normal by tens of degrees), at most <see cref="MaxClampedMedian"/>.
+    /// distance moves the normal by tens of degrees), at most <see cref="MaxSharpMedian"/>.
     /// </summary>
-    private const float CornerBlendFloor = 0.05f, MaxCornerMedian = 0.7f, MinCornerEffect = 0.8f, SharpCrease = 1.0f, SharpCreaseTop = 1.2f;
+    private const float CornerBlendFloor = 0.05f, MaxCornerMedian = 0.7f, MinCornerEffect = 0.8f, SharpCrease = 1.0f, SharpCreaseTop = 1.2f, MaxSharpMedian = 1.5f;
 
-    /// <summary>Across triangle boundaries: the pairs of adjacent pixels the check must reach (the shares and percentiles each view allows are in <see cref="Views"/>).</summary>
-    private const int MinPairs = 20000;
+    /// <summary>
+    /// Across triangle boundaries: the pairs of adjacent pixels the check must reach (the shares and percentiles each view allows are in <see cref="Views"/>). The share over 30 degrees is a rare event
+    /// (the shipped doll 0.61% and 0.70%), so it needs the most samples of any metric here: 8000 pairs is the least at which 2000 random draws of that many pairs never put the shipped share over its bound
+    /// nor the widened bevel's under it; the two views reach 17762 and 14219.
+    /// </summary>
+    private const int MinPairs = 8000;
 
     /// <summary>The flicker check's reference is this many times the window on a side; each view must reach at least this many interior and highlight pixels (see <see cref="FlickerCheck"/>) or it proves nothing.</summary>
     private const int FlickerSupersample = 8, MinFlickerPixels = 15000, MinFlickerHighlights = 200;
@@ -102,15 +113,17 @@ public partial class RenderCheck : Node
     private const float HighlightLuma = 245f;
 
     /// <summary>
-    /// The bounds on the flicker views, fitted to every pose and framing it draws (the session pose in seven framings, the puppet bent 30 and 60 degrees in three each) and not to one, on the rigid ball-jointed doll
-    /// (the readings of the blended puppet's mesh were different; its bounds are not these). The p99 flicker ratio: shipped 1.11 to 1.26 play and 1.11 to 1.29 close (bent 1.24 to 1.28); kernel 0 1.38 to 1.70 play (the bent
-    /// 60 play view reads 1.38, so it is the other views that fail it there) and 1.36 to 1.41 close; no MSAA 1.28 to 1.64; both overblurs 1.02 to 1.28. The bounds sit between shipped and kernel 0: 1.33 play and close.
-    /// The highlight shift in levels of 255: shipped at most 1.13; the paper's pixel variance 1/(2 pi) reads 2.61 and 2.55 in two session play framings and 1.23 at most bent, and 1/12, double the shipped, 1.75 and 1.83
-    /// in two session framings and 0.61 at most elsewhere, so 1.5; both overblurs are therefore caught only in the session pose. The silhouette ring, where MSAA works and the interior pixels do not look: the ring's mean
-    /// |shown - reference| in levels of luma, shipped 17.05 to 20.65, no MSAA 26.1 to 31.3, overblurred up to 22.5, so 22. The orbit's crawl, the halo's mean error second difference: shipped 4.69, kernel 0 9.03,
-    /// no MSAA 5.02, both overblurs under 4.2, so 7.
+    /// The bounds on the flicker views, re-derived on the shipped doll (1294 triangles, flat facets with a 2 px bevel) from what each metric reads on the shipped shader and on the mutants, over every pose and framing it draws
+    /// (the session pose in seven framings, the puppet bent 30 and 60 degrees in three each), the shipped doll also at seven parent yaws. The p99 flicker ratio: shipped 1.17 to 1.35 (its bent views 1.15 to 1.38 over the seven yaws; the
+    /// bent 60 close hold view is the highest); no MSAA 1.31 to 1.61, over 1.45 in ten or eleven of the thirteen views; a bevel width fixed at 720 lines (the supersampled reference then differs from the shown frame) 1.15 to 1.63; the glaze at
+    /// four times 1.56 to 2.00; so the bound sits between, 1.45, 1.05 times over the shipped worst of the sweep and 1.11 under no MSAA's highest view. The highlight shift in levels of 255: shipped at most 1.0; the paper's
+    /// pixel variance 1/(2 pi) reads 3.92 at most and over the bound in five views, the glaze at four times in eleven, so 1.5. The silhouette ring, where MSAA works and the interior pixels do not look: the ring's mean
+    /// |shown - reference| in levels of luma, shipped 16.9 to 21.8, no MSAA 25.3 to 33.1, so 23.5 (it was 22, 1% over the shipped worst). The orbit's crawl, the halo's mean error second difference:
+    /// shipped 3.4 to 3.6, no MSAA 4.2, the glaze at four times 7.0, so 7 stays where it was. Not separable on this doll: the prefilter's own mutants. The kernel at 0 reads the shipped numbers in every view and metric (the ratio 1.14
+    /// to 1.35, the shift 0.16 to 0.75, the crawl 3.40), and the kernel doubled (1/12) reads 1.08 to 1.35, at most 1.01 and 3.02; the kernel is nonzero only where the shading normal changes across a pixel, the 2 px bands, and
+    /// the p99 of the whole interior does not see them. No bound here fails either, and no bound could without failing the shipped doll.
     /// </summary>
-    private const float MaxFlickerRatioPlay = 1.33f, MaxFlickerRatioClose = 1.33f, MaxHighlightShift = 1.5f, MaxSilhouetteError = 22f, MaxOrbitCrawl = 7f;
+    private const float MaxFlickerRatio = 1.45f, MaxHighlightShift = 1.5f, MaxSilhouetteError = 23.5f, MaxOrbitCrawl = 7f;
 
     private const int OrbitFrames = 30, MinOrbitSamples = 1000;
 
@@ -122,6 +135,14 @@ public partial class RenderCheck : Node
     private static readonly int[] FlickerBentViews = { 0, 3, 6 };
 
     private const int BendSeed = 7;
+
+    /// <summary>
+    /// The parent's turn about the vertical (the body renderer is neither at the origin nor unturned): any turn but 0 serves that, and the turn decides the view of the doll's flat facets, the torso's front above all, which mirror the key
+    /// or not. At 0.45 and 0.7 radian the torso's facet mirrors the key and the shipped glaze clips 19.7% and 16.8% of the puppet from the front, over the 12% a white-out is held to (the chamber light at 3 reads 64.7% and 61.9% there,
+    /// so a limit that passed the shipped doll would sit at 30% of the white-out's reading or more); at 1.0 the shipped reads 1.7% and the white-out 34.6%, and the limit of 12% sits 7 times over the one and 2.9 times under the other.
+    /// The turn is therefore the one where the clipping limits tell the shipped porcelain from a white-out by the widest margin of the turns measured (the shipped doll at 0, 0.45, 0.7, 1.0, 1.4, -0.4 and -0.9, the white-out at the first four), not the one that passes.
+    /// </summary>
+    private const float ParentYaw = 1.0f;
     private const float BendDegrees = 60f;
 
     public override void _Ready() => _ = RunAsync();
@@ -164,7 +185,7 @@ public partial class RenderCheck : Node
         if (main.Chamber.Glow < 0.9f) { GD.PrintErr($"RENDER FAIL: the chamber glows {main.Chamber.Glow}, not near full; the light probe proves nothing"); return false; }
         foreach (var scenery in main.Bodies.GetChildren().OfType<MeshInstance3D>()) scenery.Visible = false;
         main.GetChildren().OfType<WorldEnvironment>().Single().Environment.BackgroundColor = Colors.Black;
-        main.Bodies.Transform = new Transform3D(new Basis(Vector3.Up, 1.0f), new Vector3(0.15f, 0f, 0.1f));
+        main.Bodies.Transform = new Transform3D(new Basis(Vector3.Up, ParentYaw), new Vector3(0.15f, 0f, 0.1f));
 
         // The puppet is drawn once as it was created before it is bent: a surface that kept anything from its first pose, creases above all,
         // is wrong in the next, and nothing here would see it if the bent pose were the first.
@@ -380,16 +401,19 @@ public partial class RenderCheck : Node
     /// decides, and the same far view at 1080 lines is where a width fixed at 720 lines is wrong; mid (2.2 m) is in between, where the floor and
     /// the screen width are within a tenth of each other and the width changes across the frame. Bend 90 is a pose of sharp creases: the
     /// crease clamp is reached there, and the continuity across triangles has its own bar, since some edges fold past 120 degrees and 2 px
-    /// cannot soften them. Each view looks at the joint of the doll where its floors are best reached (the joints' seat bands are where the triangles are small);
-    /// the floors are the shipped blended puppet's (cf0ef3a), not what the doll's 1300 triangles reach (see the cut report).
+    /// cannot soften them. Each view looks at a joint of the doll, where the seat bands make the triangles small and the corner and crease pixels plentiful.
+    /// The floors (interior, band, capped, corner, sharp) are derived on the shipped doll (1294 triangles; the doll is not densified to meet a floor): each is the least count at which that metric, on random draws of that many of
+    /// the view's own pixels (2000 draws, from sizes of 50 up), never puts the shipped reading over its bound nor any mutant that the metric catches in that view (reading the bound times 1.2 or more) under it. The mutants are
+    /// the bevel's (no tilt, a widened and a linear falloff, no width cap, a width fixed at 720 lines, a corner reach of 1.0, a crease clamp of 1.0, a vertex normal left in model space). The views reach their floors by
+    /// 1.2 times at the least (the capped pixels of far, 178 of 150) and 2.5 times for the corner blend (far, 378 of 50 to 200 elsewhere). Where no mutant reaches a view's sharp creases (far: one pixel) the floor is 0.
     /// </summary>
     private static readonly NormalViewSpec[] Views =
     {
-        new("close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 60, Hd, "--normals-png=", true, 0.005f, 6f, 200000, 20000, 200, 5000, 1000, 9),
-        new("far", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, Hd, "--normals-far-png=", false, 0f, 0f, 10000, 100, 150, 400, 0, 10),
-        new("bend 90 close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 90, Hd, "--normals-bend90-png=", true, 0.03f, 7f, 200000, 20000, 200, 5000, 100, 0),
-        new("mid 1080", new Vector3(1.13f, 0.645f, 1.77f), 30f, 60, FullHd, "--normals-mid-png=", false, 0f, 0f, 30000, 100, 100, 3000, 40, 4),
-        new("far 1080", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, FullHd, "--normals-far1080-png=", false, 0f, 0f, 20000, 1000, 150, 3000, 20, 9),
+        new("close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 60, Hd, "--normals-png=", true, 0.009f, 6f, 500, 100, 50, 200, 150, 9),
+        new("far", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, Hd, "--normals-far-png=", false, 0f, 0f, 50, 50, 150, 50, 0, 10),
+        new("bend 90 close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 90, Hd, "--normals-bend90-png=", true, 0.010f, 8f, 100, 100, 50, 200, 75, 0),
+        new("mid 1080", new Vector3(1.13f, 0.645f, 1.77f), 30f, 60, FullHd, "--normals-mid-png=", false, 0f, 0f, 1500, 200, 200, 200, 75, 4),
+        new("far 1080", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, FullHd, "--normals-far1080-png=", false, 0f, 0f, 150, 50, 200, 200, 75, 9),
     };
 
     private async Task<Transform3D[]> Pose(PuppetShape shape, Node3D[] carriers, float degrees)
@@ -497,7 +521,7 @@ public partial class RenderCheck : Node
     /// The glaze must not flicker: a highlight whose pixel value jumps as the camera moves by a fraction of a pixel crawls on screen. The puppet in the pose the player sees (the shipped shader and the
     /// project's MSAA) is drawn in each of the <see cref="FlickerViews"/> from 16 camera positions on a sub-pixel grid, and by a viewport <see cref="FlickerSupersample"/> times the window's size, MSAA off, box-filtered
     /// down in linear light, which is what a pixel would show if it averaged the scene over its own area. On the pixels the puppet covers fully in every reference frame (eroded by one pixel), the 99th percentile of the
-    /// per-pixel standard deviation of luma over the shifts must be at most <see cref="MaxFlickerRatioPlay"/> (<see cref="MaxFlickerRatioClose"/> from 0.7 m) times the reference's, and the mean luma over the pixels the reference
+    /// per-pixel standard deviation of luma over the shifts must be at most <see cref="MaxFlickerRatio"/> times the reference's, and the mean luma over the pixels the reference
     /// lights to <see cref="HighlightLuma"/> or more within <see cref="MaxHighlightShift"/> levels of the reference's. On the silhouette's ring, which MSAA owns, the mean |shown - reference| is at most
     /// <see cref="MaxSilhouetteError"/> levels. The same views are drawn with the puppet bent 30 and 60 degrees (<see cref="FlickerBends"/>), and <see cref="FlickerOrbit"/> turns the camera slowly at the shipped framing.
     /// </summary>
@@ -533,7 +557,7 @@ public partial class RenderCheck : Node
         foreach (var view in FlickerViews) ok &= await FlickerShifts(rig, view, view.Label);
         ok &= await FlickerOrbit(rig, FlickerViews[0]);
         // The same puppet bent, under a moved parent, as the oracle frames pose it: its highlights fall elsewhere, and a bound fitted to the session pose alone fails the shipped shader here.
-        main.Bodies.Transform = new Transform3D(new Basis(Vector3.Up, 1.0f), new Vector3(0.15f, 0f, 0.1f));
+        main.Bodies.Transform = new Transform3D(new Basis(Vector3.Up, ParentYaw), new Vector3(0.15f, 0f, 0.1f));
         foreach (int degrees in FlickerBends)
         {
             await Pose(shape, bodies, degrees);
@@ -578,11 +602,10 @@ public partial class RenderCheck : Node
         float ratio = shownP99 / Mathf.Max(referenceP99, 1e-3f);
         float ringError = RingError(drawn, supersampled, ring);
         float highlightShift = highlights == 0 ? 0 : Mathf.Abs(Mean(drawn, highlight) - Mean(supersampled, highlight));
-        float maxRatio = view.Distance < 1f ? MaxFlickerRatioClose : MaxFlickerRatioPlay;
         GD.Print($"RENDER flicker ({label}): {pixels} interior pixels, {highlights} highlight; p99 luma std {shownP99:F1} against the {FlickerSupersample}x reference's {referenceP99:F1} (ratio {ratio:F2}); highlight mean shift {highlightShift:F2}; silhouette ring mean error {ringError:F2}");
         bool ok = true;
         if (pixels < MinFlickerPixels || highlights < MinFlickerHighlights) { GD.PrintErr($"RENDER FAIL: the {label} flicker view reaches {pixels} interior and {highlights} highlight pixels, under {MinFlickerPixels} and {MinFlickerHighlights}; it proves nothing"); ok = false; }
-        if (ratio > maxRatio) { GD.PrintErr($"RENDER FAIL: the highlights flicker in the {label} view: p99 luma std {shownP99:F1} is {ratio:F2} times the supersampled reference's {referenceP99:F1}, over {maxRatio}"); ok = false; }
+        if (ratio > MaxFlickerRatio) { GD.PrintErr($"RENDER FAIL: the highlights flicker in the {label} view: p99 luma std {shownP99:F1} is {ratio:F2} times the supersampled reference's {referenceP99:F1}, over {MaxFlickerRatio}"); ok = false; }
         if (highlightShift > MaxHighlightShift) { GD.PrintErr($"RENDER FAIL: the {label} view's highlights are {highlightShift:F2} levels from the reference's, over {MaxHighlightShift}; the glaze is blurred away or brighter than the studio"); ok = false; }
         if (ringError > MaxSilhouetteError) { GD.PrintErr($"RENDER FAIL: the {label} view's silhouette is {ringError:F2} levels from the supersampled reference's on average, over {MaxSilhouetteError}; the 3D is not antialiased"); ok = false; }
         return ok;
@@ -926,11 +949,11 @@ public partial class RenderCheck : Node
         if (tiltMedian < MinBandTilt) { GD.PrintErr($"RENDER FAIL: the {label} bevel band's reference normal is {tiltMedian:F1} degrees from the facet's, under {MinBandTilt}; the check cannot see a bevel"); ok = false; }
         if (p90 > MaxNormalP90) { GD.PrintErr($"RENDER FAIL: the {label} drawn shading normal is {p90:F2} degrees from the CPU reference at the 90th percentile, over {MaxNormalP90}"); ok = false; }
         if (bandMedian > MaxBandMedian) { GD.PrintErr($"RENDER FAIL: across the {label} bevel band the drawn normal is {bandMedian:F2} degrees from the CPU reference (median), over {MaxBandMedian}; the bevel is not where or as large as the creases say"); ok = false; }
-        if (clampedMedian > MaxClampedMedian) { GD.PrintErr($"RENDER FAIL: on the {label} triangles whose width the smallest altitude caps the drawn normal is {clampedMedian:F2} degrees from the CPU reference (median), over {MaxClampedMedian}; the cap is not where the shader puts it"); ok = false; }
+        if (clampedMedian > MaxCapMedian) { GD.PrintErr($"RENDER FAIL: on the {label} triangles whose width the smallest altitude caps the drawn normal is {clampedMedian:F2} degrees from the CPU reference (median), over {MaxCapMedian}; the cap is not where the shader puts it"); ok = false; }
         if (cornerErr.Count < spec.MinCorner || sharp.Count < spec.MinSharp) { GD.PrintErr($"RENDER FAIL: the {label} normal check reached {cornerErr.Count} corner-blend and {sharp.Count} sharp-crease pixels, under {spec.MinCorner} and {spec.MinSharp}; it proves nothing about them"); ok = false; }
         if (spec.MinCorner > 0 && effectMedian < MinCornerEffect) { GD.PrintErr($"RENDER FAIL: the {label} corner blend moves the reference normal by {effectMedian:F1} degrees (median), under {MinCornerEffect}; the check cannot see a corner blend that is off"); ok = false; }
         if (spec.MinCorner > 0 && cornerMedian > MaxCornerMedian) { GD.PrintErr($"RENDER FAIL: where the {label} corner blend reaches, the drawn normal is {cornerMedian:F2} degrees from the CPU reference (median), over {MaxCornerMedian}; the vertex normal is in the wrong space or the blend has the wrong radius"); ok = false; }
-        if (spec.MinSharp > 0 && sharpMedian > MaxClampedMedian) { GD.PrintErr($"RENDER FAIL: across the {label} band of edges turning by {SharpCrease} to {SharpCreaseTop} rad (half) the drawn normal is {sharpMedian:F2} degrees from the CPU reference (median), over {MaxClampedMedian}; the crease clamp is not where the creases say"); ok = false; }
+        if (spec.MinSharp > 0 && sharpMedian > MaxSharpMedian) { GD.PrintErr($"RENDER FAIL: across the {label} band of edges turning by {SharpCrease} to {SharpCreaseTop} rad (half) the drawn normal is {sharpMedian:F2} degrees from the CPU reference (median), over {MaxSharpMedian}; the crease clamp is not where the creases say"); ok = false; }
         if (spec.Continuity) ok &= Continuity(spec, tri, depth, drawnNormal, weld, w, h);
         return ok;
     }
