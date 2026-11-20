@@ -30,8 +30,9 @@ render_mode cull_back;
 //
 // The highlights are prefiltered where they are decided (geometric specular antialiasing): the shading normal changes across a pixel
 // along the bevel's chamfers and at facet edges, so a point sample of the studio in the reflected direction flickers as the camera moves.
-// The spread of the normal over the pixel, from its screen derivatives, widens both the bisque's roughness and the studio the glaze reads,
-// so each pixel reflects the studio's average over the directions it covers. MSAA (project.godot) antialiases the silhouette and the
+// The spread of the normal over the pixel, from its screen derivatives, widens the studio the glaze reads, so each pixel reflects the
+// studio's average over the directions it covers. (The bisque's roughness is left as it is: widening it by the same spread changed no pixel
+// at any framing, the bisque's specular being dim.) MSAA (project.godot) antialiases the silhouette and the
 // triangle edges, which this does not touch.
 uniform vec3 albedo : source_color = vec3(0.9, 0.9, 0.88);
 uniform float bevel_screen = 0.0;
@@ -96,8 +97,9 @@ void fragment() {
 	}
 	NORMAL = n;
 	// The pixel's normal spread as GGX alpha^2 (Tokuyoshi and Kaplanyan 2021, JCGT 10(2) 31-58, Listing 5) with the pixel filter's variance
-	// 1/24 (the variance of a box one pixel wide is 1/12; this is half of it, which measured no overblur) and the clamp of Kaplanyan et al.
-	// 2016 (HPG) at 0.18. Derivatives are taken here, after every branch has joined, in uniform control flow.
+	// 1/24 and the clamp of Kaplanyan et al. 2016 (HPG) at 0.18. 1/24 is half of a box one pixel wide's own variance (1/12) and an eighth of the
+	// paper's 1/(2 pi); RenderCheck's flicker check holds it from both sides: with 1/24 the highlights stop crawling, and at 1/12 or more they
+	// are blurred below the supersampled reference's brightness. Derivatives are taken here, after every branch has joined, in uniform control flow.
 	const float PIXEL_VARIANCE = 1.0 / 24.0;
 	const float MAX_SPREAD = 0.18;
 	float kernel = min(2.0 * PIXEL_VARIANCE * (dot(dFdx(n), dFdx(n)) + dot(dFdy(n), dFdy(n))), MAX_SPREAD);
@@ -113,8 +115,7 @@ void fragment() {
 	a = mix(a, a * vec3(1.02, 0.99, 0.94), glaze_pool * convex);
 	ALBEDO = show_normals ? vec3(0.0) : a;
 	// RenderCheck's normal view is the emission alone: no light, however shiny the bisque, may add to it.
-	// Godot's alpha is roughness^2, so the kernel adds to roughness^4.
-	ROUGHNESS = show_normals ? 1.0 : sqrt(sqrt(min(roughness * roughness * roughness * roughness + kernel, 1.0)));
+	ROUGHNESS = show_normals ? 1.0 : roughness;
 	SPECULAR = show_normals ? 0.0 : specular;
 	BACKLIGHT = show_normals ? vec3(0.0) : backlight;
 	EMISSION = show_normals ? n * 0.5 + 0.5 : vec3(0.0);

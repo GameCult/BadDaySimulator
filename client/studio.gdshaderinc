@@ -13,11 +13,13 @@ uniform vec3 studio_rim_tint = vec3(1.0);
 uniform float studio_rim_radiance = 0.0;
 uniform float studio_floor = 0.0;
 
-// A rectangular emitter seen from the origin along c, w by h on the plane at unit distance, soft at its edge, prefiltered by the pixel's
-// normal spread a2 (GGX alpha^2; the shader's kernel). A reflected direction that spreads by variance 2 a2 per axis spreads (1 + |q|^2)
-// times wider on the plane at unit distance, so each axis of the box (half width 0.9 h) is averaged over a box kernel of half width w
-// (variance w^2 / 3, the lobe's 2 a2 times that stretch squared, plus the authored edge's own (0.1 h)^2). That is a trapezoid, which keeps
-// the box's integral at every width, where a wider smoothstep would add energy; at a2 = 0 it is the authored ramp from 0.8 h to h.
+// A rectangular emitter seen from the origin along c, w by h on the plane at unit distance, prefiltered by the pixel's normal spread a2
+// (GGX alpha^2; the shader's kernel). A reflected direction that spreads by variance 2 a2 per axis spreads (1 + |q|^2) times wider on the
+// plane at unit distance, so each axis of the box (half width 0.9 h) is averaged over a box kernel of half width w (variance w^2 / 3: the
+// lobe's 2 a2 times that stretch squared, plus the authored edge's own (0.1 h)^2). The result is a trapezoid: a linear ramp from 0.8 h to h
+// at a2 = 0 (the authored edge was a smoothstep over the same span, so the two differ by under a tenth of the box's level), widening as a2
+// grows. The box's integral over the reflected directions is kept to about 6% up to a2 = 0.05; at the 0.18 clamp about a third of it remains,
+// where the filter has stopped following the lobe and the highlight dims rather than brightens.
 float studio_box(vec3 d, vec3 c, vec2 half_size, float a2) {
 	vec3 up = abs(c.y) > 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
 	vec3 u = normalize(cross(up, c));
