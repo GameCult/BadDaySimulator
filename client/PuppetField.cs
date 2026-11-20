@@ -73,6 +73,10 @@ public sealed class PuppetShape
     /// <summary>How far a skinned vertex can lie from its bone's origin.</summary>
     public required float Reach { get; init; }
 
+    /// <summary>The mesher's own account of its untangle: how many vertices it pulled back toward their net position, and the worst distance (m) of one of them from the isosurface.</summary>
+    public required int Pulled { get; init; }
+    public required float OffSurface { get; init; }
+
     public int Triangles => Positions.Length / 3;
 }
 
@@ -171,43 +175,32 @@ public static class PuppetField
             samples[x, y, z] = f.Eval(lo + new float3(x, y, z) * cell, out _, out _, out _).w;
         var nets = CultGeometrySurfaceNets.Extract(samples, 0f, lo, cell);
 
-        // Two Newton steps put each net vertex on the isosurface.
-        var v = new float3[nets.VertexCount];
-        for (int i = 0; i < v.Length; i++)
+        // Two Newton steps put each net vertex on the isosurface; the untangle then pulls back the few it threw into a fold.
+        var net = new float3[nets.VertexCount]; var projected = new float3[net.Length];
+        for (int i = 0; i < net.Length; i++)
         {
-            var p = new float3(nets.Positions[3 * i], nets.Positions[3 * i + 1], nets.Positions[3 * i + 2]);
+            net[i] = new float3(nets.Positions[3 * i], nets.Positions[3 * i + 1], nets.Positions[3 * i + 2]);
+            var p = net[i];
             for (int it = 0; it < Newton; it++) { var e = f.Eval(p, out _, out _, out _); p -= e.w * new float3(e.x, e.y, e.z); }
-            v[i] = p;
+            projected[i] = p;
         }
+        var (v, tris, pulled, offSurface) = Untangle(f, nets.Quads, net, projected);
 
         var pos = new List<float3>(); var nor = new List<float3>();
         var ba = new List<int>(); var bb = new List<int>(); var wa = new List<float>();
         var corner = new List<int>();
-        void Triangle(int ia, int ib, int ic)
+        // The nets wind every quad counter-clockwise seen from the field's outside; Godot's front face is clockwise, so each triangle is emitted reversed.
+        for (int k = 0; k < tris.Length; k += 3)
         {
-            var a = v[ia]; var b = v[ib]; var c = v[ic];
-            var cross = math.cross(b - a, c - a);
-            float len = math.length(cross);
-            if (len < 1e-12f) return;
-            var g = f.Eval((a + b + c) / 3f, out _, out _, out _);
-            // Godot's front face is clockwise: the counter-clockwise normal points into the body.
-            if (math.dot(cross, new float3(g.x, g.y, g.z)) > 0) { (b, c) = (c, b); (ib, ic) = (ic, ib); cross = -cross; }
-            var normal = -cross / len;
-            foreach (var q in new[] { a, b, c })
+            int ia = tris[k], ib = tris[k + 2], ic = tris[k + 1];
+            var cross = math.cross(v[ib] - v[ia], v[ic] - v[ia]);
+            var normal = -cross / math.length(cross);
+            foreach (int i in new[] { ia, ib, ic })
             {
-                f.Eval(q, out int bone, out int other, out float w);
-                pos.Add(q); nor.Add(normal); ba.Add(bone); bb.Add(other); wa.Add(w);
+                f.Eval(v[i], out int bone, out int other, out float w);
+                pos.Add(v[i]); nor.Add(normal); ba.Add(bone); bb.Add(other); wa.Add(w);
             }
             corner.Add(ia); corner.Add(ib); corner.Add(ic);
-        }
-        for (int i = 0; i < nets.Quads.Length; i += 4)
-        {
-            int ia = (int)nets.Quads[i], ib = (int)nets.Quads[i + 1], ic = (int)nets.Quads[i + 2], id = (int)nets.Quads[i + 3];
-            var a = v[ia]; var b = v[ib]; var c = v[ic]; var d = v[id];
-            // Split on the flatter diagonal.
-            bool ac = math.dot(Unit(math.cross(b - a, c - a)), Unit(math.cross(c - a, d - a))) >= math.dot(Unit(math.cross(b - a, d - a)), Unit(math.cross(c - b, d - b)));
-            if (ac) { Triangle(ia, ib, ic); Triangle(ia, ic, id); }
-            else { Triangle(ia, ib, id); Triangle(ib, ic, id); }
         }
         var crease = Creases(corner, pos, nor);
 
@@ -221,8 +214,94 @@ public static class PuppetField
         {
             Ids = ids, SpreadBind = t, Joints = js,
             Positions = pos.ToArray(), Normals = nor.ToArray(), BoneA = ba.ToArray(), BoneB = bb.ToArray(), WeightA = wa.ToArray(), Crease = crease,
-            Reach = 2 * reach + 2 * maxBall + smin,
+            Reach = 2 * reach + 2 * maxBall + smin, Pulled = pulled, OffSurface = offSurface,
         };
+    }
+
+    /// <summary>The untangle's pull-back rounds: each halves the Newton displacement of the vertices it marks, so twelve leave them at the net.</summary>
+    private const int UntangleRounds = 12;
+
+    /// <summary>
+    /// The nets' triangles (quads split on the flatter diagonal, wound as the nets wind them) over the vertices <paramref name="projected"/>
+    /// onto the isosurface, with every vertex of a bad triangle pulled back toward its net position, half as far each round, until none
+    /// is bad or <see cref="UntangleRounds"/> rounds are done. A triangle is bad when it faces against the field's gradient at its centroid,
+    /// is inverted or collapsed against its net triangle (its cross has a component along the net's of at most 5% of the net's squared
+    /// length), or has an edge that is a fold (its two triangles disagree on convexity). Returns the vertices, the triangles (three
+    /// indices each), how many vertices were pulled back and the worst distance of one from the isosurface (m).
+    /// </summary>
+    private static (float3[] V, int[] Tris, int Pulled, float OffSurface) Untangle(Field f, uint[] quads, float3[] net, float3[] projected)
+    {
+        var v = (float3[])projected.Clone();
+        var pull = new float[v.Length]; Array.Fill(pull, 1f);
+        int[] tris;
+        for (int round = 0; ; round++)
+        {
+            tris = Triangulate(quads, v);
+            var bad = new HashSet<int>();
+            var sides = new Dictionary<(int, int), List<int>>();
+            for (int k = 0; k < tris.Length; k += 3)
+            {
+                int a = tris[k], b = tris[k + 1], c = tris[k + 2];
+                var cross = math.cross(v[b] - v[a], v[c] - v[a]);
+                var netCross = math.cross(net[b] - net[a], net[c] - net[a]);
+                var g = f.Eval((v[a] + v[b] + v[c]) / 3f, out _, out _, out _);
+                // The nets wind every quad counter-clockwise seen from the field's outside, so a triangle's cross points along the gradient.
+                bool against = math.dot(cross, new float3(g.x, g.y, g.z)) <= 0;
+                bool inverted = math.dot(cross, netCross) <= 0.05f * math.lengthsq(netCross);
+                if (against || inverted) { bad.Add(a); bad.Add(b); bad.Add(c); }
+                for (int e = 0; e < 3; e++)
+                {
+                    int p = tris[k + (e + 1) % 3], q = tris[k + (e + 2) % 3];
+                    var key = p < q ? (p, q) : (q, p);
+                    if (!sides.TryGetValue(key, out var list)) sides[key] = list = new List<int>(2);
+                    list.Add(k + e);
+                }
+            }
+            foreach (var list in sides.Values)
+            {
+                if (list.Count != 2) continue;
+                if (Convex(tris, v, list[0], list[1]) != Convex(tris, v, list[1], list[0]) && Turns(tris, v, list[0], list[1]))
+                    foreach (int s in list) { bad.Add(tris[s]); bad.Add(tris[s - s % 3 + (s % 3 + 1) % 3]); bad.Add(tris[s - s % 3 + (s % 3 + 2) % 3]); }
+            }
+            if (bad.Count == 0 || round == UntangleRounds) break;
+            foreach (int i in bad) { pull[i] *= 0.5f; v[i] = net[i] + (projected[i] - net[i]) * pull[i]; }
+        }
+        int pulled = 0; float off = 0;
+        for (int i = 0; i < v.Length; i++)
+            if (pull[i] < 1) { pulled++; off = MathF.Max(off, MathF.Abs(f.Eval(v[i], out _, out _, out _).w)); }
+        return (v, tris, pulled, off);
+    }
+
+    /// <summary>The quads as triangles, each split on its flatter diagonal, in the quad's winding.</summary>
+    private static int[] Triangulate(uint[] quads, float3[] v)
+    {
+        var tris = new int[quads.Length / 4 * 6];
+        for (int i = 0, o = 0; i < quads.Length; i += 4, o += 6)
+        {
+            int ia = (int)quads[i], ib = (int)quads[i + 1], ic = (int)quads[i + 2], id = (int)quads[i + 3];
+            var a = v[ia]; var b = v[ib]; var c = v[ic]; var d = v[id];
+            bool ac = math.dot(Unit(math.cross(b - a, c - a)), Unit(math.cross(c - a, d - a))) >= math.dot(Unit(math.cross(b - a, d - a)), Unit(math.cross(c - b, d - b)));
+            var t = ac ? new[] { ia, ib, ic, ia, ic, id } : new[] { ia, ib, id, ib, ic, id };
+            t.CopyTo(tris, o);
+        }
+        return tris;
+    }
+
+    /// <summary>Whether, from the triangle of slot <paramref name="s"/>, the triangle of slot <paramref name="other"/> lies behind its plane: the edge between them is convex there.</summary>
+    private static bool Convex(int[] tris, float3[] v, int s, int other)
+    {
+        int k = s - s % 3, e = s % 3;
+        var n = math.cross(v[tris[k + 1]] - v[tris[k]], v[tris[k + 2]] - v[tris[k]]);
+        return math.dot(n, v[tris[other]] - v[tris[k + (e + 1) % 3]]) < 0;
+    }
+
+    /// <summary>Whether the two triangles' normals differ by more than a hundredth of a radian: a flatter edge has no convexity to speak of.</summary>
+    private static bool Turns(int[] tris, float3[] v, int s, int t)
+    {
+        int a = s - s % 3, b = t - t % 3;
+        var na = Unit(math.cross(v[tris[a + 1]] - v[tris[a]], v[tris[a + 2]] - v[tris[a]]));
+        var nb = Unit(math.cross(v[tris[b + 1]] - v[tris[b]], v[tris[b + 2]] - v[tris[b]]));
+        return MathF.Atan2(math.length(math.cross(na, nb)), math.dot(na, nb)) >= 1e-2f;
     }
 
     /// <summary>

@@ -122,7 +122,81 @@ public static class PuppetChecks
         Check(worstLength <= 0.17f, $"every joint bent up to 45 degrees makes a skinned edge {worstLength:F3} m long, over 0.17 m");
         Check(worstLength90 <= 0.25f, $"every joint bent up to 90 degrees makes a skinned edge {worstLength90:F3} m long, over 0.25 m");
 
+        Mesher(puppet, Check);
         Creases(puppet, Check);
+    }
+
+    /// <summary>
+    /// The mesher's untangle on the shipped cell: no edge folds (its two triangles disagree on convexity), no triangle faces into the body
+    /// (seen from a point a millimetre off its face along its normal, the surface is crossed an odd number of times in two directions),
+    /// none is tiny, and the vertices the untangle pulled back are few and stay near the isosurface. The coarser cells of the resolution
+    /// sweep are judged by Resolved alone: the untangle leaves some marked there.
+    /// </summary>
+    private static void Mesher(PuppetShape shape, Action<bool, string> check)
+    {
+        int count = shape.Triangles;
+        var id = new Dictionary<(long, long, long), int>();
+        var corner = new int[shape.Positions.Length];
+        for (int i = 0; i < corner.Length; i++)
+        {
+            var p = shape.Positions[i];
+            var key = ((long)Math.Round(p.x * 1e5), (long)Math.Round(p.y * 1e5), (long)Math.Round(p.z * 1e5));
+            if (!id.TryGetValue(key, out corner[i])) id[key] = corner[i] = id.Count;
+        }
+        var sides = new Dictionary<(int, int), List<int>>();
+        for (int s = 0; s < corner.Length; s++)
+        {
+            int t = s / 3, k = s % 3, p = corner[3 * t + (k + 1) % 3], q = corner[3 * t + (k + 2) % 3];
+            var key = p < q ? (p, q) : (q, p);
+            if (!sides.TryGetValue(key, out var list)) sides[key] = list = new List<int>();
+            list.Add(s);
+        }
+        int folds = 0;
+        foreach (var list in sides.Values)
+        {
+            if (list.Count != 2) continue;
+            int a = list[0], b = list[1];
+            float3 na = shape.Normals[3 * (a / 3)], nb = shape.Normals[3 * (b / 3)];
+            if (MathF.Atan2(math.length(math.cross(na, nb)), math.dot(na, nb)) < 1e-2f) continue;
+            bool convexA = math.dot(na, shape.Positions[b] - shape.Positions[3 * (a / 3) + (a % 3 + 1) % 3]) < 0;
+            bool convexB = math.dot(nb, shape.Positions[a] - shape.Positions[3 * (b / 3) + (b % 3 + 1) % 3]) < 0;
+            if (convexA != convexB) folds++;
+        }
+        check(folds == 0, $"{folds} of {sides.Count} edges are folds: their two triangles disagree on convexity");
+
+        // Facing into the body: an odd crossing count from just outside the face means the face looks inward.
+        var directions = new[] { math.normalize(new float3(0.5773f, 0.3011f, 0.7571f)), math.normalize(new float3(-0.2113f, 0.8317f, -0.5129f)) };
+        int inward = 0; float smallest = float.MaxValue;
+        for (int t = 0; t < count; t++)
+        {
+            var a = shape.Positions[3 * t]; var b = shape.Positions[3 * t + 1]; var c = shape.Positions[3 * t + 2];
+            smallest = MathF.Min(smallest, 0.5f * math.length(math.cross(b - a, c - a)));
+            var origin = (a + b + c) / 3f + shape.Normals[3 * t] * 1e-3f;
+            bool both = true;
+            foreach (var d in directions)
+            {
+                int crossings = 0;
+                for (int u = 0; u < count; u++) if (Crosses(origin, d, shape.Positions[3 * u], shape.Positions[3 * u + 1], shape.Positions[3 * u + 2])) crossings++;
+                both &= crossings % 2 == 1;
+            }
+            if (both) inward++;
+        }
+        check(inward == 0, $"{inward} of {count} triangles face into the body");
+        check(smallest >= 1e-6f, $"the smallest triangle is {smallest * 1e6:F2} mm2, under 1 mm2");
+        check(shape.Pulled <= 16, $"the untangle pulled back {shape.Pulled} vertices, over 16");
+        check(shape.OffSurface <= 0.015f, $"a pulled-back vertex is {shape.OffSurface * 1000:F1} mm off the isosurface, over 15 mm");
+    }
+
+    /// <summary>Whether the ray from <paramref name="o"/> along <paramref name="d"/> crosses the triangle (Moller-Trumbore).</summary>
+    private static bool Crosses(float3 o, float3 d, float3 a, float3 b, float3 c)
+    {
+        var e1 = b - a; var e2 = c - a; var pv = math.cross(d, e2);
+        float det = math.dot(e1, pv);
+        if (MathF.Abs(det) < 1e-12f) return false;
+        var tv = o - a; float u = math.dot(tv, pv) / det;
+        if (u < 0 || u > 1) return false;
+        var qv = math.cross(tv, e1); float w = math.dot(d, qv) / det;
+        return w >= 0 && u + w <= 1 && math.dot(e2, qv) / det > 0;
     }
 
     /// <summary>
@@ -180,7 +254,6 @@ public static class PuppetChecks
             if ((shape.Crease[a] > 0) != convexA || (shape.Crease[b] > 0) != convexB) badSign++;
         }
         check(shared > 1000 && creased > 100, $"the crease check is vacuous: {shared} shared edges, {creased} turning more than a hundredth of a radian");
-        check(folds < shared / 100, $"{folds} of {shared} shared edges are folds, over one in a hundred");
         check(badFold == 0, $"{badFold} of {folds} fold edges carry a crease");
         check(asymmetric == 0, $"{asymmetric} of {shared} shared edges carry different creases on their two sides");
         check(notHalf == 0, $"{notHalf} of {shared} shared edges have a crease that is not half the angle between the facet normals");
