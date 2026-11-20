@@ -184,10 +184,10 @@ public static class Program
         {
             var r = BodyPainBox.Run(OnBody with { BoxIntensity = 0.0, MaxSeconds = 10.0 }, 1);
             Check(r.Run.Outcome == Outcome.Endured && r.Run.Flinches == 0 && r.Run.TimeToBreakMs is null, r.Run.Summary());
-            // Measured idle drift from the hold point (seed-independent without pain), substeps 1 to 8: the arm settles
-            // slowly and sags about 1 cm under gravity, so from 3 s the largest drift is 2.0 to 2.3 cm (2.31 at 8 substeps),
-            // from 8 s 1.1 to 1.5 cm. A flinch moves the hand over 2.3 cm from where a leak-free arm is; the limits sit
-            // 50% and 35% above the largest measurement.
+            // Measured idle drift of the palm from the hold point (seed-independent without pain), substeps 2 to 8: the arm settles
+            // slowly and sags under gravity, so from 3 s the largest drift is 1.8 to 1.9 cm, from 8 s 1.0 to 1.2 cm; at 1 substep it is 3.35 cm
+            // from 3 s and 1.8 cm from 8 s. A flinch moves the hand over 2.3 cm from where a leak-free arm is; the limits sit 83% and 70% above the
+            // largest measurement at 2 to 8 substeps, and 4% and 10% above the 1-substep one.
             for (int i = 3 * Hz; i < r.Hand.Count; i++) Check(Dist(r.Hand[i]) <= 0.035f, $"drift {Dist(r.Hand[i]):F3} m at tick {i}");
             for (int i = 8 * Hz; i < r.Hand.Count; i++) Check(Dist(r.Hand[i]) <= 0.020f, $"late drift {Dist(r.Hand[i]):F3} m at tick {i}");
         }),
@@ -1060,7 +1060,7 @@ public static class Program
         ("office body settle: the seated body is still when the run ends: no hand faster than 0.025 m/s (half the 0.05 limit) over the last second, on the seeds that were tightest at 6 s and every seed 1..100 when BDS_SETTLE_SWEEP is set", () =>
         {
             // The release is a timer (the office never ends on body stillness), so the timer is calibrated and this is where that is checked.
-            // 6 s left seeds 55 and 100 at 0.0512 and 0.0521 m/s; at 8 s the worst of seeds 1..100 is 0.0124 m/s (seed 100). The full sweep takes about a minute:
+            // 6 s left seeds 55 and 100 at 0.0512 and 0.0521 m/s; at 8 s the worst of seeds 1..100 is 0.0160 m/s (seed 74; 0.0124 m/s, seed 100, before the hands). The full sweep takes about a minute:
             //   BDS_SETTLE_SWEEP=1 dotnet run -c Release --project tests/BadDay.Tests -- "office body settle"
             var seeds = Environment.GetEnvironmentVariable("BDS_SETTLE_SWEEP") is { Length: > 0 }
                 ? Enumerable.Range(1, 100).Select(n => (ulong)n)
