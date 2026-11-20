@@ -174,6 +174,10 @@ public partial class Smoke : Node
         Check(glow.V > 0.7f && glow.S < 0.3f, $"the chamber is {glow}, not light");
         var environment = _main.GetChildren().OfType<WorldEnvironment>().Single().Environment;
         Check(environment.BackgroundColor.Luminance < 0.2f, "the background is not dark grey");
+        // The studio: a shadowing key and two rims, carried by the camera the player orbits (when the studio follows the camera), lighting the glaze's reflections from the same directions.
+        var rig = _main.GetNode<Camera3D>("Camera").GetChildren().OfType<DirectionalLight3D>().ToArray();
+        Check(rig.Length == 3 && rig.Count(l => l.ShadowEnabled) == 1, $"the camera carries {rig.Length} studio lights, {rig.Count(l => l.ShadowEnabled)} with a shadow, not a key and two rims");
+        Check(environment.Sky is null && environment.TonemapMode == Godot.Environment.ToneMapper.Linear && !environment.GlowEnabled, "the environment is not a linear colour environment with no sky and no glow");
     }
 
     /// <summary>The puppet's one mesh as it is drawn: size, one piece, and not stretched into a web by the pose it is in or by a joint swung 90 degrees.</summary>

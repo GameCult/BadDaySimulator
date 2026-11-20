@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Godot;
@@ -11,11 +12,12 @@ namespace BadDay.Client.Tests;
 /// It poses the carriers in a bent pose (every joint turned at random) under a moved and turned BodyRenderer, renders one frame of the
 /// puppet alone on black, and compares the rendered silhouette with the silhouette of the same mesh skinned on the CPU from the
 /// carriers and the spread bind (not from anything Puppet computed) and projected through the camera. Intersection over union must be
-/// at least <see cref="MinIou"/>. It also looks at the light, with the chamber near full glow: the puppet's faces must not clip to white and must differ from each other, and the chamber's light must lift the puppet over the same frame with that light off (so the glow is bounded from below as well).
+/// at least <see cref="MinIou"/>. It also looks at the light, with the chamber near full glow: the bisque's faces (the glaze off) must not clip to white and must differ from each other, and the chamber's light must lift the puppet over the same frame with that light off (so the glow is bounded from below as well).
+/// It then turns the glaze on at the close view, from the front and from behind (see <see cref="GlazeCheck"/>): it must show, and the studio the camera carries must light the puppet from both sides.
 /// It also reads the shading normal the shader draws (ShowNormals: the view-space normal as emission) on the torso in the <see cref="Views"/> (close, far,
 /// bent 90 degrees, and at 1920x1080 mid and far) and compares it pixel by pixel with a CPU reference of the whole formula (see <see cref="NormalCheck"/>), on all the interior pixels
 /// and on the pixels of the corner blend and of sharp creases alone, and the drawn normals of adjacent pixels across triangle boundaries.
-/// <c>godot --path client res://tests/RenderCheck.tscn [-- --png=path] [-- --normals-png=path] [-- --normals-far-png=path] [-- --normals-bend90-png=path] [-- --normals-mid-png=path] [-- --normals-far1080-png=path]</c>; exit code 0 passes, 1 fails. It needs a window, so it is
+/// <c>godot --path client res://tests/RenderCheck.tscn [-- --png=path] [-- --glaze-png=path] [-- --glaze-behind-png=path] [-- --normals-png=path] [-- --normals-far-png=path] [-- --normals-bend90-png=path] [-- --normals-mid-png=path] [-- --normals-far1080-png=path]</c>; exit code 0 passes, 1 fails. It needs a window, so it is
 /// not part of the headless smoke.
 /// </summary>
 public partial class RenderCheck : Node
@@ -28,8 +30,17 @@ public partial class RenderCheck : Node
     /// </summary>
     private const float MinIou = 0.999f;
 
-    /// <summary>The puppet's lit faces: at most this share of its pixels may be at 250 or more of 255.</summary>
+    /// <summary>The bisque's lit faces (the glaze off): at most this share of its pixels may be at 250 or more of 255.</summary>
     private const float MaxClipped = 0.02f;
+
+    /// <summary>
+    /// The glaze must show: with it on, at least this share of the puppet's pixels differ from the bisque's by <see cref="GlazeDifference"/> levels or more (it runs under
+    /// gl_compatibility, whose clearcoat sees punctual lights only), and at most <see cref="MaxGlazedClipped"/> of them are clipped: the glaze's highlights are meant to
+    /// clip, a puppet white from head to foot is not. Measured at the close view from the front; from behind (the torso's back is one broad face that mirrors the key) only that the glaze shows and the bisque is lit.
+    /// </summary>
+    private const float MinGlazeShare = 0.03f, MaxGlazedClipped = 0.12f;
+
+    private const float GlazeDifference = 8f;
 
     /// <summary>The puppet's facets must differ: its 10th to 90th percentile brightness spans at least this many of 255 levels.</summary>
     private const float MinSpread = 30f;
@@ -112,11 +123,103 @@ public partial class RenderCheck : Node
         for (int i = 0; i < 3; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
 
         var carriers = shape.Ids.Select(id => main.Bodies.GetNode<Node3D>($"Puppet/Body{id}")).ToArray();
+        var puppet = main.Bodies.GetNode<Puppet>("Puppet");
+        puppet.Glazed = false; // the bounds on the lit facets are the bisque's; the glaze has its own check
         var world = await Pose(shape, carriers, BendDegrees);
+        var frame = Capture(shape, world, "--png=");
+        var (w, h, puppetPixels, levels) = (frame.Width, frame.Height, frame.Pixels, frame.Levels);
+        int clipped = levels.Count(l => l >= 250f);
+        float iou = frame.Iou;
+
+        float meanOn = levels.Count == 0 ? 0 : levels.Average();
+        levels = levels.OrderBy(l => l).ToList();
+        float lit = levels.Count;
+        float spread = lit == 0 ? 0 : levels[(int)(lit * 0.9f)] - levels[(int)(lit * 0.1f)];
+        float share = lit == 0 ? 1 : clipped / lit;
+
+        // The control: the same frame with the chamber's light off, over the same pixels.
+        var glowLight = main.Chamber.GetChildren().OfType<OmniLight3D>().Single();
+        float energy = glowLight.LightEnergy;
+        glowLight.LightEnergy = 0f;
+        for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+        var dark = GetViewport().GetTexture().GetImage();
+        dark.Convert(Image.Format.Rgba8);
+        glowLight.LightEnergy = energy;
+        float meanOff = puppetPixels.Count == 0 ? 0 : puppetPixels.Average(i => { var px = dark.GetPixel(i % w, i / w); return Mathf.Max(px.R, Mathf.Max(px.G, px.B)) * 255f; });
+        float lift = meanOn - meanOff;
+
+        GD.Print($"RENDER glow lift {lift:F2} levels (mean {meanOn:F1} lit, {meanOff:F1} with the chamber light off)");
+        GD.Print($"RENDER iou {iou:F4} (covered {frame.Covered}, drawn {frame.Drawn}), clipped {share:P1} of {lit} puppet pixels, 10th to 90th percentile level spread {spread:F0} of 255");
+        bool ok = true;
+        if (iou < MinIou) { GD.PrintErr($"RENDER FAIL: the drawn silhouette matches the CPU-skinned mesh with IoU {iou:F3}, under {MinIou}"); ok = false; }
+        if (share > MaxClipped) { GD.PrintErr($"RENDER FAIL: {share:P1} of the bisque's pixels are clipped to white, over {MaxClipped:P0}; the facets cannot read"); ok = false; }
+        if (spread < MinSpread) { GD.PrintErr($"RENDER FAIL: the puppet's pixels span only {spread:F0} levels between the 10th and 90th percentile, under {MinSpread}; the facets do not differ"); ok = false; }
+        if (lift < MinGlowLift) { GD.PrintErr($"RENDER FAIL: the chamber's light lifts the puppet by {lift:F2} levels, under {MinGlowLift}; the box's glow does not light the body"); ok = false; }
+        ok &= await GlazeCheck(main, shape, carriers, world);
+        ok &= await NormalCheck(main, shape, carriers, world);
+        return ok;
+    }
+
+    /// <summary>
+    /// The glaze at the close view from the front and from behind (the camera is main's own, so the studio rig it carries turns with it): the bisque alone must still clip
+    /// at most <see cref="MaxClipped"/> and spread at least <see cref="MinSpread"/> from both sides, and the glaze must change at least <see cref="MinGlazeShare"/> of the puppet's
+    /// pixels and, from the front, clip at most <see cref="MaxGlazedClipped"/> of them.
+    /// </summary>
+    private async Task<bool> GlazeCheck(Main main, PuppetShape shape, Node3D[] carriers, Transform3D[] world)
+    {
+        int torso = Array.IndexOf(shape.Ids, 101UL);
+        var puppet = main.Bodies.GetNode<Puppet>("Puppet");
+        var camera = main.GetNode<Camera3D>("Camera");
+        camera.Fov = 30f;
+        var target = carriers[torso].GlobalPosition;
+        bool ok = true;
+        foreach (var (label, yaw, pngArg) in new[] { ("front", 0f, "--glaze-png="), ("behind", Mathf.Pi, "--glaze-behind-png=") })
+        {
+            camera.GlobalPosition = target + new Basis(Vector3.Up, yaw) * new Vector3(0.35f, 0.2f, 0.55f);
+            camera.LookAt(target, Vector3.Up);
+            puppet.Glazed = false;
+            for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            var bisque = Capture(shape, world, "--bisque-" + pngArg["--".Length..]);
+            puppet.Glazed = true;
+            for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            var glazed = Capture(shape, world, pngArg);
+            puppet.Glazed = false;
+
+            var sorted = bisque.Levels.OrderBy(l => l).ToList();
+            float bisqueClipped = (float)bisque.Levels.Count(l => l >= 250f) / Math.Max(1, sorted.Count);
+            float bisqueSpread = sorted.Count == 0 ? 0 : sorted[(int)(sorted.Count * 0.9f)] - sorted[(int)(sorted.Count * 0.1f)];
+            int changed = glazed.Pixels.Count(i => Math.Abs(Level(glazed.Image, i) - Level(bisque.Image, i)) >= GlazeDifference);
+            float changedShare = (float)changed / Math.Max(1, glazed.Pixels.Count);
+            float glazedClipped = (float)glazed.Levels.Count(l => l >= 250f) / Math.Max(1, glazed.Levels.Count);
+            GD.Print($"RENDER glaze ({label}): bisque clipped {bisqueClipped:P1}, spread {bisqueSpread:F0}; glaze changes {changedShare:P1} of {glazed.Pixels.Count} puppet pixels, clips {glazedClipped:P1}");
+            if (glazed.Pixels.Count < 20000) { GD.PrintErr($"RENDER FAIL: the glaze view ({label}) has only {glazed.Pixels.Count} puppet pixels; it proves nothing"); ok = false; }
+            if (bisqueClipped > MaxClipped) { GD.PrintErr($"RENDER FAIL: {bisqueClipped:P1} of the bisque's pixels are clipped from {label}, over {MaxClipped:P0}"); ok = false; }
+            if (bisqueSpread < MinSpread) { GD.PrintErr($"RENDER FAIL: the bisque's pixels span only {bisqueSpread:F0} levels from {label}, under {MinSpread}; the studio does not light that side"); ok = false; }
+            if (changedShare < MinGlazeShare) { GD.PrintErr($"RENDER FAIL: the glaze changes {changedShare:P1} of the puppet's pixels from {label}, under {MinGlazeShare:P0}; there is no glaze"); ok = false; }
+            if (yaw == 0f && glazedClipped > MaxGlazedClipped) { GD.PrintErr($"RENDER FAIL: {glazedClipped:P1} of the glazed puppet's pixels are clipped from {label}, over {MaxGlazedClipped:P0}; the porcelain is white-out"); ok = false; }
+        }
+        return ok;
+    }
+
+    private static float Level(Image image, int pixel)
+    {
+        var c = image.GetPixel(pixel % image.GetWidth(), pixel / image.GetWidth());
+        return Mathf.Max(c.R, Mathf.Max(c.G, c.B)) * 255f;
+    }
+
+    /// <summary>One drawn frame of the puppet: the pixels where the GPU drew it and the CPU-skinned mesh covers it, and their levels (the brightest channel, of 255).</summary>
+    private sealed record Frame(int Width, int Height, List<int> Pixels, List<float> Levels, float Iou, int Covered, int Drawn, Image Image);
+
+    /// <summary>
+    /// The viewport's frame against the same mesh skinned on the CPU from the carriers' world poses (nothing from Puppet), seen from the
+    /// current camera. The frame is saved to the file a <paramref name="pngArg"/> user argument names, if one is given.
+    /// </summary>
+    private Frame Capture(PuppetShape shape, Transform3D[] world, string pngArg)
+    {
         var image = GetViewport().GetTexture().GetImage();
         image.Convert(Image.Format.Rgba8);
         foreach (var arg in OS.GetCmdlineUserArgs())
-            if (arg.StartsWith("--png=")) image.SavePng(arg["--png=".Length..]);
+            if (arg.StartsWith(pngArg)) image.SavePng(arg[pngArg.Length..]);
 
         // What the GPU drew.
         int w = image.GetWidth(), h = image.GetHeight();
@@ -144,47 +247,19 @@ public partial class RenderCheck : Node
             Fill(covered, w, h, a, b, c);
         }
 
-        int both = 0, either = 0, clipped = 0;
-        var puppetPixels = new System.Collections.Generic.List<int>();
-        var levels = new System.Collections.Generic.List<float>();
+        int both = 0, either = 0;
+        var pixels = new List<int>();
+        var levels = new List<float>();
         for (int i = 0; i < covered.Length; i++)
         {
             if (covered[i] || drawn[i]) either++;
             if (!covered[i] || !drawn[i]) continue;
             both++;
-            puppetPixels.Add(i);
+            pixels.Add(i);
             var px = image.GetPixel(i % w, i / w);
-            float level = Mathf.Max(px.R, Mathf.Max(px.G, px.B)) * 255f;
-            levels.Add(level);
-            if (level >= 250f) clipped++;
+            levels.Add(Mathf.Max(px.R, Mathf.Max(px.G, px.B)) * 255f);
         }
-        float meanOn = levels.Count == 0 ? 0 : levels.Average();
-        levels.Sort();
-        float lit = levels.Count;
-        float spread = lit == 0 ? 0 : levels[(int)(lit * 0.9f)] - levels[(int)(lit * 0.1f)];
-        float iou = either == 0 ? 0 : (float)both / either;
-        float share = lit == 0 ? 1 : clipped / lit;
-
-        // The control: the same frame with the chamber's light off, over the same pixels.
-        var glowLight = main.Chamber.GetChildren().OfType<OmniLight3D>().Single();
-        float energy = glowLight.LightEnergy;
-        glowLight.LightEnergy = 0f;
-        for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
-        var dark = GetViewport().GetTexture().GetImage();
-        dark.Convert(Image.Format.Rgba8);
-        glowLight.LightEnergy = energy;
-        float meanOff = puppetPixels.Count == 0 ? 0 : puppetPixels.Average(i => { var px = dark.GetPixel(i % w, i / w); return Mathf.Max(px.R, Mathf.Max(px.G, px.B)) * 255f; });
-        float lift = meanOn - meanOff;
-
-        GD.Print($"RENDER glow lift {lift:F2} levels (mean {meanOn:F1} lit, {meanOff:F1} with the chamber light off)");
-        GD.Print($"RENDER iou {iou:F4} (covered {covered.Count(x => x)}, drawn {drawn.Count(x => x)}), clipped {share:P1} of {lit} puppet pixels, 10th to 90th percentile level spread {spread:F0} of 255");
-        bool ok = true;
-        if (iou < MinIou) { GD.PrintErr($"RENDER FAIL: the drawn silhouette matches the CPU-skinned mesh with IoU {iou:F3}, under {MinIou}"); ok = false; }
-        if (share > MaxClipped) { GD.PrintErr($"RENDER FAIL: {share:P1} of the puppet's pixels are clipped to white, over {MaxClipped:P0}; the facets cannot read"); ok = false; }
-        if (spread < MinSpread) { GD.PrintErr($"RENDER FAIL: the puppet's pixels span only {spread:F0} levels between the 10th and 90th percentile, under {MinSpread}; the facets do not differ"); ok = false; }
-        if (lift < MinGlowLift) { GD.PrintErr($"RENDER FAIL: the chamber's light lifts the puppet by {lift:F2} levels, under {MinGlowLift}; the box's glow does not light the body"); ok = false; }
-        ok &= await NormalCheck(main, shape, carriers, world);
-        return ok;
+        return new Frame(w, h, pixels, levels, either == 0 ? 0 : (float)both / either, covered.Count(x => x), drawn.Count(x => x), image);
     }
 
     /// <summary>The reference surface in the world: the carriers' skin of the shape, welded by position, with its own facets, altitudes, vertex normals and creases.</summary>
