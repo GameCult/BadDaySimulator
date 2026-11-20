@@ -776,7 +776,7 @@ public static class Program
             }
         }),
 
-        ("office golden [P]: the rows up to the break are rung 3's bytes, the 50-seed sweep ends in its captured line, and the run's own bytes are captured", () =>
+        ("office golden [P]: the rows up to the break are rung 3's bytes, the 50-seed sweep ends in its captured line, and the run's own bytes are captured (re-captured with the arc: the rage refills his will, a second break and calm follow)", () =>
         {
             string Out(params string[] a)
             {
@@ -792,37 +792,63 @@ public static class Program
             for (int i = 2; i <= brk; i++) rung3.Add(lines[i].Replace(" KeepComposure", i == brk ? " Withdraw" : " HoldHand"));
             rung3.Add(lines[^1]);
             Check(Hash(string.Join('\n', rung3) + "\n") == "66098b69834c3c8b5e5b694f0059b8ed566e31d332f36be7e57baf70ae650823", "the office's rows up to the break differ from rung 3's");
-            Check(Hash(string.Join('\n', lines) + "\n") == "006f712ff35052ff3f1497d67ecd6d20bd679de6bb3922714695a709fffa6ce4", $"office --seed 1 changed: {Hash(string.Join('\n', lines) + "\n")}");
+            Check(Hash(string.Join('\n', lines) + "\n") == "b4e56329126e49192d2212b5acfcb63bd5691845571ff727fafec6745e7c42fc", $"office --seed 1 changed: {Hash(string.Join('\n', lines) + "\n")}");
             var last = Out("office-sweep", "--seed", "1", "--count", "50").TrimEnd('\n').Split('\n')[^1];
             Check(last == "runs 50: broke 50, endured 0; time to break min/median/max ms: 72670/86570/113420; min resolve of endured runs: -", $"sweep line changed: {last}");
         }),
 
-        ("office rage: the Actor switches once, 100 ms after the break, KeepComposure before and Rage from it, and the run ends ReleaseSeconds after the switch", () =>
+        ("office arc: the snap, then a rage on a refilled will, a second break 5-20 s later, and calm for good: every switch 100 ms after its break, nothing after calm, and the run ends ReleaseSeconds after calm", () =>
         {
-            foreach (ulong seed in new ulong[] { 1, 2, 3, 4, 5 })
+            for (ulong seed = 1; seed <= 20; seed++)
             {
                 var r = Office(new StressParameters(), seed);
-                var brk = r.Timeline.Single(e => e.Kind == StressEntryKind.WillBroke);
-                var sw = r.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged);
-                Check(sw.TimeMs - brk.TimeMs == 100 && brk.TimeMs == r.TimeToBreakMs, $"seed {seed}: the switch row is {sw.TimeMs - brk.TimeMs} ms after the break");
-                Check(r.Timeline.Where(e => e.TimeMs < sw.TimeMs).All(e => e.Goal == OfficeGoal.KeepComposure), $"seed {seed}: a row before the switch is not KeepComposure");
-                Check(r.Timeline.Where(e => e.TimeMs >= sw.TimeMs).All(e => e.Goal == OfficeGoal.Rage), $"seed {seed}: a row from the switch on is not Rage");
-                Check(r.Outcome == Outcome.WillBroke && r.EndMs == sw.TimeMs + 6000, $"seed {seed}: ended at {r.EndMs}, the switch was at {sw.TimeMs}");
-                Check(r.Timeline.Where(e => e.TimeMs >= brk.TimeMs).All(e => e.Resolve == 0.0), $"seed {seed}: resolve came back after the break");
+                var breaks = r.Timeline.Where(e => e.Kind == StressEntryKind.WillBroke).ToList();
+                var switches = r.Timeline.Where(e => e.Kind == StressEntryKind.GoalChanged).ToList();
+                Check(breaks.Count == 2 && switches.Count == 2, $"seed {seed}: {breaks.Count} breaks and {switches.Count} switches, wanted 2 and 2");
+                var rage = switches[0];
+                var calm = switches[1];
+                Check(breaks[0].TimeMs == r.TimeToBreakMs, $"seed {seed}: the time to break is not the first break");
+                Check(rage.Goal == OfficeGoal.Rage && rage.TimeMs - breaks[0].TimeMs == 100 && rage.Resolve == 1.0, $"seed {seed}: the rage row is {rage.Goal} {rage.TimeMs - breaks[0].TimeMs} ms after the snap with resolve {rage.Resolve}");
+                long lasted = breaks[1].TimeMs - breaks[0].TimeMs;
+                Check(lasted >= 5000 && lasted <= 20000, $"seed {seed}: the second break came {lasted} ms after the snap");
+                Check(calm.Goal == OfficeGoal.Calm && calm.TimeMs - breaks[1].TimeMs == 100, $"seed {seed}: the calm row is {calm.Goal} {calm.TimeMs - breaks[1].TimeMs} ms after the second break");
+                Check(r.Timeline.Where(e => e.TimeMs < rage.TimeMs).All(e => e.Goal == OfficeGoal.KeepComposure), $"seed {seed}: a row before the rage is not KeepComposure");
+                Check(r.Timeline.Where(e => e.TimeMs >= rage.TimeMs && e.TimeMs < calm.TimeMs).All(e => e.Goal == OfficeGoal.Rage), $"seed {seed}: a row in the rage is not Rage");
+                Check(r.Timeline.Where(e => e.TimeMs >= calm.TimeMs).All(e => e.Goal == OfficeGoal.Calm), $"seed {seed}: a row from calm on is not Calm");
+                Check(r.Outcome == Outcome.WillBroke && r.EndMs == calm.TimeMs + 6000, $"seed {seed}: ended at {r.EndMs}, calm was at {calm.TimeMs}");
             }
             var short_ = Office(new StressParameters { ReleaseSeconds = 2.0 }, 1);
-            Check(short_.EndMs == short_.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged).TimeMs + 2000, "ReleaseSeconds did not set the length of the rage");
+            Check(short_.EndMs == short_.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm).TimeMs + 2000, "ReleaseSeconds did not set the settle time");
             var clipped = Office(new StressParameters { MaxSeconds = 85.0 }, 1);
-            Check(clipped.Outcome == Outcome.WillBroke && clipped.EndMs == 85000 && clipped.Timeline.All(e => e.Kind != StressEntryKind.Endured), $"a release past MaxSeconds ended at {clipped.EndMs}");
+            Check(clipped.Outcome == Outcome.WillBroke && clipped.EndMs == 85000 && clipped.Timeline.All(e => e.Kind != StressEntryKind.Endured && e.Goal != OfficeGoal.Calm), $"a release past MaxSeconds ended at {clipped.EndMs}");
+        }),
+
+        ("office calm is terminal: with the release moved off calm the run goes to MaxSeconds, and after the Calm row the goal never changes again, whatever the senses and the mending will do", () =>
+        {
+            // Bursts of heavy load with quiet between: the will breaks, mends in the quiet, and breaks again, which the office's steady load never does.
+            var Bursty = Cause.Office with { Stressors = new[] { new Stressor("printer", "printer", 5.0, 0.0, 100.0, 40.0, 1.0, 0.0) } };
+            int thirdBreaks = 0;
+            for (ulong seed = 1; seed <= 5; seed++)
+            {
+                var r = Office(new StressParameters { ReleaseGoalId = "keep-composure", Cause = Bursty }, seed);
+                var calm = r.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm);
+                Check(r.EndMs == 180000, $"seed {seed}: ended at {r.EndMs}");
+                Check(r.Timeline.Count(e => e.Kind == StressEntryKind.GoalChanged) == 2, $"seed {seed}: a goal changed after calm");
+                Check(r.Timeline.Where(e => e.TimeMs >= calm.TimeMs).All(e => e.Goal == OfficeGoal.Calm), $"seed {seed}: the goal column left Calm");
+                thirdBreaks += r.Timeline.Count(e => e.Kind == StressEntryKind.WillBroke && e.TimeMs > calm.TimeMs);
+            }
+            Check(thirdBreaks > 0, "no run broke the will a third time after calm; the test no longer exercises the rule");
         }),
 
         ("office release: the run ends on the Brain's release goal, by id, not on any goal change; an id the Brain lacks is refused", () =>
         {
             var r = Office(new StressParameters { ReleaseGoalId = "keep-composure" }, 1);
-            Check(r.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged).TimeMs == 83380 && r.EndMs == 180000 && r.Outcome == Outcome.WillBroke,
-                $"releasing on a goal the Brain never switches to ended the run at {r.EndMs}");
+            Check(r.EndMs == 180000 && r.Outcome == Outcome.WillBroke, $"releasing on a goal the Brain never switches to ended the run at {r.EndMs}");
+            var rage = Office(new StressParameters { ReleaseGoalId = OfficeBrain.RageId }, 1);
+            var sw = rage.Timeline.First(e => e.Kind == StressEntryKind.GoalChanged);
+            Check(sw.Goal == OfficeGoal.Rage && rage.EndMs == sw.TimeMs + 6000, $"releasing on the rage ended the run at {rage.EndMs}, the rage was at {sw.TimeMs}");
             bool threw = false;
-            try { NewOffice(new StressParameters { ReleaseGoalId = "calm" }, 1); } catch (ArgumentException) { threw = true; }
+            try { NewOffice(new StressParameters { ReleaseGoalId = "nowhere" }, 1); } catch (ArgumentException) { threw = true; }
             Check(threw, "a release goal the Brain lacks was accepted");
         }),
 
@@ -843,7 +869,9 @@ public static class Program
             Check(a.Run.Render() == b.Run.Render() && a.HandL.SequenceEqual(b.HandL) && a.HandR.SequenceEqual(b.HandR) && a.Pelvis.SequenceEqual(b.Pelvis), "two body runs differ");
             Check(a.Run.Outcome == Outcome.WillBroke && a.RageTick is not null, $"outcome {a.Run.Outcome}");
             int sw = a.RageTick!.Value;
-            Check(a.HandL.Count == sw + 6 * Hz + 1, $"the run has {a.HandL.Count} steps, the switch is at {sw}");
+            var calmRow = a.Run.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm);
+            int calmTick = (int)Math.Round(calmRow.TimeMs * Hz / 1000.0);
+            Check(a.HandL.Count == calmTick + 6 * Hz + 1, $"the run has {a.HandL.Count} steps, calm is at {calmTick}");
             double Rms(IReadOnlyList<BodyPoint> h, int from, int to)
             {
                 double sum = 0;
@@ -867,6 +895,30 @@ public static class Program
             Check(rage.Hold.HoldStrength == 1f, "the rage does not write full muscle strength");
             float drift = a.Pelvis.Max(q => MathF.Sqrt(MathF.Pow(q.X - a.Pelvis[0].X, 2) + MathF.Pow(q.Y - a.Pelvis[0].Y, 2) + MathF.Pow(q.Z - a.Pelvis[0].Z, 2)));
             Check(drift < 0.01f, $"the pelvis moved {drift:F4} m");
+        }),
+
+        ("office body: the rage weakens as it drains his will (each hand slower in its last 2 s than in the 2 s after onset), and he settles: no hand moves faster than 0.05 m/s over the run's last second", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            for (ulong seed = 1; seed <= 3; seed++)
+            {
+                var a = OfficeBody.Run(p, seed);
+                int rage = a.RageTick!.Value;
+                int calm = (int)Math.Round(a.Run.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm).TimeMs * Hz / 1000.0);
+                double Speed(IReadOnlyList<BodyPoint> h, int i)
+                {
+                    double dx = h[i].X - h[i - 1].X, dy = h[i].Y - h[i - 1].Y, dz = h[i].Z - h[i - 1].Z;
+                    return Math.Sqrt(dx * dx + dy * dy + dz * dz) * Hz;
+                }
+                double Rms(IReadOnlyList<BodyPoint> h, int from, int to) => Math.Sqrt(Enumerable.Range(from + 1, to - from - 1).Average(i => Speed(h, i) * Speed(h, i)));
+                foreach (var (name, hand) in new[] { ("left", a.HandL), ("right", a.HandR) })
+                {
+                    double onset = Rms(hand, rage, rage + 2 * Hz), late = Rms(hand, calm - 2 * Hz, calm);
+                    Check(late < onset, $"seed {seed} {name} hand: {late:F3} m/s in the rage's last 2 s, {onset:F3} m/s in the 2 s after onset");
+                    double still = Enumerable.Range(hand.Count - Hz, Hz).Max(i => Speed(hand, i));
+                    Check(still < 0.05, $"seed {seed} {name} hand: {still:F3} m/s at its fastest in the run's last second");
+                }
+            }
         }),
 
         ("office body: the desk's emitters are sensed at the head, so the body breaks within 0.5 s of the headless run (sensed at a hand it is 3.6 s off)", () =>

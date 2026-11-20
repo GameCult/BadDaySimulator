@@ -9,8 +9,8 @@ namespace BadDay.Core;
 /// <see cref="Actor"/>, and the recorder. The headless run, the sweep, the CLI and a client all drive it one
 /// <see cref="Tick"/> per step, and the player's lever is <see cref="Silence"/>. The session never writes drive
 /// state, computes load or arousal, or holds a stress field: rows are end-of-tick state read from the Actor, and
-/// nothing reads them back. The rage is the Brain's (<see cref="OfficeBrain"/>): the session goes on past the break, logs the
-/// tick the Actor commits the switch, and ends ReleaseSeconds after the Brain's release goal (<see cref="StressParameters.ReleaseGoalId"/>) takes over, or at MaxSeconds.
+/// nothing reads them back. The rage and the calm after it are the Brain's (<see cref="OfficeBrain"/>): the session goes on past the break, logs each
+/// tick the Actor commits a switch, and ends ReleaseSeconds after the Brain's release goal (<see cref="StressParameters.ReleaseGoalId"/>) takes over, or at MaxSeconds.
 /// </summary>
 public sealed class StressSession
 {
@@ -84,7 +84,7 @@ public sealed class StressSession
     /// <summary>Ticks run so far; the tick the next <see cref="Tick"/> runs.</summary>
     public long TickIndex => Actor.TickCount;
 
-    /// <summary>True once the release after the rage took over is over, or the time ran out.</summary>
+    /// <summary>True once the release after calm took over is over, or the time ran out.</summary>
     public bool Finished { get; private set; }
 
     /// <summary>
@@ -121,7 +121,7 @@ public sealed class StressSession
 
         if ((events & TickEvents.WillBroke) != 0)
         {
-            _breakTick = tick;
+            if (_breakTick < 0) _breakTick = tick; // the snap; the rage's own break is a row, not the time to break
             _outcome = Outcome.WillBroke;
             Log(tick, StressEntryKind.WillBroke);
         }
