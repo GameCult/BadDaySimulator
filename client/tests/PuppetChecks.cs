@@ -125,6 +125,7 @@ public static class PuppetChecks
         Mesher(puppet, Check);
         AcrossIsPositionWeld(puppet, Check);
         SkinnedSurface(puppet, Check);
+        FoldHasNoCrease(Check);
     }
 
     /// <summary>The corner slot's vertex, in the spread bind.</summary>
@@ -300,6 +301,42 @@ public static class PuppetChecks
         check(badSign == 0, $"{badSign} of {creased} turning edges have a crease whose sign does not match the skinned convexity");
         check(badFold == 0, $"{badFold} of {folds} skinned folds carry a crease");
         check(badLoose == 0, $"{badLoose} edges without exactly one neighbour carry a crease");
+    }
+
+    /// <summary>
+    /// A skinned fold, two triangles lying over each other so that their sides disagree on which way their shared edge turns, has no edge to
+    /// bevel: both sides carry crease 0. No pose of the real puppet reaches one but a single joint swung 180 degrees, so the rule is held to
+    /// two small shapes of four vertices, both with one bone and no joint: the same four points wound so that the second triangle is
+    /// inconsistent with the first (a fold), and wound consistently with a right angle between the two (a turn, which keeps its crease).
+    /// </summary>
+    private static void FoldHasNoCrease(Action<bool, string> check)
+    {
+        PuppetShape Pair(float3[] vertices, int[] corners, int slotA, int slotB)
+        {
+            var across = Enumerable.Repeat(-1, corners.Length).ToArray();
+            across[slotA] = slotB; across[slotB] = slotA;
+            return new PuppetShape
+            {
+                Ids = new ulong[] { 1 }, SpreadBind = new[] { Identity }, Joints = Array.Empty<(Box3DSoaJointKind, int, int, float3)>(),
+                Vertices = vertices, BoneA = new int[vertices.Length], BoneB = new int[vertices.Length], WeightA = Enumerable.Repeat(1f, vertices.Length).ToArray(),
+                Corners = corners, Across = across, Pulled = 0, OffSurface = 0,
+            };
+        }
+        // Triangle A is (0, 1, 2); its edge 1-2 is opposite its corner 0 (slot 0).
+        var fold = Pair(new[] { new float3(0, 0, 0), new float3(1, 0, 0), new float3(0, 1, 0), new float3(1, 1, 0.1f) }, new[] { 0, 1, 2, 1, 2, 3 }, 0, 5);
+        var turn = Pair(new[] { new float3(0, 0, 0), new float3(1, 0, 0), new float3(0, 1, 0), new float3(0.5f, 0.5f, 0.7f) }, new[] { 0, 1, 2, 1, 3, 2 }, 0, 4);
+        foreach (var (name, shape, folds) in new[] { ("fold", fold, true), ("turn", turn, false) })
+        {
+            var skin = new PuppetSkin(shape);
+            skin.Update(new[] { Identity });
+            float3 P(int slot) => shape.Vertices[shape.Corners[slot]];
+            float3 na = skin.Facet[0], nb = skin.Facet[1];
+            bool convexA = math.dot(na, P(shape.Across[0]) - P(1)) < 0, convexB = math.dot(nb, P(0) - P(1)) < 0;
+            check((convexA != convexB) == folds, $"the {name} fixture is {(folds ? "not" : "")} a fold: the two sides {(convexA == convexB ? "agree" : "disagree")} on convexity");
+            int other = shape.Across[0];
+            check(skin.Crease[0] == skin.Crease[other], $"the {name} fixture's two sides carry different creases, {skin.Crease[0]} and {skin.Crease[other]}");
+            check(folds ? skin.Crease[0] == 0 : MathF.Abs(skin.Crease[0]) > 0.1f, $"the {name} fixture's crease is {skin.Crease[0]}: a fold has none, a turn keeps its own");
+        }
     }
 
     /// <summary>The mesh's connected pieces.</summary>
