@@ -2,7 +2,12 @@ using Godot;
 
 namespace BadDay.Client;
 
-/// <summary>The scene's stylised look: white on dark grey, flat and high-contrast, one hard light.</summary>
+/// <summary>
+/// The scene's stylised look: white glazed porcelain on dark grey, lit by a studio the camera carries. The bisque is lit by three
+/// directional lights (a shadowing key and two rims) and the glaze reflects the same studio analytically (studio.gdshaderinc), both from
+/// the constants here, so the lights and the reflections cannot drift. The clip bound RenderCheck sets is the bisque's; the glaze's
+/// highlights are meant to clip, within the bound it sets for them.
+/// </summary>
 public static class Look
 {
     public static readonly Color Background = new(0.10f, 0.10f, 0.11f);
@@ -34,21 +39,102 @@ public static class Look
     /// <summary>The narrowest bevel (m) however near the camera is: 3 mm, so a puppet filling the screen still has soft edges.</summary>
     public const float BevelMin = 0.003f;
 
-    public static Godot.Environment Environment() => new()
+    /// <summary>The bisque: how rough the unglazed porcelain is, its dielectric specular, and the warm light that passes through it at grazing angles.</summary>
+    public const float Roughness = 0.45f, Specular = 0.5f;
+
+    public static readonly Vector3 Backlight = 0.03f * new Vector3(1f, 0.8f, 0.65f);
+
+    /// <summary>How far the albedo pools darker and cooler in a concave crease, and warmer over a convex bevel (0 to 1).</summary>
+    public const float GlazePool = 0.8f;
+
+    /// <summary>The glaze's strength: 0 is the bisque alone, 1 the glaze as the studio gives it.</summary>
+    public const float GlazeStrength = 1f;
+
+    /// <summary>
+    /// The studio's directions, the directions its lights come from, in the camera's space (+Y up, +Z toward the viewer): the key is a soft
+    /// box up and left behind the viewer, the rims strips behind the figure on either side.
+    /// </summary>
+    public static readonly Vector3 KeyDirection = new Vector3(-0.45f, 0.55f, 0.70f).Normalized();
+    public static readonly Vector3 RimDirectionA = new Vector3(0.85f, 0.25f, -0.45f).Normalized();
+    public static readonly Vector3 RimDirectionB = new Vector3(-0.85f, 0.35f, -0.40f).Normalized();
+
+    /// <summary>What the glaze reflects: the radiance of the key soft box (its half width on the plane at unit distance) and of the rim strips, the dark room and the dim floor.</summary>
+    public const float KeyRadiance = 20f, RimRadiance = 12f, KeySize = 0.45f, FloorRadiance = 0.03f;
+
+    public static readonly Vector2 RimSize = new(0.10f, 0.9f);
+    public static readonly Color RimTint = new(0.85f, 0.92f, 1f);
+    public static readonly Vector3 Room = new(0.02f, 0.02f, 0.022f);
+
+    /// <summary>The punctual lights' energies, tuned with the bisque so it stays under white where the key and a rim overlap; the second rim is dimmer.</summary>
+    public const float KeyEnergy = 0.22f, RimEnergyA = 0.3f, RimEnergyB = 0.21f;
+
+    public const float AmbientEnergy = 0.06f;
+    public static readonly Color AmbientColor = new(0.9f, 0.93f, 1f);
+
+    /// <summary>
+    /// Whether the studio turns with the camera, as a photographer's lights do (the recommended option of the open question
+    /// lodur:question:bds-porcelain-studio-follows-camera): form and glints on every side as the player orbits, at the cost of the key's floor
+    /// shadow swinging with the camera. False fixes the studio in the world: the rig is parented to the camera's parent and the glaze reads
+    /// the world-space directions; the figure goes flat from the sides the studio does not face.
+    /// </summary>
+    public const bool StudioFollowsCamera = true;
+
+    /// <summary>The scene's environment (a colour background, a colour ambient, linear, no glow) and the studio's lights, carried by <paramref name="camera"/>.</summary>
+    public static WorldEnvironment Studio(Camera3D camera)
     {
-        BackgroundMode = Godot.Environment.BGMode.Color,
-        BackgroundColor = Background,
-        AmbientLightSource = Godot.Environment.AmbientSource.Color,
-        AmbientLightColor = new Color(1f, 1f, 1f),
-        AmbientLightEnergy = 0.2f,
+        Rig(camera);
+        return new WorldEnvironment
+        {
+            Environment = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = Background,
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = AmbientColor,
+                AmbientLightEnergy = AmbientEnergy,
+                TonemapMode = Godot.Environment.ToneMapper.Linear,
+            },
+        };
+    }
+
+    /// <summary>The key (with the shadow) and the two rims, from the studio's directions, as children of the camera (or of its parent, when the studio is fixed in the world).</summary>
+    public static void Rig(Camera3D camera)
+    {
+        Node host = StudioFollowsCamera ? camera : camera.GetParent();
+        host.AddChild(Light("StudioKey", KeyDirection, KeyEnergy, true, new Color(1f, 0.98f, 0.95f)));
+        host.AddChild(Light("StudioRimA", RimDirectionA, RimEnergyA, false, RimTint));
+        host.AddChild(Light("StudioRimB", RimDirectionB, RimEnergyB, false, RimTint));
+    }
+
+    private static DirectionalLight3D Light(string name, Vector3 from, float energy, bool shadow, Color color) => new()
+    {
+        Name = name,
+        Transform = Transform3D.Identity.LookingAt(-from, Vector3.Up), // shines along -from: the light comes from `from`
+        LightEnergy = energy,
+        LightColor = color,
+        ShadowEnabled = shadow,
     };
 
-    public static DirectionalLight3D Sun() => new()
+    /// <summary>Sets the puppet shader's bisque and studio uniforms.</summary>
+    public static void Glaze(ShaderMaterial material)
     {
-        RotationDegrees = new Vector3(-50f, 35f, 0f),
-        LightEnergy = 0.25f, // the sun on a white-ish puppet with the ambient must stay under white, or the facets wash out: RenderCheck bounds the clipped share
-        ShadowEnabled = true,
-    };
+        material.SetShaderParameter("roughness", Roughness);
+        material.SetShaderParameter("specular", Specular);
+        material.SetShaderParameter("backlight", Backlight);
+        material.SetShaderParameter("glaze", GlazeStrength);
+        material.SetShaderParameter("glaze_pool", GlazePool);
+        material.SetShaderParameter("studio_in_view", StudioFollowsCamera);
+        material.SetShaderParameter("studio_room", Room);
+        material.SetShaderParameter("studio_key_dir", KeyDirection);
+        material.SetShaderParameter("studio_key_size", KeySize);
+        material.SetShaderParameter("studio_key_radiance", KeyRadiance);
+        material.SetShaderParameter("studio_rim_a", RimDirectionA);
+        material.SetShaderParameter("studio_rim_b", RimDirectionB);
+        material.SetShaderParameter("studio_rim_size", RimSize);
+        material.SetShaderParameter("studio_rim_tint", new Vector3(RimTint.R, RimTint.G, RimTint.B));
+        material.SetShaderParameter("studio_rim_radiance", RimRadiance);
+        material.SetShaderParameter("studio_floor", FloorRadiance);
+    }
 
     public static StandardMaterial3D Matte(Color color) => new() { AlbedoColor = color, Roughness = 1f, MetallicSpecular = 0f };
 }

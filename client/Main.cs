@@ -50,14 +50,13 @@ public partial class Main : Node3D
 
     public override void _Ready()
     {
-        AddChild(new WorldEnvironment { Environment = Look.Environment() });
-        AddChild(Look.Sun());
         _bodies = new BodyRenderer { Name = "Bodies" };
         AddChild(_bodies);
         _chamber = new Chamber { Name = "Chamber" };
         AddChild(_chamber);
         _camera = new OrbitCamera { Name = "Camera" };
         AddChild(_camera);
+        AddChild(Look.Studio(_camera));
         _hud = new Hud(this) { Name = "Hud" };
         AddChild(_hud);
         Reset(Seed);
