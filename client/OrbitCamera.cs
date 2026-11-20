@@ -77,7 +77,7 @@ public partial class OrbitCamera : Camera3D
                 Distance = wheel.ButtonIndex == MouseButton.WheelUp ? _distance / MathF.Pow(ZoomStep, wheel.Factor) : _distance * MathF.Pow(ZoomStep, wheel.Factor);
                 Handle();
                 break;
-            case InputEventMouseButton { Pressed: true } press:
+            case InputEventMouseButton { Pressed: true } press when _drag is null || StaleDrag(press.ButtonMask):
                 foreach (var row in Bindings)
                 {
                     if (row.Button != press.ButtonIndex || row.Alt != press.AltPressed || row.Shift != press.ShiftPressed || row.Ctrl != press.CtrlPressed) continue;
@@ -93,12 +93,20 @@ public partial class OrbitCamera : Camera3D
                 Handle();
                 break;
             case InputEventMouseMotion motion when _drag is { } drag:
-                var held = drag.Button == MouseButton.Left ? MouseButtonMask.Left : MouseButtonMask.Middle;
-                if ((motion.ButtonMask & held) == 0) { _drag = null; return; } // the release was lost, to a focus change say
+                if ((motion.ButtonMask & Held(drag.Button)) == 0) { _drag = null; return; } // the release was lost, to a focus change say
                 Apply(drag, motion.Relative);
                 Handle();
                 break;
         }
+    }
+
+    private static MouseButtonMask Held(MouseButton button) => button == MouseButton.Left ? MouseButtonMask.Left : MouseButtonMask.Middle;
+
+    /// <summary>A drag is under way, so a second press is ignored as Blender's modal operator ignores it, unless the drag's own button is no longer held (its release was lost): then the drag ends and the press is new.</summary>
+    private bool StaleDrag(MouseButtonMask held)
+    {
+        if (_drag is { } drag && (held & Held(drag.Button)) == 0) _drag = null;
+        return _drag is null;
     }
 
     private void Handle() => GetViewport().SetInputAsHandled();
