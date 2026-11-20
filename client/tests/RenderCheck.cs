@@ -36,9 +36,25 @@ public partial class RenderCheck : Node
     /// <summary>
     /// The glaze must show: with it on, at least this share of the puppet's pixels differ from the bisque's by <see cref="GlazeDifference"/> levels or more (it runs under
     /// gl_compatibility, whose clearcoat sees punctual lights only), and at most <see cref="MaxGlazedClipped"/> of them are clipped: the glaze's highlights are meant to
-    /// clip, a puppet white from head to foot is not. Measured at the close view from the front; from behind (the torso's back is one broad face that mirrors the key) only that the glaze shows and the bisque is lit.
+    /// clip, a puppet white from head to foot is not. Measured at the close view from the front and from behind.
     /// </summary>
     private const float MinGlazeShare = 0.03f, MaxGlazedClipped = 0.12f;
+
+    /// <summary>From behind the torso's back is one broad face that mirrors the key, so the glaze clips 20.4% there (measured): the bound has margin over that and fails a white-out.</summary>
+    private const float MaxGlazedClippedBehind = 0.30f;
+
+    /// <summary>
+    /// The glaze and the lights are one studio: the pixels the glaze lights most (<see cref="HighlightLevels"/> or more above the bisque) must reflect a direction that Look's studio
+    /// emits light from. At each such pixel the drawn normal (the normal view, in view space) and the ray through the pixel give the reflected direction, which must fall within
+    /// <see cref="EmitterSlack"/> times the footprint of the key's soft box or of a rim strip, at least <see cref="MinHighlightAgreement"/> of the pixels, of at least
+    /// <see cref="MinHighlights"/>. A glaze that reflects a mirrored, world-fixed or otherwise different studio puts its highlights elsewhere.
+    /// </summary>
+    private const float HighlightLevels = 40f, EmitterSlack = 1.3f, MinHighlightAgreement = 0.97f;
+
+    private const int MinHighlights = 1000;
+
+    /// <summary>The crease pooling must show: with it off, at least this share of the bisque's pixels differ by <see cref="PoolDifference"/> levels or more at the close view from the front.</summary>
+    private const float MinPoolShare = 0.03f, PoolDifference = 3f;
 
     private const float GlazeDifference = 8f;
 
@@ -163,7 +179,7 @@ public partial class RenderCheck : Node
     /// <summary>
     /// The glaze at the close view from the front and from behind (the camera is main's own, so the studio rig it carries turns with it): the bisque alone must still clip
     /// at most <see cref="MaxClipped"/> and spread at least <see cref="MinSpread"/> from both sides, and the glaze must change at least <see cref="MinGlazeShare"/> of the puppet's
-    /// pixels and, from the front, clip at most <see cref="MaxGlazedClipped"/> of them.
+    /// pixels and clip at most <see cref="MaxGlazedClipped"/> of them from the front, <see cref="MaxGlazedClippedBehind"/> from behind. It also checks that the glaze is one studio with the lights and that the crease pooling shows.
     /// </summary>
     private async Task<bool> GlazeCheck(Main main, PuppetShape shape, Node3D[] carriers, Transform3D[] world)
     {
@@ -173,7 +189,8 @@ public partial class RenderCheck : Node
         camera.Fov = 30f;
         var target = carriers[torso].GlobalPosition;
         bool ok = true;
-        foreach (var (label, yaw, pngArg) in new[] { ("front", 0f, "--glaze-png="), ("behind", Mathf.Pi, "--glaze-behind-png=") })
+        var skin = (ShaderMaterial)puppet.GetNode<MeshInstance3D>("Skin").MaterialOverride;
+        foreach (var (label, yaw, pngArg, maxClipped) in new[] { ("front", 0f, "--glaze-png=", MaxGlazedClipped), ("behind", Mathf.Pi, "--glaze-behind-png=", MaxGlazedClippedBehind) })
         {
             camera.GlobalPosition = target + new Basis(Vector3.Up, yaw) * new Vector3(0.35f, 0.2f, 0.55f);
             camera.LookAt(target, Vector3.Up);
@@ -183,6 +200,45 @@ public partial class RenderCheck : Node
             puppet.Glazed = true;
             for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
             var glazed = Capture(shape, world, pngArg);
+
+            if (yaw == 0f)
+            {
+                // The pooling: the same bisque frame with the albedo's crease pooling off.
+                var pool = skin.GetShaderParameter("glaze_pool");
+                puppet.Glazed = false;
+                skin.SetShaderParameter("glaze_pool", 0f);
+                for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                var flat = Capture(shape, world, "--bisque-nopool-png=");
+                skin.SetShaderParameter("glaze_pool", pool);
+                puppet.Glazed = true;
+                float pooled = (float)bisque.Pixels.Count(i => Math.Abs(Level(flat.Image, i) - Level(bisque.Image, i)) >= PoolDifference) / Math.Max(1, bisque.Pixels.Count);
+                GD.Print($"RENDER glaze pooling: {pooled:P2} of the bisque's pixels differ with it off");
+                if (pooled < MinPoolShare) { GD.PrintErr($"RENDER FAIL: the crease pooling changes {pooled:P2} of the bisque's pixels, under {MinPoolShare:P0}; there is no pooling"); ok = false; }
+            }
+
+            // The agreement: the normal view of the same frame gives the reflected direction at each pixel the glaze lights most.
+            puppet.ShowNormals = true;
+            for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            var normals = GetViewport().GetTexture().GetImage();
+            normals.Convert(Image.Format.Rgba8);
+            puppet.ShowNormals = false;
+            int highlights = 0, agree = 0;
+            var screen = GetViewport().GetVisibleRect().Size;
+            foreach (int i in glazed.Pixels)
+            {
+                if (Level(glazed.Image, i) - Level(bisque.Image, i) < HighlightLevels) continue;
+                int x = i % glazed.Width, y = i / glazed.Width;
+                var c = normals.GetPixel(x, y);
+                var n = new Vector3(c.R * 2f - 1f, c.G * 2f - 1f, c.B * 2f - 1f).Normalized();
+                var toEye = -camera.ProjectLocalRayNormal(new Vector2(x + 0.5f, y + 0.5f) * screen / new Vector2(glazed.Width, glazed.Height));
+                var r = 2f * n.Dot(toEye) * n - toEye;
+                highlights++;
+                if (InEmitter(r, Look.KeyDirection, new Vector2(Look.KeySize, Look.KeySize * 0.7f)) || InEmitter(r, Look.RimDirectionA, Look.RimSize) || InEmitter(r, Look.RimDirectionB, Look.RimSize)) agree++;
+            }
+            float agreement = highlights == 0 ? 0 : (float)agree / highlights;
+            GD.Print($"RENDER glaze studio ({label}): {agreement:P1} of {highlights} highlight pixels reflect where Look's studio shines");
+            if (highlights < MinHighlights) { GD.PrintErr($"RENDER FAIL: only {highlights} highlight pixels from {label}, under {MinHighlights}; the glaze's studio cannot be located"); ok = false; }
+            else if (agreement < MinHighlightAgreement) { GD.PrintErr($"RENDER FAIL: {agreement:P1} of the glaze's highlights from {label} reflect a direction Look's studio does not light from, under {MinHighlightAgreement:P0}; the glaze and the lights are not one studio"); ok = false; }
 
             var sorted = bisque.Levels.OrderBy(l => l).ToList();
             float bisqueClipped = (float)bisque.Levels.Count(l => l >= 250f) / Math.Max(1, sorted.Count);
@@ -195,9 +251,21 @@ public partial class RenderCheck : Node
             if (bisqueClipped > MaxClipped) { GD.PrintErr($"RENDER FAIL: {bisqueClipped:P1} of the bisque's pixels are clipped from {label}, over {MaxClipped:P0}"); ok = false; }
             if (bisqueSpread < MinSpread) { GD.PrintErr($"RENDER FAIL: the bisque's pixels span only {bisqueSpread:F0} levels from {label}, under {MinSpread}; the studio does not light that side"); ok = false; }
             if (changedShare < MinGlazeShare) { GD.PrintErr($"RENDER FAIL: the glaze changes {changedShare:P1} of the puppet's pixels from {label}, under {MinGlazeShare:P0}; there is no glaze"); ok = false; }
-            if (yaw == 0f && glazedClipped > MaxGlazedClipped) { GD.PrintErr($"RENDER FAIL: {glazedClipped:P1} of the glazed puppet's pixels are clipped from {label}, over {MaxGlazedClipped:P0}; the porcelain is white-out"); ok = false; }
+            if (glazedClipped > maxClipped) { GD.PrintErr($"RENDER FAIL: {glazedClipped:P1} of the glazed puppet's pixels are clipped from {label}, over {maxClipped:P0}; the porcelain is white-out"); ok = false; }
         }
         return ok; // the glaze stays on, as shipped: the normal views that follow must not see it
+    }
+
+    /// <summary>Whether direction d (view space) falls in the footprint of a rectangular emitter along c, by the half sizes on the plane at unit distance (the shader's studio_box), with <see cref="EmitterSlack"/>.</summary>
+    private static bool InEmitter(Vector3 d, Vector3 c, Vector2 half)
+    {
+        float f = d.Dot(c);
+        if (f <= 0f) return false;
+        var up = Mathf.Abs(c.Y) > 0.9f ? Vector3.Right : Vector3.Up;
+        var u = up.Cross(c).Normalized();
+        var v = c.Cross(u);
+        var q = new Vector2(d.Dot(u), d.Dot(v)) / f;
+        return Mathf.Abs(q.X) <= half.X * EmitterSlack && Mathf.Abs(q.Y) <= half.Y * EmitterSlack;
     }
 
     private static float Level(Image image, int pixel)
