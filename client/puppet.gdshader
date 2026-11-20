@@ -27,6 +27,12 @@ render_mode cull_back;
 // it needs no radiance map and draws the same under gl_compatibility, whose clearcoat sees punctual lights only. The bevel's tilted
 // normal feeds it, so the chamfers glint. Where two facets meet in a concave crease the glaze pools: the albedo goes darker and cooler,
 // and warmer over a convex bevel. Every number comes from Look.Glaze.
+//
+// The highlights are prefiltered where they are decided (geometric specular antialiasing): the shading normal changes across a pixel
+// along the bevel's chamfers and at facet edges, so a point sample of the studio in the reflected direction flickers as the camera moves.
+// The spread of the normal over the pixel, from its screen derivatives, widens both the bisque's roughness and the studio the glaze reads,
+// so each pixel reflects the studio's average over the directions it covers. MSAA (project.godot) antialiases the silhouette and the
+// triangle edges, which this does not touch.
 uniform vec3 albedo : source_color = vec3(0.9, 0.9, 0.88);
 uniform float bevel_screen = 0.0;
 uniform float bevel_min = 0.0;
@@ -89,6 +95,12 @@ void fragment() {
 		n = normalize(mix(n, normalize(vertex_normal), corner));
 	}
 	NORMAL = n;
+	// The pixel's normal spread as GGX alpha^2 (Tokuyoshi and Kaplanyan 2021, JCGT 10(2) 31-58, Listing 5) with the pixel filter's variance
+	// 1/24 (the variance of a box one pixel wide is 1/12; this is half of it, which measured no overblur) and the clamp of Kaplanyan et al.
+	// 2016 (HPG) at 0.18. Derivatives are taken here, after every branch has joined, in uniform control flow.
+	const float PIXEL_VARIANCE = 1.0 / 24.0;
+	const float MAX_SPREAD = 0.18;
+	float kernel = min(2.0 * PIXEL_VARIANCE * (dot(dFdx(n), dFdx(n)) + dot(dFdy(n), dFdy(n))), MAX_SPREAD);
 	// The creases within 6 mm of an edge: concave tints the albedo cooler and darker, convex warmer.
 	float convex = 0.0, concave = 0.0;
 	for (int k = 0; k < 3; k++) {
@@ -101,13 +113,14 @@ void fragment() {
 	a = mix(a, a * vec3(1.02, 0.99, 0.94), glaze_pool * convex);
 	ALBEDO = show_normals ? vec3(0.0) : a;
 	// RenderCheck's normal view is the emission alone: no light, however shiny the bisque, may add to it.
-	ROUGHNESS = show_normals ? 1.0 : roughness;
+	// Godot's alpha is roughness^2, so the kernel adds to roughness^4.
+	ROUGHNESS = show_normals ? 1.0 : sqrt(sqrt(min(roughness * roughness * roughness * roughness + kernel, 1.0)));
 	SPECULAR = show_normals ? 0.0 : specular;
 	BACKLIGHT = show_normals ? vec3(0.0) : backlight;
 	EMISSION = show_normals ? n * 0.5 + 0.5 : vec3(0.0);
 	if (!show_normals && glaze > 0.0) {
 		vec3 r = reflect(-VIEW, n);
 		float f = 0.04 + 0.96 * pow(1.0 - clamp(dot(n, VIEW), 0.0, 1.0), 5.0);
-		EMISSION += glaze * f * studio(r);
+		EMISSION += glaze * f * studio(r, kernel);
 	}
 }
