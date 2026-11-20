@@ -236,7 +236,7 @@ public sealed class BodyPainBoxSession : IDisposable
         return n;
     }
 
-    /// <summary>Sets the box intensity from the next tick; refuses a non-finite or negative level.</summary>
+    /// <summary>Sets the box intensity from the next tick; refuses a level outside 0 to <see cref="PainBox.MaxLevel"/>.</summary>
     public void SetIntensity(double level)
     {
         Live();

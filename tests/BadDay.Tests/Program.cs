@@ -354,24 +354,59 @@ public static class Program
             }
         }),
 
-        ("body: SetIntensity refuses a non-finite or negative level before anything ticks, and a refused call changes nothing", () =>
+        ("SetIntensity refuses a level that is non-finite, negative or above PainBox.MaxLevel, in the box and in the body session, and a refused call changes nothing", () =>
         {
-            foreach (double bad in new[] { double.PositiveInfinity, double.NegativeInfinity, double.NaN, -0.1 })
+            double[] bad = { double.PositiveInfinity, double.NegativeInfinity, double.NaN, -0.1, double.MaxValue, PainBox.MaxLevel * 1.000001 };
+            var box = new PainBox(Default, new SplitMix64(1));
+            foreach (double level in bad)
             {
-                using var s = new BodyPainBoxSession(OnBody, 1);
                 bool threw = false;
-                try { s.SetIntensity(bad); } catch (ArgumentOutOfRangeException) { threw = true; }
-                Check(threw, $"SetIntensity({bad}) was accepted");
+                try { box.Level = level; } catch (ArgumentOutOfRangeException) { threw = true; }
+                Check(threw && box.Level == Default.BoxIntensity, $"PainBox.Level = {level}: threw {threw}, level now {box.Level}");
+                using var s = new BodyPainBoxSession(OnBody, 1);
+                threw = false;
+                try { s.SetIntensity(level); } catch (ArgumentOutOfRangeException) { threw = true; }
+                Check(threw, $"SetIntensity({level}) was accepted");
             }
+            box.Level = 0.0;
+            box.Level = PainBox.MaxLevel;
+            bool built = false;
+            try { PainBoxSimulation.Run(Default with { BoxIntensity = double.MaxValue }, 1); built = true; } catch (ArgumentOutOfRangeException) { }
+            Check(!built, "a session was built with BoxIntensity = double.MaxValue");
             var refused = RunLive(OnBody, 1, s =>
             {
                 if (s.TickIndex != 0) return;
-                foreach (double bad in new[] { double.PositiveInfinity, double.NaN, -0.1 })
+                foreach (double level in bad)
                 {
-                    try { s.SetIntensity(bad); } catch (ArgumentOutOfRangeException) { }
+                    try { s.SetIntensity(level); } catch (ArgumentOutOfRangeException) { }
                 }
             });
             SameRun(BodyPainBox.Run(OnBody, 1), refused, "refused intensities");
+        }),
+
+        ("body: draining through a buffer smaller than the queue returns a full buffer and keeps the rest, in order", () =>
+        {
+            using var s = new BodyPainBoxSession(OnBody, 1);
+            while (!s.Finished) s.Step();
+            var all = new BodyEvent[64];
+            int total;
+            using (var t = new BodyPainBoxSession(OnBody, 1))
+            {
+                while (!t.Finished) t.Step();
+                total = t.DrainEvents(all);
+            }
+            Check(total >= 10, $"only {total} events pending");
+            var small = new BodyEvent[3];
+            var got = new List<BodyEvent>();
+            int n = s.DrainEvents(small);
+            Check(n == 3, $"the first drain of {total} pending events through 3 slots wrote {n}");
+            got.AddRange(small.Take(n));
+            while ((n = s.DrainEvents(small)) > 0)
+            {
+                Check(n == 3 || got.Count + n == total, $"a drain wrote {n} with {total - got.Count} pending");
+                got.AddRange(small.Take(n));
+            }
+            Check(got.Count == total && got.SequenceEqual(all.Take(total)), $"drained {got.Count} of {total}, or out of order");
         }),
 
         ("body: after Dispose every member throws ObjectDisposedException and a second Dispose does nothing", () =>
@@ -386,6 +421,7 @@ public static class Program
                 ("SwitchOff", () => s.SwitchOff()), ("DrainEvents", () => s.DrainEvents(new BodyEvent[4])), ("View", () => _ = s.View),
                 ("Finished", () => _ = s.Finished), ("TickIndex", () => _ = s.TickIndex), ("Excursions", () => _ = s.Excursions),
                 ("HandOutMs", () => _ = s.HandOutMs), ("BoxIntensity", () => _ = s.BoxIntensity), ("Pain", () => _ = s.Pain),
+                ("Chamber", () => _ = s.Chamber), ("Strain", () => _ = s.Strain), ("Resolve", () => _ = s.Resolve), ("Goal", () => _ = s.Goal),
             };
             foreach (var (name, call) in members)
             {
