@@ -68,7 +68,8 @@ input only. Godot's physics engine is set to Dummy; each 120 Hz physics frame th
 skinned SDF mesh (a surface-nets isosurface of the shape lanes, limbs smooth-blended into the body they hang from and
 joined by a ball at each joint, built once at startup and rebuilt only when the bodies or joints change; flat-shaded).
 Needs the .NET 8+ SDK, cmake and a C compiler (MinGW gcc on Windows), the sibling Lodur, Ymir (with joint origin lanes, ABI 8) and CultLib
-checkouts (`..\Lodur`, `..\Ymir`, `..\CultLib`, or `LODUR_ROOT`, `YMIR_ROOT` and `CULTLIB_ROOT`), and Godot 4.7.2 mono.
+checkouts (`..\Lodur`, `..\Ymir`, `..\CultLib`, or `LODUR_ROOT`, `YMIR_ROOT` and `CULTLIB_ROOT`; CultLib must be a clean checkout of
+42dce361, the revision Ymir admits, or the build refuses), and Godot 4.7.2 mono.
 
 ```
 dotnet build client/BadDay.Client.csproj     # CultLib Geometry, Lodur, Ymir (cmake) and BDS, plus ymir_box3d.dll, into client/.godot/mono/temp/bin/Debug
