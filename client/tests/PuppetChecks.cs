@@ -70,13 +70,17 @@ public static class PuppetChecks
         Changes("a joint's kind changed", (b, j) => j[0] = j[0] with { Kind = Box3DSoaJointKind.Weld });
         Changes("a body's identity changed", (b, j) => { b[1] = b[1] with { Id = 21 }; j[0] = j[0] with { B = 21 }; j[1] = j[1] with { A = 21 }; });
 
-        // Past the skin's bone count nothing is drawn, once, and the signature still decides.
+        // Any number of bodies is drawn: a crowd of 40 (no cap, however many the skin has to carry) builds a shape whose every body owns a
+        // vertex, and skins to a surface with a facet for every triangle.
         var many = Fresh();
-        var crowd = Enumerable.Range(0, PuppetModel.MaxBones + 1).Select(i => Body((ulong)(100 + i), Box3DSoaKind.Sphere, 0.05f, 0f, i * 0.2f)).ToList();
-        Check(many.Update(crowd, new List<PuppetJointLane>()) && many.Shape is null, "more shape bodies than bones was drawn");
-        Check(!many.Update(crowd, new List<PuppetJointLane>()), "an over-full puppet reported a change with none");
-        crowd.RemoveAt(0);
-        Check(many.Update(crowd, new List<PuppetJointLane>()) && many.Shape is not null, "the puppet did not come back once it fit the skin");
+        var crowd = Enumerable.Range(0, 40).Select(i => Body((ulong)(100 + i), Box3DSoaKind.Sphere, 0.05f, 0f, i * 0.2f)).ToList();
+        Check(many.Update(crowd, new List<PuppetJointLane>()) && many.Shape is { Corners.Length: > 0 }, "a puppet of 40 bodies was not built");
+        var crowdShape = many.Shape!;
+        Check(crowdShape.Ids.Length == 40, $"the crowd's shape carries {crowdShape.Ids.Length} bodies, not 40");
+        Check(!many.Update(crowd, new List<PuppetJointLane>()), "a crowd reported a change with none");
+        var crowdSkin = new PuppetSkin(crowdShape);
+        crowdSkin.Update(Enumerable.Repeat(Identity, crowdShape.Ids.Length).ToArray());
+        Check(crowdSkin.Facet.Length * 3 == crowdShape.Corners.Length && crowdSkin.Facet.All(f => math.length(f) > 0.99f), "the crowd's skin has no unit facet for every triangle");
 
         // The real puppet at its creation pose: the grid cell is the coarsest that resolves its limbs, and bent every which way
         // no skinned edge is a web.

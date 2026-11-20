@@ -16,9 +16,6 @@ public readonly record struct PuppetJointLane(Box3DSoaJointKind Kind, ulong A, u
 /// </summary>
 public sealed class PuppetModel
 {
-    /// <summary>The most shape bodies the puppet draws; past it nothing is drawn.</summary>
-    public const int MaxBones = 32;
-
     private readonly float _smin, _ballScale, _boxRound;
     private readonly Dictionary<ulong, Rigid> _bind = new();
     private readonly Dictionary<(Box3DSoaJointKind, ulong, ulong), float3> _originLocal = new();
@@ -33,7 +30,7 @@ public sealed class PuppetModel
 
     public PuppetModel(float smin, float ballScale, float boxRound) { _smin = smin; _ballScale = ballScale; _boxRound = boxRound; }
 
-    /// <summary>The shape built from the current signature, or null before the first update or while there are more than <see cref="MaxBones"/> shape bodies.</summary>
+    /// <summary>The shape built from the current signature, or null before the first update.</summary>
     public PuppetShape? Shape { get; private set; }
 
     /// <summary>Reads the shape bodies and qualifying joints of the lanes and updates.</summary>
@@ -64,7 +61,7 @@ public sealed class PuppetModel
 
     /// <summary>
     /// <paramref name="bodies"/> carry their pose now in <see cref="PuppetBody.Bind"/>; the model keeps the first one it saw.
-    /// Returns whether the signature changed, which is whether the shape was rebuilt (or dropped, past the bone cap).
+    /// Returns whether the signature changed, which is whether the shape was rebuilt.
     /// </summary>
     public bool Update(IReadOnlyList<PuppetBody> bodies, IReadOnlyList<PuppetJointLane> joints)
     {
@@ -91,7 +88,6 @@ public sealed class PuppetModel
         }
         _signed = true;
 
-        if (bound.Count > MaxBones) { Shape = null; return true; }
         Shape = PuppetField.Build(bound, built, _smin, _ballScale, _boxRound);
         return true;
     }
