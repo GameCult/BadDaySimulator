@@ -16,7 +16,7 @@ public readonly record struct PuppetJointLane(Box3DSoaJointKind Kind, ulong A, u
 /// </summary>
 public sealed class PuppetModel
 {
-    /// <summary>The skin's bone count: the shader's array size.</summary>
+    /// <summary>The most shape bodies the puppet draws; past it nothing is drawn.</summary>
     public const int MaxBones = 32;
 
     private readonly float _smin, _ballScale, _boxRound;
