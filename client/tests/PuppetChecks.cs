@@ -84,22 +84,24 @@ public static class PuppetChecks
         var inputs = realLanes.Select(j => new PuppetJoint(j.Kind, index[j.A], index[j.B], real[index[j.A]].Bind.Inverse().Apply(j.Origin))).ToList();
         PuppetShape Build(float cell) => PuppetField.Build(real, inputs, Look.SminRadius, Look.JointBallScale, Look.BoxRound, cell);
 
-        // Resolved: the thinnest limb spans at least two cells across (the grid can then represent it), the mesh is one piece, and
-        // every body owns enough of the surface to close a limb (at least 48 triangle corners are most influenced by it).
+        // Resolved: the cell is at most the thinnest limb's radius (Nyquist: the thinnest limb spans at least two cells across, so the
+        // grid can represent it), the mesh is one piece, and every body owns some of the surface (is the most influential bone of at
+        // least one triangle corner). The first condition decides which cell is the coarsest; the other two catch a mesh that
+        // lost a limb, and say nothing about how fine a cell must be.
         float thinnest = real.Min(b => PuppetField.Thickness(b.Kind, b.Size));
         bool Resolved(float cell)
         {
             var shape = Build(cell);
             var owned = new int[real.Count];
             for (int v = 0; v < shape.Positions.Length; v++) owned[shape.WeightA[v] >= 0.5f ? shape.BoneA[v] : shape.BoneB[v]]++;
-            return 2 * thinnest >= 2 * cell - 1e-6f && Pieces(shape) == 1 && owned.Min() >= 48;
+            return cell <= thinnest + 1e-6f && Pieces(shape) == 1 && owned.Min() > 0;
         }
         // The look constants may be changed by the operator's joint-look question, within what the mesh can hold: a blend wider than
         // the thinnest limb swallows it, and a negative ball or rounding is no shape.
         Check(Look.SminRadius > 0 && Look.SminRadius <= thinnest, $"Look.SminRadius {Look.SminRadius} m is not within (0, the thinnest limb's radius {thinnest} m]");
         Check(Look.JointBallScale >= 0 && Look.BoxRound >= 0, "Look.JointBallScale or Look.BoxRound is negative");
         Check(Resolved(PuppetField.Cell), $"the shipped {PuppetField.Cell * 1000:F0} mm cell does not resolve the limbs");
-        foreach (float coarser in new[] { 0.05f, 0.06f, 0.08f, 0.10f })
+        foreach (float coarser in new[] { thinnest * 1.05f, 0.05f, 0.06f, 0.08f, 0.10f })
             Check(coarser <= PuppetField.Cell || !Resolved(coarser), $"a {coarser * 1000:F0} mm cell resolves the limbs, so {PuppetField.Cell * 1000:F0} mm is not the coarsest");
 
         // Bent at random, every joint at once, no skinned edge is a web. The bounds are what the shipped look measures with a
