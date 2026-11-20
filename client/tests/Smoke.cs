@@ -133,6 +133,18 @@ public partial class Smoke : Node
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); // the HUD draws in _Process, after this frame's signal
         Check(_main.Chamber.Glow == 0f, $"the chamber still glows ({_main.Chamber.Glow}) with the box off");
         Check(Hud.Readout.Contains("box intensity 0.00"), "the readout does not show the box off: " + Hud.Readout.Split('\n')[1]);
+
+        // Box off after the will has broken: the run is over, and the box the player switches off still goes dark.
+        PressReset(Seed);
+        while (!Session.Finished) await Frame();
+        Check(Session.Result().Outcome == Outcome.WillBroke && Session.BoxOn, $"the run ended {Session.Result().Outcome} with the box on: expected WillBroke");
+        await Frame();
+        Check(_main.Chamber.Glow > 0.1f, $"the chamber is dark ({_main.Chamber.Glow}) after the will broke, so the probe proves nothing");
+        Hud.BoxOffButton.EmitSignal(BaseButton.SignalName.Pressed);
+        await Frame();
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        Check(!Session.BoxOn && _main.Chamber.Glow == 0f && Hud.Readout.Contains("box intensity 0.00 off"), $"after Box off on a finished run: on {Session.BoxOn}, glow {_main.Chamber.Glow}");
     }
 
     private void CheckEngineAndScene()

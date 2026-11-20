@@ -76,10 +76,10 @@ public partial class Hud : CanvasLayer
         var r = s.Result();
         _text.Clear();
         _text.Append($"seed {_main.Seed}    t {s.TickIndex * BodyPainBox.TickSeconds:F2} s  (tick {s.TickIndex})\n");
-        _text.Append($"box intensity {_main.ShownBoxIntensity:F2}  (set {_main.Intensity:F2})\n");
+        _text.Append($"box intensity {s.BoxIntensity:F2}{(s.BoxOn ? "" : " off")}  (set {_main.Intensity:F2})\n");
         _text.Append($"pain {s.Pain:F2}   strain {s.Strain:F2}   resolve {s.Resolve:F2}\n");
         _text.Append($"goal {s.Goal}   flinches {r.Flinches}\n");
-        _text.Append($"will broke at {Ms(r.TimeToBreakMs)}   withdrew {(s.Goal == Lodur.Goal.Withdraw ? "yes" : "no")}\n");
+        _text.Append($"will broke at {Ms(r.TimeToBreakMs)}   withdrew {(s.Goal == Goal.Withdraw ? "yes" : "no")}\n");
         _text.Append($"hand {(s.Hand.InBox ? "in box" : "out of box")}   hand out at {Ms(s.HandOutMs)}\n");
         _text.Append(s.Finished ? $"outcome {r.Outcome}\n" : "running\n");
         var events = _main.Events;

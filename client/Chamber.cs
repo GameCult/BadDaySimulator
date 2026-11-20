@@ -32,8 +32,9 @@ public partial class Chamber : Node3D
     /// <summary>The glow last drawn, 0 (dark) to 1.</summary>
     public float Glow { get; private set; }
 
-    public void Sync(BodyPainBoxSession session, double intensity)
+    public void Sync(BodyPainBoxSession session)
     {
+        double intensity = session.BoxIntensity; // 0 once the box is off
         var box = session.Chamber;
         Position = new Vector3(box.CenterX, box.CenterY, box.CenterZ);
         _volume.Scale = new Vector3(2f * box.HalfX, 2f * box.HalfY, 2f * box.HalfZ);

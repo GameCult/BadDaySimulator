@@ -42,13 +42,6 @@ public partial class Main : Node3D
     /// <summary>Every event the session has reported since the last Reset, oldest first.</summary>
     public IReadOnlyList<BodyEvent> Events => _events;
 
-    /// <summary>
-    /// The box's intensity as the player should see it. The session stops writing it once a run ends because the box
-    /// was switched off, so the last written value would stay on screen; that run ended with the box off.
-    /// </summary>
-    public double ShownBoxIntensity =>
-        _session is { } s ? (s.Finished && s.Result().Outcome == Outcome.BoxDisabled ? 0.0 : s.BoxIntensity) : 0.0;
-
     /// <summary>The parameters of a run at the given box intensity: every default except the 1/120 s tick the body needs.</summary>
     public static PainBoxParameters ParametersFor(double intensity) =>
         new() { TickSeconds = BodyPainBox.TickSeconds, BoxIntensity = intensity };
@@ -129,7 +122,7 @@ public partial class Main : Node3D
     {
         var s = Session;
         _bodies.Sync(s.View, teleport);
-        _chamber.Sync(s, ShownBoxIntensity);
+        _chamber.Sync(s);
         Span<BodyEvent> events = stackalloc BodyEvent[8];
         int n;
         while ((n = s.DrainEvents(events)) > 0)
