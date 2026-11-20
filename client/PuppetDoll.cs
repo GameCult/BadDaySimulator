@@ -67,21 +67,16 @@ public sealed record DollPrim(DollShape Shape, float3 A, float3 B, float Ra, flo
 }
 
 /// <summary>
-/// One body of the doll: the physics shape it dresses (the key), the primitives it is made of, and the joint to its parent: the ball's radius,
-/// and either the swing cone of a Spherical joint or the range of a hinge. The ranges are transcribed from HumanoidRagdoll.Build (Lodur f9e302e):
-/// the lanes carry no joint limits, so carrying them there is part of follow-up lodur-joint-ranges-anatomical.
+/// One body of the doll: the physics shape it dresses (the key), the primitives it is made of, and the ball at its joint to its parent. The limb's
+/// radius at its socket end does not exceed its ball's radius (the Mesher check defends it: a limb wrapping its ball past the equator leaves a ring
+/// thinner than the grid). Joint ranges are not doll data: the lanes carry no joint limits (follow-up lodur-joint-ranges-anatomical).
 /// </summary>
 /// <param name="Kind">The physics shape's kind.</param>
 /// <param name="Size">The physics shape's Size0..2 (matched within 1e-4).</param>
 /// <param name="Prims">The body's primitives in its own frame, smooth-min'd by <see cref="Doll.BodyBlend"/>.</param>
 /// <param name="BallRadius">The radius (m) of the ball at the joint to the parent, or 0 for a body with no joint to a parent of its own.</param>
-/// <param name="SwingCone">A Spherical joint's swing cone, the full angle in radians (HumanoidRagdoll's coneAngle), or 0.</param>
-/// <param name="Flex">A hinge's range turning the child about the hinge axis the negative way, in radians (HumanoidRagdoll's -lower limit), or 0.</param>
-/// <param name="Extension">A hinge's range turning the child about the hinge axis the positive way, in radians (HumanoidRagdoll's upper limit), or 0.</param>
-public sealed record DollEntry(Box3DSoaKind Kind, float3 Size, DollPrim[] Prims, float BallRadius = 0, float SwingCone = 0, float Flex = 0, float Extension = 0)
+public sealed record DollEntry(Box3DSoaKind Kind, float3 Size, DollPrim[] Prims, float BallRadius = 0)
 {
-    public bool IsHinge => Flex > 0 || Extension > 0;
-
     public bool Matches(Box3DSoaKind kind, float3 size) => kind == Kind && math.length(size - Size) <= 1e-4f;
 }
 
@@ -107,15 +102,6 @@ public static class Doll
     /// <summary>The same for a ball: the sphere is simple, so it keeps nearer (20 mm leaves 228 triangles across the doll's twelve balls, 10 mm 500).</summary>
     public const float BallError = 0.010f;
 
-    /// <summary>The margin (radians) a hinge's wedge leaves inside its range, so the decimated notch face (up to 5 mm off at the limit) never reaches the other limb.</summary>
-    public const float HingeMargin = 5f * MathF.PI / 180f;
-
-    /// <summary>
-    /// How far (radians) a hinge is cut clean: the hinge's wedge is sized from min(its range, this). At or over the range, a limb never sinks into
-    /// the other anywhere in its range (ruling doll-hinges-clean-to-limit); a smaller angle shortens the notch a straight limb shows and lets the limbs sink past it.
-    /// </summary>
-    public const float HingeClean = MathF.PI;
-
     /// <summary>The radius (m) a fallback box is rounded by (a body with no entry is drawn as its physics shape).</summary>
     public const float FallbackRound = 0.03f;
 
@@ -127,8 +113,6 @@ public static class Doll
 
     private static float3 V(float x, float y, float z) => new(x, y, z);
 
-    private static readonly float Hinge = 2.4f, Ankle = 0.6f; // HumanoidRagdoll.Build: elbow [-2.4, 0], knee [0, 2.4], ankle [-0.6, 0.6]
-
     /// <summary>The art doll's bodies. Torso: the shoulder bar runs along the shoulder joints (y 0.14) to inside the shoulder balls (x = +-0.205: its end then lies within the socket, where at y 0.15 and x 0.20 it left a crescent a few millimetres thick outside it), the neck cone stops at the neck ball (y 0.17 to 0.20) and the waist cone at the spine ball (to y -0.15, not -0.19: there it left a lip 1 to 4 mm thick outside the socket, below the grid, that no mesher keeps manifold).</summary>
     public static readonly DollEntry[] Entries =
     {
@@ -137,17 +121,14 @@ public static class Doll
         {
             DollPrim.Ellipsoid(V(0, .07f, .005f), V(.145f, .15f, .095f)), DollPrim.Cone(V(0, -.06f, 0), .08f, V(0, -.15f, 0), .072f),
             DollPrim.Cone(V(-.205f, .14f, 0), .045f, V(.205f, .14f, 0), .045f), DollPrim.Cone(V(0, .17f, 0), .042f, V(0, .20f, 0), .038f),
-        }, 0.072f, SwingCone: 0.5f),
-        new(Box3DSoaKind.Sphere, V(.11f, 0, 0), new[] { DollPrim.Ellipsoid(V(0, .015f, -.005f), V(.085f, .108f, .095f)), DollPrim.Cone(V(0, -.02f, .015f), .06f, V(0, -.075f, .045f), .033f) }, 0.036f, SwingCone: 0.6f),
-        new(Box3DSoaKind.Capsule, V(.045f, .11f, 0), new[] { DollPrim.Cone(V(0, .125f, 0), .05f, V(0, -.12f, 0), .037f) }, 0.05f, SwingCone: 1.5f),
-        new(Box3DSoaKind.Capsule, V(.04f, .10f, 0), new[] { DollPrim.Cone(V(0, .115f, 0), .036f, V(0, -.09f, 0), .03f), DollPrim.Ellipsoid(V(0, -.155f, .005f), V(.03f, .058f, .042f)) }, 0.038f, Flex: Hinge),
-        new(Box3DSoaKind.Capsule, V(.07f, .18f, 0), new[] { DollPrim.Cone(V(0, .2f, 0), .078f, V(0, -.22f, 0), .05f) }, 0.07f, SwingCone: 1.2f),
-        new(Box3DSoaKind.Capsule, V(.06f, .17f, 0), new[] { DollPrim.Cone(V(0, .2f, 0), .05f, V(0, -.2f, 0), .035f), DollPrim.Ellipsoid(V(0, .08f, -.012f), V(.05f, .1f, .055f)) }, 0.05f, Extension: Hinge),
-        new(Box3DSoaKind.Box, V(.05f, .04f, .12f), new[] { DollPrim.Ellipsoid(V(0, 0, -.005f), V(.045f, .038f, .105f)), DollPrim.Cone(V(0, .01f, -.08f), .036f, V(0, -.015f, .1f), .02f) }, 0.034f, Flex: Ankle, Extension: Ankle),
+        }, 0.072f),
+        new(Box3DSoaKind.Sphere, V(.11f, 0, 0), new[] { DollPrim.Ellipsoid(V(0, .015f, -.005f), V(.085f, .108f, .095f)), DollPrim.Cone(V(0, -.02f, .015f), .06f, V(0, -.075f, .045f), .033f) }, 0.036f),
+        new(Box3DSoaKind.Capsule, V(.045f, .11f, 0), new[] { DollPrim.Cone(V(0, .125f, 0), .05f, V(0, -.12f, 0), .037f) }, 0.05f),
+        new(Box3DSoaKind.Capsule, V(.04f, .10f, 0), new[] { DollPrim.Cone(V(0, .115f, 0), .036f, V(0, -.09f, 0), .03f), DollPrim.Ellipsoid(V(0, -.155f, .005f), V(.03f, .058f, .042f)) }, 0.038f),
+        new(Box3DSoaKind.Capsule, V(.07f, .18f, 0), new[] { DollPrim.Cone(V(0, .2f, 0), .07f, V(0, -.22f, 0), .05f) }, 0.07f),
+        new(Box3DSoaKind.Capsule, V(.06f, .17f, 0), new[] { DollPrim.Cone(V(0, .2f, 0), .05f, V(0, -.2f, 0), .035f), DollPrim.Ellipsoid(V(0, .08f, -.012f), V(.05f, .1f, .055f)) }, 0.05f),
+        new(Box3DSoaKind.Box, V(.05f, .04f, .12f), new[] { DollPrim.Ellipsoid(V(0, 0, -.005f), V(.045f, .038f, .105f)), DollPrim.Cone(V(0, .01f, -.08f), .036f, V(0, -.015f, .1f), .02f) }, 0.034f),
     };
-
-    /// <summary>The hinge axis in the child's bind frame (HumanoidRagdoll's hinges turn about +x).</summary>
-    public static readonly float3 HingeAxis = new(1, 0, 0);
 
     /// <summary>The entry that dresses a body of this physics shape, or null.</summary>
     public static DollEntry? Find(Box3DSoaKind kind, float3 size)

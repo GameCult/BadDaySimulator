@@ -9,7 +9,7 @@ namespace BadDay.Client.Tests;
 
 /// <summary>
 /// The puppet's rules that need no scene, run by the smoke before its scenario: when the model rebuilds the shape, and what the ball-jointed doll's
-/// pieces are (separate, closed, within the error, clear of their balls, clean across the hinges' range). Each check reports what broke through <c>fail</c>.
+/// pieces are (separate, closed, within the error, clear of their balls). Each check reports what broke through <c>fail</c>.
 /// </summary>
 public static class PuppetChecks
 {
@@ -107,8 +107,6 @@ public static class PuppetChecks
         Clearance(puppet, fields, triangles, Check);
         WithinTheError(puppet, fields, triangles, Check);
         LimbsKept(puppet, fields, triangles, Check);
-        HingesClean(puppet, fields, real, triangles, Check);
-        ChildCones(puppet, real, triangles, Check);
         Mesher(puppet, triangles, Check);
         AcrossIsPositionWeld(puppet, Check);
         SkinnedSurface(puppet, Check);
@@ -208,71 +206,8 @@ public static class PuppetChecks
     }
 
     /// <summary>
-    /// Hinges clean across their range: each hinge joint (a Revolute whose child the doll gives a range) is swept from -flex to +extension in 5 degree
-    /// steps, the child turned about the hinge axis through the joint; no point of the parent piece within 2.5 ball radii of the joint lies more than a
-    /// millimetre inside the child piece's field, nor the child's inside the parent's (clean to the limit: lodur:ruling:doll-hinges-clean-to-limit).
-    /// </summary>
-    private static void HingesClean(PuppetShape shape, PieceField[] fields, List<PuppetBody> bodies, int[][] triangles, Action<bool, string> check)
-    {
-        int hinges = 0, bad = 0; float worst = 0;
-        for (int j = 0; j < shape.Joints.Length; j++)
-        {
-            var (kind, a, b, o) = shape.Joints[j];
-            if (kind != Box3DSoaJointKind.Revolute || Doll.Find(bodies[b].Kind, bodies[b].Size) is not { IsHinge: true } entry) continue;
-            hinges++;
-            var axis = math.normalize(math.mul(bodies[b].Bind.R, Doll.HingeAxis));
-            float near = 2.5f * shape.BallRadius[j];
-            var parentPoints = Samples(shape, triangles[a]).Where(p => math.length(p - o) < near).ToArray();
-            var childPoints = Samples(shape, triangles[b]).Where(p => math.length(p - o) < near).ToArray();
-            for (float angle = -entry.Flex; ; angle += 5f * MathF.PI / 180f)
-            {
-                angle = MathF.Min(angle, entry.Extension);
-                var turn = Rigid.About(o, axis, angle); var back = turn.Inverse();
-                float depth = 0;
-                foreach (var p in parentPoints) depth = MathF.Max(depth, -fields[b].Value(back.Apply(p)));
-                foreach (var c in childPoints) depth = MathF.Max(depth, -fields[a].Value(turn.Apply(c)));
-                worst = MathF.Max(worst, depth);
-                if (depth > 0.001f) bad++;
-                if (angle >= entry.Extension) break;
-            }
-        }
-        Console.WriteLine($"PUPPET hinges {hinges}: worst penetration over the range {worst * 1000:F2} mm");
-        check(hinges == 6, $"the hinge sweep is vacuous: {hinges} hinges, not an elbow, a knee and an ankle on each side");
-        check(bad == 0, $"{bad} poses over the hinges' ranges sink a limb into another (worst {worst * 1000:F1} mm, over 1 mm)");
-    }
-
-    /// <summary>
-    /// A Spherical joint's child keeps the cone of half angle (180 degrees - the entry's swing cone) / 2 about its rest direction from the joint (the child's
-    /// centre seen from it): no point of the child piece lies further than the error outside that cone, measured on the cone's own surface (the apex is the
-    /// joint, inside the ball). The parent is not cut: its points reach every way round the joint.
-    /// </summary>
-    private static void ChildCones(PuppetShape shape, List<PuppetBody> bodies, int[][] triangles, Action<bool, string> check)
-    {
-        int cones = 0, outside = 0; float worst = 0;
-        for (int j = 0; j < shape.Joints.Length; j++)
-        {
-            var (kind, a, b, o) = shape.Joints[j];
-            if (kind != Box3DSoaJointKind.Spherical || Doll.Find(bodies[b].Kind, bodies[b].Size) is not { SwingCone: > 0 } entry) continue;
-            cones++;
-            var rest = math.normalize(bodies[b].Bind.T - o);
-            float half = MathF.Min(MathF.PI / 2, (MathF.PI - entry.SwingCone) / 2), cs = MathF.Cos(half), sn = MathF.Sin(half);
-            foreach (var p in Samples(shape, triangles[b]))
-            {
-                var r = p - o; float along = math.dot(r, rest), perp = math.length(r - rest * along);
-                float distance = along * cs + perp * sn < 0 ? math.length(r) : perp * cs - along * sn;
-                worst = MathF.Max(worst, distance);
-                if (distance > Doll.FacetError + 1e-3f) outside++;
-            }
-        }
-        Console.WriteLine($"PUPPET child cones {cones}: worst {worst * 1000:F1} mm outside");
-        check(cones == 6, $"the cone check is vacuous: {cones} spherical joints with a swing cone, not the spine, the neck and a shoulder and a hip on each side");
-        check(outside == 0, $"{outside} points of a spherical joint's child lie outside its swing cone's half space (worst {worst * 1000:F1} mm)");
-    }
-
-    /// <summary>
     /// Each piece's mesh: no edge folds (its two triangles disagree on convexity), no triangle faces into its piece (seen from a point a millimetre
-    /// off its face along its normal, the piece's surface is crossed an odd number of times in two directions), none is tiny, and the vertices the
-    /// untangle pulled back are few and stay near the isosurface.
+    /// off its face along its normal, the piece's surface is crossed an odd number of times in two directions), and none is tiny.
     /// </summary>
     private static void Mesher(PuppetShape shape, int[][] pieces, Action<bool, string> check)
     {
@@ -310,9 +245,7 @@ public static class PuppetChecks
             }
         check(inward == 0, $"{inward} of {count} triangles face into their piece");
         check(smallest >= 1e-6f, $"the smallest triangle is {smallest * 1e6:F2} mm2, under 1 mm2");
-        Console.WriteLine($"PUPPET mesher: {edges} shared edges, smallest triangle {smallest * 1e6:F1} mm2, {shape.Pulled} vertices pulled back, worst {shape.OffSurface * 1000:F1} mm off");
-        check(shape.Pulled <= 800, $"the untangle pulled back {shape.Pulled} vertices, over 800");
-        check(shape.OffSurface <= 0.015f, $"a pulled-back vertex is {shape.OffSurface * 1000:F1} mm off the isosurface, over 15 mm");
+        Console.WriteLine($"PUPPET mesher: {edges} shared edges, smallest triangle {smallest * 1e6:F1} mm2");
     }
 
     /// <summary>Whether the ray from <paramref name="o"/> along <paramref name="d"/> crosses the triangle (Moller-Trumbore).</summary>
@@ -449,7 +382,7 @@ public static class PuppetChecks
             {
                 Ids = new ulong[] { 1 }, Bind = new[] { Identity }, Joints = Array.Empty<(Box3DSoaJointKind, int, int, float3)>(), BallRadius = Array.Empty<float>(),
                 Vertices = vertices, Bone = new int[vertices.Length], Piece = new int[vertices.Length],
-                Corners = corners, Across = across, Pulled = 0, OffSurface = 0,
+                Corners = corners, Across = across,
             };
         }
         // Triangle A is (0, 1, 2); its edge 1-2 is opposite its corner 0 (slot 0).
