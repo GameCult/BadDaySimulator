@@ -418,9 +418,29 @@ public static class Program
             Check(Hash("run", "--seed", "1") == "a3a800612f1e610deb8c648ea74a0a3e2f4639541a46d92af0d1bcfbdd8cfb45", "run --seed 1 changed");
             Check(Hash("sweep", "--seed", "1", "--count", "20") == "2cc88f9ffbbf301b8264c0be600edb34b21a3b572f927ed96ea49eda20dc73db", "sweep --seed 1 --count 20 changed");
         }),
+
+        ("office CLI: office runs a timeline with the stress label, --silence repeats, office-sweep summarises", () =>
+        {
+            string Run(params string[] a) { var w = new StringWriter(); BadDay.Cli.Program.Execute(a, w); return w.ToString(); }
+            var plain = Run("office", "--seed", "1");
+            Check(plain == Run("office", "--seed", "1"), "office output differs between runs");
+            Check(plain.Contains("lost composure") && plain.Contains("time_ms kind audio visual interrupt load arousal resolve stress goal"), "no label or header");
+            Check(plain.Contains("will broke at"), "seed 1 should break at the default settings");
+            var quiet = Run("office", "--seed", "1", "--silence", "printer@0", "--silence", "desk-phone@0");
+            Check(quiet.Split('\n').Count(l => l.Contains(" Silenced ")) == 2, "two --silence options should give two Silenced rows");
+            Check(Run("office", "--seed", "1", "--scale", "0").Contains("endured to 180000 ms"), "--scale 0 should be a quiet office");
+            Check(Run("office", "--seed", "1", "--pull", "1").Contains("endured"), "--pull 1 never drains");
+            Check(Run("office-sweep", "--seed", "1", "--count", "5").Contains("min resolve of endured runs:"), "no sweep summary");
+            foreach (var bad in new[] { new[] { "office" }, new[] { "office", "--seed", "1", "--silence", "printer" }, new[] { "office", "--seed", "1", "--silence", "nope@1" }, new[] { "office", "--seed", "1", "--body" } })
+            {
+                bool threw = false;
+                try { Run(bad); } catch (ArgumentException) { threw = true; }
+                Check(threw, $"'{string.Join(' ', bad)}' should be rejected");
+            }
+        }),
     };
 
-    private static readonly Quat[] Pose = { Quat.Identity };
+    private static readonly Quat[] Pose ={ Quat.Identity };
     private static readonly float[] Point = new float[1], Strengths = new float[1];
     private static readonly Quat[] Targets = new Quat[1];
 
