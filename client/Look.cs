@@ -22,6 +22,13 @@ public static class Look
     /// <summary>The radius (m) the puppet's boxes are rounded by, so the isosurface has no sawtooth bands on their edges.</summary>
     public const float BoxRound = 0.03f;
 
+    /// <summary>
+    /// The width (m) each side of a puppet edge over which the facet normal turns to the edge's bisector: 4 mm, the recommended
+    /// option of the open question lodur:question:bds-puppet-bevel-width (0 keeps hard facets; 10 mm makes curved limbs read as smooth).
+    /// An answer changes this constant and nothing else.
+    /// </summary>
+    public const float BevelWidth = 0.004f;
+
     public static Godot.Environment Environment() => new()
     {
         BackgroundMode = Godot.Environment.BGMode.Color,
