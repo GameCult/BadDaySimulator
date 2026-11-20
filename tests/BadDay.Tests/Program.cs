@@ -54,8 +54,9 @@ public static class Program
             var broke = r.Timeline.Single(e => e.Kind == EntryKind.WillBroke);
             var out_ = r.Timeline.Single(e => e.Kind == EntryKind.Withdrew);
             Check(broke.TimeMs == r.TimeToBreakMs, "TimeToBreakMs disagrees with the timeline");
-            Check(broke.Resolve == 0.0 && broke.Goal == Goal.Withdraw, "break entry should show resolve 0, goal Withdraw");
-            Check(out_.TimeMs - broke.TimeMs == 100, $"latency {out_.TimeMs - broke.TimeMs} ms");
+            // The goal is the Actor's: the withdraw goal takes over the latency after the break, not on it.
+            Check(broke.Resolve == 0.0 && broke.Goal == Goal.HoldHand, "break entry should show resolve 0, goal still HoldHand");
+            Check(out_.TimeMs - broke.TimeMs == 100 && out_.Goal == Goal.Withdraw, $"latency {out_.TimeMs - broke.TimeMs} ms, goal {out_.Goal}");
             Check(r.Timeline.Where(e => e.TimeMs < broke.TimeMs).All(e => e.Resolve > 0.0 && e.Goal == Goal.HoldHand),
                 "resolve hit zero or goal changed before the recorded break");
         }),
@@ -67,11 +68,26 @@ public static class Program
             Check(Break(1.0) < Break(0.8) && Break(0.8) < Break(0.6), "break times not ordered by intensity");
         }),
 
-        ("a stronger objective pull holds the will longer", () =>
+        ("the volunteer's payment sets the pull: 0 pays 0, the default 100 pulls exactly half, 400 pulls 0.8, and the hold goal carries it", () =>
         {
-            long Break(double pull) =>
-                PainBoxSimulation.Run(Default with { Drive = Default.Drive with { ObjectivePull = pull } }, 5).TimeToBreakMs ?? long.MaxValue;
-            Check(Break(0.0) < Break(0.5) && Break(0.5) < Break(0.8), "break times not ordered by pull");
+            double Pull(double pay) => ChamberBrain.Pull(Default with { Payment = pay });
+            Check(Pull(0) == 0.0 && Pull(100) == 0.5 && Pull(400) == 0.8, $"pulls {Pull(0)}, {Pull(100)}, {Pull(400)}");
+            Check(ChamberBrain.Pull(Default) == 0.5, "the default payment does not pull half");
+            Check(ChamberBrain.Pull(Default with { Payment = 50, DollarsAtHalfPull = 50 }) == 0.5, "the pull is not the payment over the payment plus DollarsAtHalfPull");
+            var brain = ChamberBrain.Build(Default with { Payment = 400 }, new[] { Quat.Identity }, new[] { Quat.Identity });
+            Check(brain.Goals[ChamberBrain.HoldIndex].Pull == 0.8 && brain.Goals[ChamberBrain.WithdrawIndex].Pull == 0.0, "the Brain's pulls are not the payment's");
+            foreach (var bad in new[] { Default with { Payment = -1 }, Default with { Payment = double.NaN }, Default with { Payment = double.PositiveInfinity }, Default with { DollarsAtHalfPull = 0 }, Default with { DollarsAtHalfPull = -5 } })
+            {
+                bool threw = false;
+                try { PainBoxSimulation.Run(bad, 1); } catch (ArgumentException) { threw = true; }
+                Check(threw, $"payment {bad.Payment}, half-pull {bad.DollarsAtHalfPull} was accepted");
+            }
+        }),
+
+        ("a better paid volunteer holds the will longer: the break time rises strictly over payments 0, 20, 100, 400 (seed 5)", () =>
+        {
+            long Break(double pay) => PainBoxSimulation.Run(Default with { Payment = pay }, 5).TimeToBreakMs ?? long.MaxValue;
+            Check(Break(0) < Break(20) && Break(20) < Break(100) && Break(100) < Break(400), "break times not ordered by payment");
         }),
 
         ("disabling the box before the break ends the run with the will intact", () =>
@@ -87,6 +103,9 @@ public static class Program
             var plain = PainBoxSimulation.Run(Default, 1);
             var late = PainBoxSimulation.Run(Default with { BoxDisableAtSeconds = 60.0 }, 1);
             Check(plain.Render() == late.Render(), "a box disabled after the break altered the run");
+            // Inside the withdrawal latency the goal is still HoldHand, but the will is broken and the box going off does not give it back.
+            var inLatency = PainBoxSimulation.Run(Default with { BoxDisableAtSeconds = 14.78 }, 1);
+            Check(inLatency.Outcome == Outcome.WillBroke && inLatency.TimeToBreakMs == plain.TimeToBreakMs && inLatency.EndMs == plain.EndMs, $"a box switched off inside the latency gave {inLatency.Outcome} ending at {inLatency.EndMs}");
         }),
 
         ("no stimulus: nothing flinches and the run endures", () =>
@@ -348,7 +367,7 @@ public static class Program
                     long ms = (long)Math.Round(e.Tick * 1000.0 / Hz);
                     if ((e.Events & Lodur.TickEvents.Flinch) != 0) expanded.Add((ms, EntryKind.Flinch));
                     if ((e.Events & Lodur.TickEvents.WillBroke) != 0) expanded.Add((ms, EntryKind.WillBroke));
-                    if ((e.Events & Lodur.TickEvents.Withdrew) != 0) expanded.Add((ms, EntryKind.Withdrew));
+                    if ((e.Events & Lodur.TickEvents.GoalChanged) != 0) expanded.Add((ms, EntryKind.Withdrew));
                 }
                 Check(expanded.SequenceEqual(rows), $"draining every {every} steps through {slots} slots: {expanded.Count} events against the Run's {rows.Count}, or out of order");
             }
@@ -449,6 +468,10 @@ public static class Program
             bool threw = false;
             try { Run("run"); } catch (ArgumentException) { threw = true; }
             Check(threw, "missing --seed should be rejected");
+            threw = false;
+            try { Run("run", "--seed", "1", "--pull", "0.3"); } catch (ArgumentException) { threw = true; }
+            Check(threw, "the chamber takes --pay, not --pull");
+            Check(Run("run", "--seed", "5", "--pay", "20") != Run("run", "--seed", "5", "--pay", "400"), "--pay changed nothing");
         }),
 
         ("office: a stressor is silent before its onset, on for its duration, and back every period", () =>
@@ -610,17 +633,21 @@ public static class Program
             }
         }),
 
-        ("the pain box is untouched: run --seed 1 and sweep --seed 1 --count 20 hash to the output captured before the office existed", () =>
+        ("pain box parity: sweep --seed 1 --count 20 hashes to the output before rung 4, and run --seed 1 does too once the break row's goal reads Withdraw as it then did", () =>
         {
-            string Hash(params string[] a)
+            string Out(params string[] a)
             {
                 var w = new StringWriter();
                 BadDay.Cli.Program.Execute(a, w);
-                var bytes = System.Text.Encoding.UTF8.GetBytes(w.ToString().Replace("\r\n", "\n"));
-                return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+                return w.ToString().Replace("\r\n", "\n");
             }
-            Check(Hash("run", "--seed", "1") == "a3a800612f1e610deb8c648ea74a0a3e2f4639541a46d92af0d1bcfbdd8cfb45", "run --seed 1 changed");
-            Check(Hash("sweep", "--seed", "1", "--count", "20") == "2cc88f9ffbbf301b8264c0be600edb34b21a3b572f927ed96ea49eda20dc73db", "sweep --seed 1 --count 20 changed");
+            string Hash(string s) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(s))).ToLowerInvariant();
+            Check(Hash(Out("sweep", "--seed", "1", "--count", "20")) == "2cc88f9ffbbf301b8264c0be600edb34b21a3b572f927ed96ea49eda20dc73db", "sweep --seed 1 --count 20 changed");
+            var run = Out("run", "--seed", "1").Split('\n');
+            int row = Array.FindIndex(run, l => l.Contains(" WillBroke "));
+            Check(row > 0 && run[row].EndsWith(" HoldHand"), "the break row should read HoldHand, the goal in force");
+            run[row] = run[row][..^" HoldHand".Length] + " Withdraw";
+            Check(Hash(string.Join('\n', run)) == "a3a800612f1e610deb8c648ea74a0a3e2f4639541a46d92af0d1bcfbdd8cfb45", "run --seed 1 differs from the pre-rung-4 output in more than the break row's goal");
         }),
 
         ("office CLI: office runs a timeline with the stress label, --silence repeats, office-sweep summarises", () =>
@@ -635,7 +662,7 @@ public static class Program
             Check(Run("office", "--seed", "1", "--scale", "0").Contains("endured to 180000 ms"), "--scale 0 should be a quiet office");
             Check(Run("office", "--seed", "1", "--pull", "1").Contains("endured"), "--pull 1 never drains");
             Check(Run("office-sweep", "--seed", "1", "--count", "5").Contains("min resolve of endured runs:"), "no sweep summary");
-            foreach (var bad in new[] { new[] { "office" }, new[] { "office", "--seed", "1", "--silence", "printer" }, new[] { "office", "--seed", "1", "--silence", "nope@1" }, new[] { "office", "--seed", "1", "--body" } })
+            foreach (var bad in new[] { new[] { "office" }, new[] { "office", "--seed", "1", "--silence", "printer" }, new[] { "office", "--seed", "1", "--silence", "nope@1" }, new[] { "office-sweep", "--seed", "1", "--body" }, new[] { "office", "--seed", "1", "--body", "--silence", "printer@1" }, new[] { "office", "--seed", "1", "--pay", "5" } })
             {
                 bool threw = false;
                 try { Run(bad); } catch (ArgumentException) { threw = true; }
@@ -684,7 +711,7 @@ public static class Program
             }
         }),
 
-        ("office golden [P]: office --seed 1 hashes to its captured bytes and the 50-seed sweep ends in its captured line", () =>
+        ("office golden [P]: the rows up to the break are rung 3's bytes, the 50-seed sweep ends in its captured line, and the run's own bytes are captured", () =>
         {
             string Out(params string[] a)
             {
@@ -692,18 +719,53 @@ public static class Program
                 BadDay.Cli.Program.Execute(a, w);
                 return w.ToString().Replace("\r\n", "\n");
             }
-            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Out("office", "--seed", "1")))).ToLowerInvariant();
-            Check(hash == "66098b69834c3c8b5e5b694f0059b8ed566e31d332f36be7e57baf70ae650823", $"office --seed 1 changed: {hash}");
+            string Hash(string s) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(s))).ToLowerInvariant();
+            var lines = Out("office", "--seed", "1").Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
+            int brk = lines.FindIndex(l => l.Contains(" WillBroke "));
+            // Rung 3 ended at the break and named its goals HoldHand and Withdraw; what it printed up to there is what this prints, goal column aside.
+            var rung3 = new List<string> { lines[0].Replace("rung 4", "rung 3"), lines[1] };
+            for (int i = 2; i <= brk; i++) rung3.Add(lines[i].Replace(" KeepComposure", i == brk ? " Withdraw" : " HoldHand"));
+            rung3.Add(lines[^1]);
+            Check(Hash(string.Join('\n', rung3) + "\n") == "66098b69834c3c8b5e5b694f0059b8ed566e31d332f36be7e57baf70ae650823", "the office's rows up to the break differ from rung 3's");
+            Check(Hash(string.Join('\n', lines) + "\n") == "006f712ff35052ff3f1497d67ecd6d20bd679de6bb3922714695a709fffa6ce4", $"office --seed 1 changed: {Hash(string.Join('\n', lines) + "\n")}");
             var last = Out("office-sweep", "--seed", "1", "--count", "50").TrimEnd('\n').Split('\n')[^1];
             Check(last == "runs 50: broke 50, endured 0; time to break min/median/max ms: 72670/86570/113420; min resolve of endured runs: -", $"sweep line changed: {last}");
         }),
+
+        ("office rage: the Actor switches once, 100 ms after the break, KeepComposure before and Rage from it, and the run ends ReleaseSeconds after the switch", () =>
+        {
+            foreach (ulong seed in new ulong[] { 1, 2, 3, 4, 5 })
+            {
+                var r = Office(new StressParameters(), seed);
+                var brk = r.Timeline.Single(e => e.Kind == StressEntryKind.WillBroke);
+                var sw = r.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged);
+                Check(sw.TimeMs - brk.TimeMs == 100 && brk.TimeMs == r.TimeToBreakMs, $"seed {seed}: the switch row is {sw.TimeMs - brk.TimeMs} ms after the break");
+                Check(r.Timeline.Where(e => e.TimeMs < sw.TimeMs).All(e => e.Goal == OfficeGoal.KeepComposure), $"seed {seed}: a row before the switch is not KeepComposure");
+                Check(r.Timeline.Where(e => e.TimeMs >= sw.TimeMs).All(e => e.Goal == OfficeGoal.Rage), $"seed {seed}: a row from the switch on is not Rage");
+                Check(r.Outcome == Outcome.WillBroke && r.EndMs == sw.TimeMs + 6000, $"seed {seed}: ended at {r.EndMs}, the switch was at {sw.TimeMs}");
+                Check(r.Timeline.Where(e => e.TimeMs >= brk.TimeMs).All(e => e.Resolve == 0.0), $"seed {seed}: resolve came back after the break");
+            }
+            var short_ = Office(new StressParameters { ReleaseSeconds = 2.0 }, 1);
+            Check(short_.EndMs == short_.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged).TimeMs + 2000, "ReleaseSeconds did not set the length of the rage");
+            var clipped = Office(new StressParameters { MaxSeconds = 85.0 }, 1);
+            Check(clipped.Outcome == Outcome.WillBroke && clipped.EndMs == 85000 && clipped.Timeline.All(e => e.Kind != StressEntryKind.Endured), $"a release past MaxSeconds ended at {clipped.EndMs}");
+        }),
+
+        ("office rage: a will that holds never switches, and the job's pull is the composure goal's alone", () =>
+        {
+            var quiet = Office(new StressParameters { Cause = Cause.Office with { Stressors = Array.Empty<Stressor>() } }, 1);
+            Check(quiet.Timeline.All(e => e.Kind != StressEntryKind.GoalChanged && e.Goal == OfficeGoal.KeepComposure), "a will that held switched goals");
+            var p = new StressParameters();
+            var brain = OfficeBrain.Build(p, OfficePoses.Identity);
+            Check(brain.Goals[OfficeBrain.ComposureIndex].Pull == p.Cause.ObjectivePull && brain.Goals[OfficeBrain.RageIndex].Pull == 0.0, "the pulls are not the cause's and zero");
+        }),
+
     };
 
-    private static readonly Quat[] Pose = { Quat.Identity };
     private static readonly float[] Point = new float[1], Strengths = new float[1];
     private static readonly Quat[] Targets = new Quat[1];
 
-    private static StressSession NewOffice(StressParameters p, ulong seed) => new(p, seed, 1, Pose, Pose);
+    private static StressSession NewOffice(StressParameters p, ulong seed) => new(p, seed, 1, OfficePoses.Identity);
 
     private static void Step(StressSession s) => s.Tick(Point, Point, Point, Strengths, Targets);
 

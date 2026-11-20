@@ -4,20 +4,21 @@ using System.Text;
 
 namespace BadDay.Core;
 
-public enum StressEntryKind { Sample, Silenced, WillBroke, Endured }
+public enum StressEntryKind { Sample, Silenced, WillBroke, GoalChanged, Endured }
 
 /// <summary>One timeline row: end-of-tick state read from the Actor. Audio, Visual and Interrupt are the stimulus that reached the head on each channel.</summary>
 public readonly record struct StressEntry(
     long TimeMs, StressEntryKind Kind, double Audio, double Visual, double Interrupt,
-    double Load, double Arousal, double Resolve, Goal Goal);
+    double Load, double Arousal, double Resolve, OfficeGoal Goal);
 
 /// <summary>A player's command to silence one stressor from <see cref="AtSeconds"/> on.</summary>
 public readonly record struct SilenceCommand(string StressorId, double AtSeconds);
 
 public sealed record StressResult(
     ulong Seed,
-    /// <summary>WillBroke or Endured; the office has no box to disable.</summary>
+    /// <summary>WillBroke (the run goes on through the release) or Endured; the office has no box to disable.</summary>
     Outcome Outcome,
+    /// <summary>When the run ended: the release after the rage took over, or MaxSeconds.</summary>
     long EndMs,
     /// <summary>Time resolve hit zero, ms; null unless the will broke.</summary>
     long? TimeToBreakMs,

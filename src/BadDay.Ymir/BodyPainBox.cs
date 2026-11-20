@@ -57,8 +57,7 @@ public static class BodyPainBox
 public readonly record struct BodyEvent(long Tick, TickEvents Events);
 
 /// <summary>
-/// One body run, stepped by its caller: BDS creates the Ymir world (a ground, a static stool box welded to the pelvis
-/// because the PD ragdoll cannot balance for 15 s, the ragdoll, the box volume around the right hand's hold
+/// One body run, stepped by its caller: BDS creates the Ymir world (<see cref="SeatedPuppet"/>'s ground, stool and ragdoll, the box volume around the right hand's hold
 /// point) and is its only stepper; the nervous session inside it is never exposed, so nothing else can tick it.
 /// Per <see cref="Step"/>: the box writes its intensity, the body reports its hand points, Lodur's Actor decides,
 /// the ragdoll is driven, the world steps. The run ends on the Actor's events, never on the hand: after the
@@ -74,9 +73,6 @@ public readonly record struct BodyEvent(long Tick, TickEvents Events);
 public sealed class BodyPainBoxSession : IDisposable
 {
     private const float BoxHalf = 0.12f;
-
-    /// <summary>Physics substeps per 1/120 s step. The ragdoll gains were tuned against 4; the behaviour tests, not this number, are the rule.</summary>
-    private const int Substeps = 4;
 
     /// <summary>After the deliberate withdrawal begins the run waits this long for the hand to come out.</summary>
     private const double SettleSeconds = 1.0;
@@ -110,13 +106,11 @@ public sealed class BodyPainBoxSession : IDisposable
         }
 
         _p = p;
-        _world = new Box3DSoaWorld(capacity: HumanoidRagdoll.LimbCount + 2, jointCapacity: HumanoidRagdoll.MuscleCount + 1);
+        var needs = SeatedPuppet.Needs;
+        _world = new Box3DSoaWorld(capacity: needs.Bodies, jointCapacity: needs.Joints);
         try
         {
-            _world.AddStaticBox(1, (0f, -0.5f, 0f), (20f, 0.5f, 20f), friction: 0.8f);
-            var stool = _world.AddStaticBox(2, (0f, 1.11f, -0.115f), (0.05f, 0.05f, 0.025f), friction: 0.8f);
-            _ragdoll = HumanoidRagdoll.Build(_world, (0f, 0f), firstStableId: 100);
-            _world.AddJoint(Box3DSoaJointKind.Weld, stool, _ragdoll.BodyLane(Limb.Pelvis), (0f, 1.11f, -0.09f), (0f, 1f, 0f));
+            _ragdoll = SeatedPuppet.Build(_world);
 
             // Hold: the right arm raised and bent so the hand sits in the box. Withdraw: the arm pulled back and folded.
             var hold = new Quat[HumanoidRagdoll.MuscleCount];
@@ -171,7 +165,7 @@ public sealed class BodyPainBoxSession : IDisposable
     public double Pain { get { Live(); return _session.Actor.Drive.Pain; } }
     public double Strain { get { Live(); return _session.Actor.Drive.Strain; } }
     public double Resolve { get { Live(); return _session.Actor.Drive.Resolve; } }
-    public Lodur.Goal Goal { get { Live(); return _session.Actor.Goal; } }
+    public Goal Goal { get { Live(); return ChamberBrain.GoalAt(_session.Actor.GoalIndex); } }
 
     /// <summary>One step of 1/120 s; see the type's summary for what it does after <see cref="Finished"/>.</summary>
     public void Step()
@@ -190,7 +184,7 @@ public sealed class BodyPainBoxSession : IDisposable
         if (ticked || wasFinished)
         {
             _ragdoll.Drive(_strengths, _targets); // after Finished: the last strengths and targets again
-            _world.Step((float)_p.TickSeconds, Substeps);
+            _world.Step((float)_p.TickSeconds, SeatedPuppet.Substeps);
         }
 
         var sample = ReadHand(); // the rest pose when the box was off at tick 0

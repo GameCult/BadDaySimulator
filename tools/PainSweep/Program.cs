@@ -18,7 +18,7 @@ double[] suppressions = { 0.0, 0.25, 0.5, 0.75, 0.95, 1.0 };
 
 var inv = CultureInfo.InvariantCulture;
 var sb = new StringBuilder();
-sb.Append($"time to break, s (median over {Seeds} seeds from {FirstSeed}; max {new PainBoxParameters().MaxSeconds:F0} s; pull {new PainBoxParameters().Drive.ObjectivePull:F2})\n");
+sb.Append($"time to break, s (median over {Seeds} seeds from {FirstSeed}; max {new PainBoxParameters().MaxSeconds:F0} s; pay ${new PainBoxParameters().Payment:F0}, pull {ChamberBrain.Pull(new PainBoxParameters()):F2})\n");
 sb.Append("intensity\\suppr ");
 foreach (var s in suppressions) sb.Append(s.ToString("F2", inv).PadLeft(10));
 sb.Append('\n');

@@ -9,7 +9,8 @@ namespace BadDay.Core;
 /// <see cref="Actor"/>, and the recorder. The headless run, the sweep, the CLI and a client all drive it one
 /// <see cref="Tick"/> per step, and the player's lever is <see cref="Silence"/>. The session never writes drive
 /// state, computes load or arousal, or holds a stress field: rows are end-of-tick state read from the Actor, and
-/// nothing reads them back. It ends where the will breaks (rung 4 continues past it) or at MaxSeconds.
+/// nothing reads them back. The rage is the Brain's (<see cref="OfficeBrain"/>): the session goes on past the break, logs the
+/// tick the Actor commits the switch, and ends ReleaseSeconds after it, or at MaxSeconds.
 /// </summary>
 public sealed class StressSession
 {
@@ -22,13 +23,14 @@ public sealed class StressSession
     private readonly List<StressEntry> _timeline = new();
     private readonly long _maxTick;
     private readonly long _sampleEvery;
+    private readonly long _releaseTicks;
     private long _breakTick = -1;
     private double _minResolve = 1.0;
     private Outcome _outcome = Outcome.Endured;
     private long _endTick;
 
-    public StressSession(StressParameters p, ulong seed, int regionCount,
-        ReadOnlySpan<Quat> holdPose, ReadOnlySpan<Quat> withdrawPose, int senseRegion = 0)
+    /// <param name="poses">What the Brain's goals write, one rotation per muscle; the Actor's muscle count is theirs.</param>
+    public StressSession(StressParameters p, ulong seed, int regionCount, OfficePoses poses, int senseRegion = 0)
     {
         _p = p;
         _stressors = new Stressor[p.Cause.Stressors.Count];
@@ -60,11 +62,12 @@ public sealed class StressSession
         double drainTrait = 1.0 + p.TraitJitter * _rng.NextSigned();
         Seed = seed;
         Actor = new Actor(p.TickSeconds, regionCount, p.Nerve, p.Reflex,
-            p.Drive with { ObjectivePull = p.Cause.ObjectivePull, DrainTrait = p.Drive.DrainTrait * drainTrait },
-            p.Hold, holdPose, withdrawPose,
+            p.Drive with { DrainTrait = p.Drive.DrainTrait * drainTrait },
+            OfficeBrain.Build(p, poses),
             p.Cause.Senses with { Gain = p.Cause.Senses.Gain * gainTrait }, senseRegion);
         _maxTick = Ticks(p.MaxSeconds);
         _sampleEvery = Math.Max(1, Ticks(p.SampleEverySeconds));
+        _releaseTicks = Ticks(p.ReleaseSeconds);
         _endTick = _maxTick;
     }
 
@@ -77,7 +80,7 @@ public sealed class StressSession
     /// <summary>Ticks run so far; the tick the next <see cref="Tick"/> runs.</summary>
     public long TickIndex => Actor.TickCount;
 
-    /// <summary>True once the will has broken or the time ran out.</summary>
+    /// <summary>True once the release after the rage took over is over, or the time ran out.</summary>
     public bool Finished { get; private set; }
 
     /// <summary>
@@ -116,14 +119,17 @@ public sealed class StressSession
         {
             _breakTick = tick;
             _outcome = Outcome.WillBroke;
-            _endTick = tick;
             Log(tick, StressEntryKind.WillBroke);
         }
         if (tick % _sampleEvery == 0) Log(tick, StressEntryKind.Sample);
-        if (_outcome == Outcome.WillBroke) Finished = true;
-        else if (tick >= _maxTick)
+        if ((events & TickEvents.GoalChanged) != 0)
         {
-            Log(tick, StressEntryKind.Endured);
+            _endTick = Math.Min(_maxTick, tick + _releaseTicks);
+            Log(tick, StressEntryKind.GoalChanged);
+        }
+        if (tick >= _endTick)
+        {
+            if (_outcome == Outcome.Endured) Log(tick, StressEntryKind.Endured);
             Finished = true;
         }
         return events;
@@ -148,6 +154,6 @@ public sealed class StressSession
         _timeline.Add(new StressEntry(Ms(tick), kind,
             Actor.ChannelStimulus(Channel.Audio), Actor.ChannelStimulus(Channel.Visual), Actor.ChannelStimulus(Channel.Interrupt),
             Actor.Load, d.Arousal, d.Resolve,
-            Actor.Goal == Lodur.Goal.Withdraw ? Goal.Withdraw : Goal.HoldHand));
+            OfficeBrain.GoalAt(Actor.GoalIndex)));
     }
 }

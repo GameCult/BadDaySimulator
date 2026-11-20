@@ -19,12 +19,17 @@ public sealed record PainBoxParameters
     /// <summary>When set, the box switches off at this time (the game disables it).</summary>
     public double? BoxDisableAtSeconds { get; init; }
 
-    // The nervous model is Lodur's: nerve, drive, reflex and the hold behaviour keep their records and defaults.
-    // Hold matters to the body run only; the headless run ignores what it writes.
+    // The nervous model is Lodur's: nerve, drive and reflex keep their records and defaults. Hold is the hold goal's pose
+    // behaviour (the body run's; the headless run ignores what it writes). The goals themselves are ChamberBrain's.
     public Lodur.NerveParameters Nerve { get; init; } = new();
     public Lodur.DriveParameters Drive { get; init; } = new();
     public Lodur.WithdrawalParameters Reflex { get; init; } = new();
     public Lodur.HoldParameters Hold { get; init; } = new();
+
+    // The objective: the volunteer is paid, and the payment sets how hard holding the hand in the box pulls
+    // (ChamberBrain.Pull: Payment / (Payment + DollarsAtHalfPull), so DollarsAtHalfPull is the payment that pulls half). [P]
+    public double Payment { get; init; } = 100.0;
+    public double DollarsAtHalfPull { get; init; } = 100.0;
 
     // Per-seed trait spread (fraction): nociceptor gain and resolve drain. The seed's draw multiplies Nerve.Gain and Drive.DrainTrait.
     public double TraitJitter { get; init; } = 0.2;

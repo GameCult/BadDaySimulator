@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using BadDay.Core;
 using BadDay.Ymir;
-using Lodur;
 
 namespace BadDay.Cli;
 
@@ -16,12 +15,12 @@ public static class Program
         baddaysim run   --seed N --body [options] the same run on the Ymir ragdoll, with the hand-out time
         baddaysim sweep --seed N --count M [options]   seeds N..N+M-1, break-time summary
 
-        baddaysim office       --seed N [office options]   the office: stressors fill the stress bar, one run
+        baddaysim office       --seed N [office options]   the office: stressors fill the stress bar, the will breaks, the rage follows
         baddaysim office-sweep --seed N --count M [office options]
 
         options (all numbers, seconds unless noted):
           --intensity X   box intensity 0..1            (default 0.8)
-          --pull X        objective pull 0..1           (default 0.5)
+          --pay DOLLARS   what the volunteer is paid: the pull is pay / (pay + 100)  (default 100, pull 0.5)
           --disable-at S  box switches off at S         (default never)
           --max S         give up after S               (default 120)
           --every S       timeline sample interval      (default 1)
@@ -29,14 +28,14 @@ public static class Program
         office options:
           --silence ID@S  silence stressor ID from S seconds (repeatable; ids: printer, ceiling-light, desk-phone, desktop-interrupt)
           --scale X       every stressor's intensity times X  (default 1)
-          --pull X        objective pull 0..1           (default 0.6)
+          --pull X        the job's pull 0..1           (default 0.6)
           --max S         give up after S               (default 180)
           --every S       timeline sample interval      (default 1)
         """;
 
     private const string Title = "Synaptic Induction Chamber (the pain box)";
 
-    private static readonly string OfficeTitle = $"Bad day at the office, rung 3 (stress = 1 - resolve, \"{StressResult.StressBarLabel}\")";
+    private static readonly string OfficeTitle = $"Bad day at the office, rung 4 (stress = 1 - resolve, \"{StressResult.StressBarLabel}\")";
 
     public static int Main(string[] args)
     {
@@ -57,10 +56,11 @@ public static class Program
         ulong seed = opts.TryGetValue("seed", out var s) ? ulong.Parse(s, CultureInfo.InvariantCulture)
             : throw new ArgumentException("--seed is required");
         if (args[0].StartsWith("office")) return ExecuteOffice(args[0] == "office-sweep", seed, opts, output);
+        if (opts.ContainsKey("pull")) throw new ArgumentException("--pull applies to office; the chamber takes --pay");
         var p = new PainBoxParameters
         {
             BoxIntensity = Num(opts, "intensity", 0.8),
-            Drive = new DriveParameters { ObjectivePull = Num(opts, "pull", 0.5) },
+            Payment = Num(opts, "pay", 100),
             BoxDisableAtSeconds = opts.ContainsKey("disable-at") ? Num(opts, "disable-at", 0) : null,
             MaxSeconds = Num(opts, "max", 120),
             SampleEverySeconds = Num(opts, "every", 1),
@@ -99,6 +99,7 @@ public static class Program
     private static int ExecuteOffice(bool sweep, ulong seed, Dictionary<string, string> opts, System.IO.TextWriter output)
     {
         if (opts.ContainsKey("body")) throw new ArgumentException("--body applies to run");
+        if (opts.ContainsKey("pay")) throw new ArgumentException("--pay applies to run and sweep; the office takes --pull");
         var defaults = new StressParameters();
         var p = defaults with
         {

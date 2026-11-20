@@ -2,7 +2,7 @@ namespace BadDay.Core;
 
 /// <summary>
 /// Every tunable of the office stress scenario: the clock, the setting, the cause, and Lodur's parameter records
-/// as members. The cause's pull and sense nerve win over <c>Drive.ObjectivePull</c> and are the only senses.
+/// as members. The cause's pull is the keep-composure goal's, and its sense nerve is the only sense.
 /// Defaults are placeholders, not measured.
 /// </summary>
 public sealed record StressParameters
@@ -11,10 +11,16 @@ public sealed record StressParameters
     public double MaxSeconds { get; init; } = 180.0;
     public double SampleEverySeconds { get; init; } = 1.0;
 
+    /// <summary>How long the run goes on after the rage takes over, seconds [P]: the geyser is seen, then the run ends.</summary>
+    public double ReleaseSeconds { get; init; } = 6.0;
+
+    /// <summary>Seconds from one rage key to the next [P]: wind-up left, strike left, wind-up right, strike right.</summary>
+    public double RageKeySeconds { get; init; } = 0.25;
+
     public Setting Setting { get; init; } = Setting.Office;
     public Cause Cause { get; init; } = Cause.Office;
 
-    // Lodur's records. The noxious nerve and the reflex idle here (no box); Hold is the body's, which this run ignores.
+    // Lodur's records. The noxious nerve and the reflex idle here (no box); Hold is the composure goal's pose behaviour, which only a body reads.
     public Lodur.NerveParameters Nerve { get; init; } = new();
     public Lodur.DriveParameters Drive { get; init; } = new();
     public Lodur.WithdrawalParameters Reflex { get; init; } = new();

@@ -39,7 +39,7 @@ public sealed class PainBoxSession
         double drainTrait = 1.0 + p.TraitJitter * rng.NextSigned();
         Seed = seed;
         Actor = new Actor(p.TickSeconds, regionCount, p.Nerve with { Gain = p.Nerve.Gain * gainTrait }, p.Reflex,
-            p.Drive with { DrainTrait = p.Drive.DrainTrait * drainTrait }, p.Hold, holdPose, withdrawPose);
+            p.Drive with { DrainTrait = p.Drive.DrainTrait * drainTrait }, ChamberBrain.Build(p, holdPose, withdrawPose));
         _box = new PainBox(p, rng);
         _sources = new[] { box };
         _maxTick = Ticks(p.MaxSeconds);
@@ -59,7 +59,7 @@ public sealed class PainBoxSession
     /// <summary>True once the run is over: the box was disabled, the time ran out, or the caller ended it.</summary>
     public bool Finished { get; private set; }
 
-    /// <summary>True from the tick the deliberate withdrawal begins.</summary>
+    /// <summary>True from the tick the Brain's withdraw goal takes over, its deliberate latency after the will breaks.</summary>
     public bool Withdrew { get; private set; }
 
     /// <summary>Sets the box intensity the ramp scales; it takes effect on the next <see cref="Tick"/>. <see cref="PainBox.Level"/> owns the range and refuses a level outside it.</summary>
@@ -75,7 +75,7 @@ public sealed class PainBoxSession
     public bool Disabled()
     {
         long tick = TickIndex;
-        if (tick != _box.DisableTick || Actor.Goal != Lodur.Goal.Hold) return false;
+        if (tick != _box.DisableTick || Actor.Drive.WillBroken) return false;
         _stimulus = 0.0;
         _outcome = Outcome.BoxDisabled;
         _endTick = tick;
@@ -107,7 +107,7 @@ public sealed class PainBoxSession
             Log(tick, EntryKind.WillBroke);
         }
         if (tick % _sampleEvery == 0) Log(tick, EntryKind.Sample);
-        if ((events & TickEvents.Withdrew) != 0)
+        if ((events & TickEvents.GoalChanged) != 0)
         {
             Withdrew = true;
             _outcome = Outcome.WillBroke;
@@ -142,6 +142,6 @@ public sealed class PainBoxSession
     {
         var d = Actor.Drive;
         _timeline.Add(new TimelineEntry(Ms(tick), kind, _stimulus, d.Pain, d.Strain, d.Resolve,
-            Actor.Goal == Lodur.Goal.Withdraw ? Goal.Withdraw : Goal.HoldHand));
+            ChamberBrain.GoalAt(Actor.GoalIndex)));
     }
 }
