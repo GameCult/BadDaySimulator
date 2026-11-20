@@ -351,6 +351,9 @@ public static class Program
                 Step(silenced); Step(control);
                 controlSounded |= control.Emitters[0].Intensity > 0.0;
                 Check(silenced.Emitters[0].Intensity == 0.0, $"the silenced printer wrote {silenced.Emitters[0].Intensity} at tick {silenced.TickIndex}");
+                // The draws never depend on state: silencing the printer leaves every other stressor's jitter, hence its intensity, as it was.
+                for (int e = 1; e < silenced.Emitters.Length; e++)
+                    Check(silenced.Emitters[e].Intensity == control.Emitters[e].Intensity, $"silencing the printer changed emitter {e} at tick {silenced.TickIndex}");
             }
             Check(controlSounded, "the control printer never sounded, so the check proved nothing");
             var rows = silenced.Result().Timeline.Where(e => e.Kind == StressEntryKind.Silenced).ToArray();
@@ -358,6 +361,18 @@ public static class Program
             bool threw = false;
             try { silenced.Silence("no-such-stressor"); } catch (ArgumentException) { threw = true; }
             Check(threw, "an unknown stressor id was accepted");
+        }),
+
+        ("office: an emitter takes the largest of its unsilenced stressors, not their sum", () =>
+        {
+            var weak = new Stressor("weak", "printer", 0, 0, null, 10, 0.2, 0);
+            var strong = new Stressor("strong", "printer", 0, 0, null, 10, 0.35, 0);
+            var s = NewOffice(new StressParameters { Cause = Cause.Office with { Stressors = new[] { weak, strong } } }, 1);
+            Step(s);
+            Check(s.Emitters[0].Intensity == 0.35, $"two stressors gave {s.Emitters[0].Intensity}, not the larger 0.35");
+            s.Silence("strong");
+            Step(s);
+            Check(s.Emitters[0].Intensity == 0.2, $"with the strong one silenced the emitter gave {s.Emitters[0].Intensity}, not 0.2");
         }),
 
         ("office: a stressor naming an emitter the setting lacks is refused before any tick", () =>
