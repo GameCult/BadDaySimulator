@@ -453,9 +453,64 @@ public static class Program
                 Check(threw, $"'{string.Join(' ', bad)}' should be rejected");
             }
         }),
+
+        ("office: a silence at S seconds lands on the tick S falls on: exactly, rounded to nearest, never early or late", () =>
+        {
+            long SilencedAt(double seconds) =>
+                Office(new StressParameters(), 1, new SilenceCommand("printer", seconds)).Timeline.Single(e => e.Kind == StressEntryKind.Silenced).TimeMs;
+            Check(SilencedAt(0.0) == 0, $"a silence at 0 s landed at {SilencedAt(0.0)} ms");
+            Check(SilencedAt(20.0) == 20000, $"a silence at 20 s landed at {SilencedAt(20.0)} ms");
+            Check(SilencedAt(20.004) == 20000, $"a silence at 20.004 s landed at {SilencedAt(20.004)} ms");
+            Check(SilencedAt(20.006) == 20010, $"a silence at 20.006 s landed at {SilencedAt(20.006)} ms");
+        }),
+
+        ("office: an emitter takes the largest of its stressors whichever one is listed last", () =>
+        {
+            var weak = new Stressor("weak", "printer", 0, 0, null, 10, 0.2, 0);
+            var strong = new Stressor("strong", "printer", 0, 0, null, 10, 0.35, 0);
+            var s = NewOffice(new StressParameters { Cause = Cause.Office with { Stressors = new[] { strong, weak } } }, 1);
+            Step(s);
+            Check(s.Emitters[0].Intensity == 0.35, $"with the strong stressor first the emitter gave {s.Emitters[0].Intensity}, not 0.35");
+            s.Silence("strong");
+            Step(s);
+            Check(s.Emitters[0].Intensity == 0.2, $"with the strong one silenced the emitter gave {s.Emitters[0].Intensity}, not 0.2");
+        }),
+
+        ("office: the seed's first draw is the senses' gain trait and its second the resolve-drain trait", () =>
+        {
+            var steady = Cause.Office with { Stressors = Cause.Office.Stressors.Select(s => s with { Jitter = 0.0 }).ToArray() };
+            var p = new StressParameters { SampleEverySeconds = 0.1, Cause = steady };
+            for (ulong seed = 1; seed <= 3; seed++)
+            {
+                var rng = new SplitMix64(seed);
+                double gain = 1.0 + p.TraitJitter * rng.NextSigned();
+                double drain = 1.0 + p.TraitJitter * rng.NextSigned();
+                var spelledOut = p with
+                {
+                    TraitJitter = 0.0,
+                    Cause = steady with { Senses = steady.Senses with { Gain = steady.Senses.Gain * gain } },
+                    Drive = p.Drive with { DrainTrait = p.Drive.DrainTrait * drain },
+                };
+                Check(Office(p, seed).Render() == Office(spelledOut, seed).Render(), $"seed {seed}: the traits are not the first two draws, gain then drain");
+            }
+        }),
+
+        ("office golden [P]: office --seed 1 hashes to its captured bytes and the 50-seed sweep ends in its captured line", () =>
+        {
+            string Out(params string[] a)
+            {
+                var w = new StringWriter();
+                BadDay.Cli.Program.Execute(a, w);
+                return w.ToString().Replace("\r\n", "\n");
+            }
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Out("office", "--seed", "1")))).ToLowerInvariant();
+            Check(hash == "66098b69834c3c8b5e5b694f0059b8ed566e31d332f36be7e57baf70ae650823", $"office --seed 1 changed: {hash}");
+            var last = Out("office-sweep", "--seed", "1", "--count", "50").TrimEnd('\n').Split('\n')[^1];
+            Check(last == "runs 50: broke 50, endured 0; time to break min/median/max ms: 72670/86570/113420; min resolve of endured runs: -", $"sweep line changed: {last}");
+        }),
     };
 
-    private static readonly Quat[] Pose ={ Quat.Identity };
+    private static readonly Quat[] Pose = { Quat.Identity };
     private static readonly float[] Point = new float[1], Strengths = new float[1];
     private static readonly Quat[] Targets = new Quat[1];
 
