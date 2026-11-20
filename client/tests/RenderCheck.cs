@@ -43,9 +43,11 @@ public partial class RenderCheck : Node
     /// <summary>
     /// The glaze must show: with it on, at least this share of the puppet's pixels differ from the bisque's by <see cref="GlazeDifference"/> levels or more (it runs under
     /// gl_compatibility, whose clearcoat sees punctual lights only), and at most <see cref="MaxGlazedClipped"/> of them are clipped: the glaze's highlights are meant to
-    /// clip, a puppet white from head to foot is not. Measured at the close view from the front and from behind.
+    /// clip, a puppet white from head to foot is not. Measured at the close view from the front and from behind. The share moves with the parent yaw as the clip does: the shipped glaze changes 3.2% from the front and
+    /// 10.2% from behind at <see cref="ParentYaw"/>, 2.7% from behind at 0.7 radian and 21.3% from behind at -0.4, so a bound of 3% was over the shipped doll in a view the check does not draw; a glaze at strength 0 changes 0%,
+    /// so the bound is 1.5%, 1.8 times under the shipped least of seven yaws and both sides.
     /// </summary>
-    private const float MinGlazeShare = 0.03f, MaxGlazedClipped = 0.12f;
+    private const float MinGlazeShare = 0.015f, MaxGlazedClipped = 0.12f;
 
     /// <summary>From behind the torso's back is one broad face that mirrors the key, so the glaze clips 20.4% there (measured): the bound has margin over that and fails a white-out.</summary>
     private const float MaxGlazedClippedBehind = 0.24f;
@@ -115,15 +117,15 @@ public partial class RenderCheck : Node
     /// <summary>
     /// The bounds on the flicker views, re-derived on the shipped doll (1294 triangles, flat facets with a 2 px bevel) from what each metric reads on the shipped shader and on the mutants, over every pose and framing it draws
     /// (the session pose in seven framings, the puppet bent 30 and 60 degrees in three each), the shipped doll also at seven parent yaws. The p99 flicker ratio: shipped 1.17 to 1.35 (its bent views 1.15 to 1.38 over the seven yaws; the
-    /// bent 60 close hold view is the highest); no MSAA 1.31 to 1.61, over 1.45 in ten or eleven of the thirteen views; a bevel width fixed at 720 lines (the supersampled reference then differs from the shown frame) 1.15 to 1.63; the glaze at
-    /// four times 1.56 to 2.00; so the bound sits between, 1.45, 1.05 times over the shipped worst of the sweep and 1.11 under no MSAA's highest view. The highlight shift in levels of 255: shipped at most 1.0; the paper's
-    /// pixel variance 1/(2 pi) reads 3.92 at most and over the bound in five views, the glaze at four times in eleven, so 1.5. The silhouette ring, where MSAA works and the interior pixels do not look: the ring's mean
-    /// |shown - reference| in levels of luma, shipped 16.9 to 21.8, no MSAA 25.3 to 33.1, so 23.5 (it was 22, 1% over the shipped worst). The orbit's crawl, the halo's mean error second difference:
-    /// shipped 3.4 to 3.6, no MSAA 4.2, the glaze at four times 7.0, so 7 stays where it was. Not separable on this doll: the prefilter's own mutants. The kernel at 0 reads the shipped numbers in every view and metric (the ratio 1.14
-    /// to 1.35, the shift 0.16 to 0.75, the crawl 3.40), and the kernel doubled (1/12) reads 1.08 to 1.35, at most 1.01 and 3.02; the kernel is nonzero only where the shading normal changes across a pixel, the 2 px bands, and
-    /// the p99 of the whole interior does not see them. No bound here fails either, and no bound could without failing the shipped doll.
+    /// bent 60 close hold view is the highest); kernel 0 1.38 to 2.04, over 1.45 in twelve of the thirteen views; no MSAA 1.31 to 1.61, over 1.45 in ten or eleven; a bevel width fixed at 720 lines (the supersampled reference then
+    /// differs from the shown frame) 1.15 to 1.63; the glaze at four times 1.56 to 2.00; so the bound sits between, 1.45, 1.05 times over the shipped worst of the sweep and 1.11 under no MSAA's highest view. The highlight shift in
+    /// levels of 255: shipped at most 1.0; the paper's pixel variance 1/(2 pi) reads 3.92 at most and over the bound in five views, the glaze at four times in eleven, kernel 0 1.66 in one, so 1.5. The silhouette ring, where MSAA
+    /// works and the interior pixels do not look: the ring's mean |shown - reference| in levels of luma, shipped 16.9 to 21.8, no MSAA 25.3 to 33.1, so 23.5 (it was 22, 1% over the shipped worst). The orbit's crawl, the halo's
+    /// mean error second difference: shipped 3.4 to 3.6, kernel 0 5.52, no MSAA 4.2, the glaze at four times 7.0, so 4.5 (it was 7, from a kernel 0 that read 9.0 on the blended puppet). Not separable on this doll: the kernel
+    /// doubled (1/12), which reads the ratio 1.08 to 1.35, the shift at most 1.01 and the crawl 3.02, inside the shipped numbers; the kernel is nonzero only where the shading normal changes across a pixel, the 2 px bands, and
+    /// doubling it moves the p99 of the whole interior by less than the shipped views differ among themselves. No bound here fails it, and none could without failing the shipped doll.
     /// </summary>
-    private const float MaxFlickerRatio = 1.45f, MaxHighlightShift = 1.5f, MaxSilhouetteError = 23.5f, MaxOrbitCrawl = 7f;
+    private const float MaxFlickerRatio = 1.45f, MaxHighlightShift = 1.5f, MaxSilhouetteError = 23.5f, MaxOrbitCrawl = 4.5f;
 
     private const int OrbitFrames = 30, MinOrbitSamples = 1000;
 
@@ -304,7 +306,7 @@ public partial class RenderCheck : Node
             if (glazed.Pixels.Count < 20000) { GD.PrintErr($"RENDER FAIL: the glaze view ({label}) has only {glazed.Pixels.Count} puppet pixels; it proves nothing"); ok = false; }
             if (bisqueClipped > MaxClipped) { GD.PrintErr($"RENDER FAIL: {bisqueClipped:P1} of the bisque's pixels are clipped from {label}, over {MaxClipped:P0}"); ok = false; }
             if (bisqueSpread < MinSpread) { GD.PrintErr($"RENDER FAIL: the bisque's pixels span only {bisqueSpread:F0} levels from {label}, under {MinSpread}; the studio does not light that side"); ok = false; }
-            if (changedShare < MinGlazeShare) { GD.PrintErr($"RENDER FAIL: the glaze changes {changedShare:P1} of the puppet's pixels from {label}, under {MinGlazeShare:P0}; there is no glaze"); ok = false; }
+            if (changedShare < MinGlazeShare) { GD.PrintErr($"RENDER FAIL: the glaze changes {changedShare:P1} of the puppet's pixels from {label}, under {MinGlazeShare:P1}; there is no glaze"); ok = false; }
             if (glazedClipped > maxClipped) { GD.PrintErr($"RENDER FAIL: {glazedClipped:P1} of the glazed puppet's pixels are clipped from {label}, over {maxClipped:P0}; the porcelain is white-out"); ok = false; }
         }
         return ok; // the glaze stays on, as shipped: the normal views that follow must not see it
