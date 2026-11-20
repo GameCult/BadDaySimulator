@@ -140,7 +140,7 @@ run on Windows and on Linux.
 
 ## The office stress scenario (rungs 3 and 4)
 
-The office's stressors fill the stress bar until the will breaks, and then Office Fella snaps, rages, and settles:
+The office's stressors raise the stress bar until the will breaks, and then Office Fella snaps, rages, and settles:
 headless, one tick at a time, or on the seated puppet. The scenario is data in three parts. The **setting** names the emitters (printer, ceiling light, desk
 phone, desktop notifications) and where they sit. The **cause** holds the stressors that drive them (each with
 an onset, ramp, period, duration, intensity and jitter), and the job's pull (0.6, the keep-composure goal's). The **character** holds the sense nerve he
@@ -158,8 +158,10 @@ The chamber's release is declared the same way (`PainBoxParameters.ReleaseGoalId
 apart from the setting and the cause. Each scenario builds its own Brain from its own parameters; one entry point keyed by character id
 waits for Brains as content. Headless the rage moves nothing; `office --body` runs it on the puppet.
 
-The stress bar is `1 - resolve` and reads **lost composure**; the label is one constant
-(`StressResult.StressBarLabel`) pending `lodur:question:stress-bar-meaning`. Through the arc it empties at the rage's refill, fills as the rage drains, and reads full through calm (his resolve is spent).
+The stress bar is his arousal, how wound up he is right now, and reads **stress (arousal)** (`StressResult.StressBarLabel`; ruling `lodur:ruling:stress-bar-shows-arousal-calm-silences`).
+It rises with each stressor and falls in quiet; will is not on it. Entering calm fades his arousal and his senses' gain to nothing over `CalmFadeSeconds` (3 s, the aftershock tail of
+`lodur:ruling:flinch-tail-after-stimulus`; the calm goal's `EntryArousal`, `SensoryGain` and `EntrySeconds`), so the bar drains and stays empty for the rest of the run while the stressor columns
+keep sounding and the load column reads the gated load, 0.
 
 - `src/BadDay.Core/Setting.cs`, `Cause.cs`: the office's defaults, in code, not persisted yet.
 - `src/BadDay.Core/StressSession.cs`: one run, driven per tick by the headless run, the sweep, the CLI and a client.
