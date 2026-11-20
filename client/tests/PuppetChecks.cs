@@ -108,6 +108,7 @@ public static class PuppetChecks
         WithinTheError(puppet, fields, triangles, Check);
         LimbsKept(puppet, fields, triangles, Check);
         HingesClean(puppet, fields, real, triangles, Check);
+        ChildCones(puppet, real, triangles, Check);
         Mesher(puppet, triangles, Check);
         AcrossIsPositionWeld(puppet, Check);
         SkinnedSurface(puppet, Check);
@@ -238,6 +239,34 @@ public static class PuppetChecks
         Console.WriteLine($"PUPPET hinges {hinges}: worst penetration over the range {worst * 1000:F2} mm");
         check(hinges == 6, $"the hinge sweep is vacuous: {hinges} hinges, not an elbow, a knee and an ankle on each side");
         check(bad == 0, $"{bad} poses over the hinges' ranges sink a limb into another (worst {worst * 1000:F1} mm, over 1 mm)");
+    }
+
+    /// <summary>
+    /// A Spherical joint's child keeps the cone of half angle (180 degrees - the entry's swing cone) / 2 about its rest direction from the joint (the child's
+    /// centre seen from it): no point of the child piece lies further than the error outside that cone, measured on the cone's own surface (the apex is the
+    /// joint, inside the ball). The parent is not cut: its points reach every way round the joint.
+    /// </summary>
+    private static void ChildCones(PuppetShape shape, List<PuppetBody> bodies, int[][] triangles, Action<bool, string> check)
+    {
+        int cones = 0, outside = 0; float worst = 0;
+        for (int j = 0; j < shape.Joints.Length; j++)
+        {
+            var (kind, a, b, o) = shape.Joints[j];
+            if (kind != Box3DSoaJointKind.Spherical || Doll.Find(bodies[b].Kind, bodies[b].Size) is not { SwingCone: > 0 } entry) continue;
+            cones++;
+            var rest = math.normalize(bodies[b].Bind.T - o);
+            float half = MathF.Min(MathF.PI / 2, (MathF.PI - entry.SwingCone) / 2), cs = MathF.Cos(half), sn = MathF.Sin(half);
+            foreach (var p in Samples(shape, triangles[b]))
+            {
+                var r = p - o; float along = math.dot(r, rest), perp = math.length(r - rest * along);
+                float distance = along * cs + perp * sn < 0 ? math.length(r) : perp * cs - along * sn;
+                worst = MathF.Max(worst, distance);
+                if (distance > Doll.FacetError + 1e-3f) outside++;
+            }
+        }
+        Console.WriteLine($"PUPPET child cones {cones}: worst {worst * 1000:F1} mm outside");
+        check(cones == 6, $"the cone check is vacuous: {cones} spherical joints with a swing cone, not the spine, the neck and a shoulder and a hip on each side");
+        check(outside == 0, $"{outside} points of a spherical joint's child lie outside its swing cone's half space (worst {worst * 1000:F1} mm)");
     }
 
     /// <summary>
