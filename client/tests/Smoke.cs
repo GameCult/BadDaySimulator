@@ -174,9 +174,21 @@ public partial class Smoke : Node
         Check(glow.V > 0.7f && glow.S < 0.3f, $"the chamber is {glow}, not light");
         var environment = _main.GetChildren().OfType<WorldEnvironment>().Single().Environment;
         Check(environment.BackgroundColor.Luminance < 0.2f, "the background is not dark grey");
-        // The studio: a shadowing key and two rims, carried by the camera the player orbits (when the studio follows the camera), lighting the glaze's reflections from the same directions.
-        var rig = _main.GetNode<Camera3D>("Camera").GetChildren().OfType<DirectionalLight3D>().ToArray();
-        Check(rig.Length == 3 && rig.Count(l => l.ShadowEnabled) == 1, $"the camera carries {rig.Length} studio lights, {rig.Count(l => l.ShadowEnabled)} with a shadow, not a key and two rims");
+        // The studio: a shadowing key and two rims. Where the camera turns the key's light turns with it, and it keeps coming from the studio's direction in the camera's space.
+        var rig = _main.FindChildren("*", "DirectionalLight3D", true, false).Cast<DirectionalLight3D>().ToArray();
+        Check(rig.Length == 3 && rig.Count(l => l.ShadowEnabled) == 1, $"the scene has {rig.Length} directional lights, {rig.Count(l => l.ShadowEnabled)} with a shadow, not a key and two rims");
+        var camera = _main.GetNode<Camera3D>("Camera");
+        var home = camera.GlobalTransform;
+        foreach (float turn in new[] { 0f, 2.1f })
+        {
+            camera.GlobalTransform = new Transform3D(home.Basis.Rotated(Vector3.Up, turn), home.Origin);
+            foreach (var key in rig.Where(l => l.ShadowEnabled))
+            {
+                var shinesAlong = camera.GlobalBasis.Inverse() * -key.GlobalBasis.Z; // the key's direction of travel in the camera's space
+                Check(Look.StudioFollowsCamera == (shinesAlong + Look.KeyDirection).Length() < 1e-3f, $"the key shines along {shinesAlong} in the camera's space after the camera turned {turn} rad; the studio does not follow the camera");
+            }
+        }
+        camera.GlobalTransform = home;
         Check(environment.Sky is null && environment.TonemapMode == Godot.Environment.ToneMapper.Linear && !environment.GlowEnabled, "the environment is not a linear colour environment with no sky and no glow");
     }
 
