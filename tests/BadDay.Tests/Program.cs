@@ -224,25 +224,29 @@ public static class Program
             }
         }),
 
-        ("chamber: the withdrawal is one-way: ticked 90 s past it with the box off and the will mended, the goal stays Withdraw, and a box going off does not end the run as if the will held", () =>
+        ("chamber: the withdrawal is one-way: with the box quiet for 90 s past it and the will mended, the goal stays Withdraw, and switching the box off at that moment does not end the run as if the will held", () =>
         {
             var pose = new[] { Lodur.Quat.Identity };
             var session = new PainBoxSession(Default, 1, new Lodur.BoxStimulus(0f, 0f, 0f, 1f, 1f, 1f), 1, pose, pose);
             var point = new float[1];
             var strengths = new float[1];
-            var targets = new Quat[1];
+            var targets = new Lodur.Quat[1];
             while (!session.Withdrew) session.Tick(point, point, point, strengths, targets);
-            session.SwitchOff();
+            session.SetIntensity(0.0); // quiet, with the box still on: the will can mend
             bool mended = false;
             for (int i = 0; i < 9000; i++)
             {
                 session.Tick(point, point, point, strengths, targets);
-                mended |= !session.Actor.Drive.WillBroken;
                 Check(session.Actor.GoalIndex == ChamberBrain.WithdrawIndex, $"the goal left Withdraw {i} ticks after the withdrawal");
+                if (session.Actor.Drive.WillBroken) continue;
+                mended = true;
+                break;
             }
-            Check(mended, "the will never mended: the test no longer exercises the rule");
-            Check(!session.Actor.Drive.WillBroken && session.Actor.Drive.Breaks > 0, "the will should be mended and the break still counted");
-            Check(!session.Disabled(), "a box going off ended the run of a will that had broken and mended");
+            Check(mended && session.Actor.Drive.Breaks > 0, "the will never mended: the test no longer exercises the rule");
+            // The box goes off at the tick of the mend: the will no longer reads broken, and a reader that asked WillBroken would call the run a disabled box with the will intact.
+            session.SwitchOff();
+            Check(!session.BoxOn && !session.Disabled(), "a box going off the moment of the mend ended the run as a disabled box");
+            Check(session.Actor.GoalIndex == ChamberBrain.WithdrawIndex, "the goal left Withdraw as the box went off");
         }),
 
         ("chamber release: the withdrawal is the Brain's release goal by id, not any goal change; an id the Brain lacks is refused", () =>
