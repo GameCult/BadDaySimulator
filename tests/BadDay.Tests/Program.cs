@@ -12,6 +12,11 @@ public static class Program
 {
     private static readonly PainBoxParameters Default = new();
     private static readonly PainBoxParameters OnBody = new() { TickSeconds = BodyPainBox.TickSeconds };
+    // Why the flinch test runs on Steady and not on the shipped curve (WillCurve 0.25): its control is the same run with FlinchGain 0, and that is a
+    // controlled comparison only while the arm cannot feed back differently into the drive. On the shipped curve the control's strength is lower from the
+    // first tick (the leak adds to the weight), so the two hands part by a centimetre before any flinch and the two drives part at tick 96; the gap a flinch
+    // adds is then lost in that drift. What the shipped curve adds on top, the flinch's strength recruitment (min(1, weight + leak x FlinchGain)), is
+    // defended by "hand stays in the box until the will breaks" (Soul killed the mutant that removes it, in that test).
     /// <summary>OnBody with a will that costs no strength (WillCurve toward 0 makes Will^WillCurve 1): the arm's strength is the same whatever the will, so a flinch-gain-0 control feeds nothing different back into the drive. The flinch test's premise.</summary>
     private static readonly PainBoxParameters Steady = OnBody with { Drive = new Lodur.DriveParameters { WillCurve = 1e-9 } };
     private const int Hz = 120;
@@ -278,6 +283,17 @@ public static class Program
             bool threw = false;
             try { PainBoxSimulation.Run(Default with { ReleaseGoalId = "nowhere" }, 1); } catch (ArgumentException) { threw = true; }
             Check(threw, "a release goal the Brain lacks was accepted");
+        }),
+
+        ("body: the withdrawal is the body's: seeds 1..20 on the chamber end WillBroke with the hand out within 300 ms of the break, and never before it", () =>
+        {
+            for (ulong seed = 1; seed <= 20; seed++)
+            {
+                var r = BodyPainBox.Run(OnBody, seed);
+                Check(r.Run.Outcome == Outcome.WillBroke && r.Run.HandOutMs is not null, $"seed {seed}: outcome {r.Run.Outcome}, hand out {r.Run.HandOutMs}");
+                long late = r.Run.HandOutMs!.Value - r.Run.TimeToBreakMs!.Value;
+                Check(late >= 0 && late <= 300, $"seed {seed}: the hand was out {late} ms after the break");
+            }
         }),
 
         ("body: hand-out is the start of a sustained exit: under five non-default holds over 30 seeds a reported hand-out is never followed by re-entry and starts at the first step out", () =>
