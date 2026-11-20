@@ -6,7 +6,7 @@ feel what happens to them, flinch, writhe, and sometimes crawl on toward
 whatever they wanted, because they are driven by
 [Lodur](https://eureka.gamecult.org/forge/GameCult/Lodur).
 
-**Status: first slice only (the pain box). The 3D sandbox does not exist yet.** The design is Lodur's target,
+**Status: two scenarios (the pain box and the office stress arc), headless, on the Ymir ragdoll and in a Godot client. The 3D sandbox does not exist yet.** The design is Lodur's target,
 [`docs/lodur-target.md`](https://eureka.gamecult.org/forge/GameCult/Lodur/src/branch/main/docs/lodur-target.md)
 in the Lodur repo; this game is its first consumer and its proving ground.
 
@@ -88,6 +88,30 @@ least 0.999: a correct render measures 1.0000, and a forearm bone 10 degrees off
 Known gap: the culling box. `Puppet` sets the mesh's `CustomAabb` to the skinned bounds every frame; a 1 cm box at the origin or at the centre culls the puppet in the close view and fails, but a box of half the bounds around the centre passes, since it only drops limbs where the box leaves the screen, which no view samples.
 
 
+### Who owns what (the map)
+
+The client's puppet pipeline, one owner per decision (the paragraphs above say how it looks; this says who may write what):
+
+| Owner | Inputs | Outputs | Derived state | Forbidden writers |
+|---|---|---|---|---|
+| Ymir (the session's world, ABI 8) | the session's commands and Lodur's torque lanes | pose, shape, stable-id and joint lanes, including each joint's origin in the world (the joint origin lanes) | none the client keeps | the client writes no lane; Ymir never reads the client |
+| `PuppetField` (`Build`: the mesher, untangle included) | shape bodies (id, kind, size, bind pose), qualifying joints (kind, body A, body B, origin in A's frame), the `Look` blend constants, the cell | `PuppetShape`: the welded vertices (each once, with its two bones and weight), triangles as `Corners`, edge pairing as `Across`, the untangle's `Pulled` and `OffSurface` | nothing: a pure, engine-free function of its inputs | anything that reads lanes, Godot types, a call per frame |
+| `PuppetModel` | `Box3DSoaView` (kind, size, stable id, pose, joint kind, bodies and origins), read by `Lanes` | the current `PuppetShape`, and whether this update rebuilt it | the bind (each body's pose the first time it is seen), each joint's origin kept in body A's frame from the origin lane at first sight, the topology signature (ordered id, kind and size of the shape bodies; ordered kind, A and B of the qualifying joints) | `Puppet` or the scene deciding when to rebuild; a pose or an origin alone causing a rebuild |
+| `PuppetSkin` (one per shape) | the shape and one `Rigid` per bone, every frame | `Skinned`, `Facet`, `Crease`, `VertexNormal`, `Altitude`, `SmallestAltitude`, `Lo` and `Hi` | all of it, every frame, from the deformed surface; nothing kept from the bind; buffers allocated once | the shader, `Puppet` or RenderCheck deriving a facet, crease, vertex normal or distance of their own |
+| `Puppet` | the lanes (a carrier per stable id, posed each physics frame), the model's shape, the skin's arrays | the Godot mesh (two streams uploaded in place each frame), `CustomAabb`, `MeshBuilds` | the build counter, the client's only one: it counts Godot mesh builds | geometry derived here; a second build counter; writing a lane |
+| `puppet.gdshader` | `CUSTOM0..3` (altitudes, creases, facet normal, vertex normal), `Look.BevelScreen` and `BevelMin` | the shading normal (the bevel) and the colour | none | skinning, evaluating the SDF, owning a width or a crease |
+| `tests/RenderCheck.cs` (the windowed oracle), `PuppetChecks.cs`, `Smoke.cs` | the same lanes through the real renderer, and an independent CPU reference of the whole bevel | an exit code, optional PNGs | none | writing the puppet's state; sharing `PuppetSkin`'s derivation (the reference derives its own) |
+
+The scenarios, one owner per decision:
+
+| Owner | Inputs | Outputs | Derived state | Forbidden writers |
+|---|---|---|---|---|
+| `ChamberBrain`, `OfficeBrain` | `PainBoxParameters` or `StressParameters`, the poses | a Lodur `Brain`: goals and their rules as data, and the release goal's id (`withdraw`, `calm`) | none; Lodur's Actor commits each switch | a session choosing a goal; a goal rule outside the Brain |
+| `PainBoxSession`, `StressSession` | seed, traits, the box or the cause, the player's commands (`Silence`, box off) | the box's or the emitters' intensities each tick; rows read back from the Actor (the stress column is the drive's arousal, the goal column the Actor's goal); the end of the run | the release goal, found by id at construction (an unknown id refuses the build) | computing load, arousal, resolve or a goal; a goal index hard-coded for the release |
+| Lodur (`Actor`, the drive, the Brain) | the sessions' stimuli, the body's region points | muscle strengths and targets; the events | resolve, strain, pain, arousal, the breaks, the sensory gain in force | BDS writing any of it |
+
+Found stale by Modeling, 2026-11-20, not changed: `docs/scenarios/fella-bad-day-at-the-office.md` is a design document (Status: design, not built) whose ladder rows 3 and 4 are now built; its text outside the ladder is not a map of the code.
+
 ### Modeled
 
 Fixed 10 ms tick headless (1/120 s on the body), seeded SplitMix64 (the only
@@ -108,7 +132,7 @@ Actor's state at the end of its tick:
 - **Goals:** the volunteer is paid to keep his hand in, and his Brain is data, built in code for now
   (`ChamberBrain`; it becomes CultCache content with Lodur's Brain content, follow-up `npc-brains-as-content`): `HoldHand` pulls with `Payment / (Payment + DollarsAtHalfPull)` (both
   100 by default, so $100 pulls 0.5; $0 pulls nothing and $400 pulls 0.8), and `Withdraw`
-  is eligible once resolve has reached zero and outranks it. Lodur's Actor commits the
+  is eligible once the will has broken (`Breaks >= 1`, which never falls, so the withdrawal is one-way: a will that mends does not give the hand back), outranks it and is involuntary for good. Lodur's Actor commits the
   switch after its deliberate latency (100 ms), so the break row still reads `HoldHand`;
   the hand is out when `Withdraw` takes over. The sessions never decide a goal: the
   goal column is read back from the Actor.
@@ -119,8 +143,8 @@ Actor's state at the end of its tick:
 
 The headless run has no body, physics or balance (the body run has a ragdoll
 held on a stool: it cannot balance); no shock, adrenaline or blood
-loss; no impairment or crawling; no Unity binding; no puppets or objects other
-than the box; no learning. The reflex never removes the hand by itself: only a
+loss; no impairment or crawling; no Unity binding; no puppets, and no objects other
+than the box and the office's emitters; no learning. The reflex never removes the hand by itself: only a
 broken will does. All parameter values are **placeholders**, not physiology;
 the figures in Lodur's target are marked unverified and so are these. Break
 times in the output are properties of this toy model, not predictions about people.
@@ -190,7 +214,7 @@ Options: `--silence ID@S` (repeatable; `printer`, `ceiling-light`, `desk-phone`,
 (every stressor's intensity), `--pull`, `--max`, `--every`, and `--body` (run the puppet; the summary adds the rage's
 length and the strikes counted as forward hand-speed peaks). The rows are `time_ms kind audio visual interrupt
 load arousal resolve stress goal`, with kinds Sample, Silenced, WillBroke, GoalChanged and Endured and goals
-KeepComposure and Rage. The sweep prints the
+KeepComposure, Rage and Calm. The sweep prints the
 break-time min/median/max and the lowest resolve among runs that endured. The office breaks near 90 s at pull
 0.6 only with the office's own sense nerve (threshold 0.05, no sensitisation, no conduction delay); Lodur's
 `NerveParameters` defaults break it near 100 s. **Every number here is a placeholder.**
