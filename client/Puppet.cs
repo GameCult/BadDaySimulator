@@ -48,10 +48,10 @@ public partial class Puppet : Node3D
     /// <summary>The colour the puppet is drawn in: the shader's albedo.</summary>
     public Color Color => _material.GetShaderParameter("albedo").AsColor();
 
-    /// <summary>Draws the shading normal (in view space, as n * 0.5 + 0.5) instead of the lit puppet: RenderCheck's view of what the bevel did.</summary>
     /// <summary>The glaze on (Look's strength) or off, the bisque alone: RenderCheck's bounds on the lit facets are the bisque's.</summary>
     public bool Glazed { set => _material.SetShaderParameter("glaze", value ? Look.GlazeStrength : 0f); }
 
+    /// <summary>Draws the shading normal (in view space, as n * 0.5 + 0.5) instead of the lit puppet: RenderCheck's view of what the bevel did.</summary>
     public bool ShowNormals { set => _material.SetShaderParameter("show_normals", value); }
 
     /// <summary>What the puppet is made of now, or null before the first build or while it draws nothing (too many bodies).</summary>
