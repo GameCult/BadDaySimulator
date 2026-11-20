@@ -309,7 +309,8 @@ public static class PuppetField
             var f = pieces[i];
             var (v, tris, p, off) = Extract(f);
             pulledBy[i] = p; offBy[i] = off;
-            meshes[i] = (v, tris);
+            var rules = new DecimateRules(f.Value, f.IsBall ? Doll.BallError : Doll.FacetError, f.Guard(), f.Forbidden);
+            meshes[i] = PuppetDecimate.Run(v, tris, Doll.FacetAlpha, Doll.FacetScale, rules);
         });
         var vertices = new List<float3>(); var bone = new List<int>(); var piece = new List<int>();
         var corners = new List<int>();
