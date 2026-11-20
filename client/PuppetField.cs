@@ -63,6 +63,13 @@ public sealed class PuppetShape
     public required int[] BoneB { get; init; }
     public required float[] WeightA { get; init; }
 
+    /// <summary>
+    /// One entry per triangle corner slot, 3t+k = edge k of triangle t, the edge opposite corner k: half the turn from this facet's
+    /// normal to the neighbour's across that edge, in radians, positive where the edge is convex. An edge not shared by exactly two
+    /// triangles has 0, and so has a fold (two triangles lying over each other, which the Newton step can make). Both sides of an edge carry the same value, so the shader turns both facets to one bisector.
+    /// </summary>
+    public required float[] Crease { get; init; }
+
     /// <summary>How far a skinned vertex can lie from its bone's origin.</summary>
     public required float Reach { get; init; }
 
@@ -175,29 +182,34 @@ public static class PuppetField
 
         var pos = new List<float3>(); var nor = new List<float3>();
         var ba = new List<int>(); var bb = new List<int>(); var wa = new List<float>();
-        void Triangle(float3 a, float3 b, float3 c)
+        var corner = new List<int>();
+        void Triangle(int ia, int ib, int ic)
         {
+            var a = v[ia]; var b = v[ib]; var c = v[ic];
             var cross = math.cross(b - a, c - a);
             float len = math.length(cross);
             if (len < 1e-12f) return;
             var g = f.Eval((a + b + c) / 3f, out _, out _, out _);
             // Godot's front face is clockwise: the counter-clockwise normal points into the body.
-            if (math.dot(cross, new float3(g.x, g.y, g.z)) > 0) { (b, c) = (c, b); cross = -cross; }
+            if (math.dot(cross, new float3(g.x, g.y, g.z)) > 0) { (b, c) = (c, b); (ib, ic) = (ic, ib); cross = -cross; }
             var normal = -cross / len;
             foreach (var q in new[] { a, b, c })
             {
                 f.Eval(q, out int bone, out int other, out float w);
                 pos.Add(q); nor.Add(normal); ba.Add(bone); bb.Add(other); wa.Add(w);
             }
+            corner.Add(ia); corner.Add(ib); corner.Add(ic);
         }
         for (int i = 0; i < nets.Quads.Length; i += 4)
         {
-            var a = v[nets.Quads[i]]; var b = v[nets.Quads[i + 1]]; var c = v[nets.Quads[i + 2]]; var d = v[nets.Quads[i + 3]];
+            int ia = (int)nets.Quads[i], ib = (int)nets.Quads[i + 1], ic = (int)nets.Quads[i + 2], id = (int)nets.Quads[i + 3];
+            var a = v[ia]; var b = v[ib]; var c = v[ic]; var d = v[id];
             // Split on the flatter diagonal.
             bool ac = math.dot(Unit(math.cross(b - a, c - a)), Unit(math.cross(c - a, d - a))) >= math.dot(Unit(math.cross(b - a, d - a)), Unit(math.cross(c - b, d - b)));
-            if (ac) { Triangle(a, b, c); Triangle(a, c, d); }
-            else { Triangle(a, b, d); Triangle(b, c, d); }
+            if (ac) { Triangle(ia, ib, ic); Triangle(ia, ic, id); }
+            else { Triangle(ia, ib, id); Triangle(ib, ic, id); }
         }
+        var crease = Creases(corner, pos, nor);
 
         float maxBall = 0;
         for (int i = 0; i < n; i++) maxBall = MathF.Max(maxBall, f.BallR[i]);
@@ -208,9 +220,46 @@ public static class PuppetField
         return new PuppetShape
         {
             Ids = ids, SpreadBind = t, Joints = js,
-            Positions = pos.ToArray(), Normals = nor.ToArray(), BoneA = ba.ToArray(), BoneB = bb.ToArray(), WeightA = wa.ToArray(),
+            Positions = pos.ToArray(), Normals = nor.ToArray(), BoneA = ba.ToArray(), BoneB = bb.ToArray(), WeightA = wa.ToArray(), Crease = crease,
             Reach = 2 * reach + 2 * maxBall + smin,
         };
+    }
+
+    /// <summary>
+    /// Each triangle edge is matched to its neighbour by the two net-vertex indices it joins. An edge that exactly two triangles share
+    /// gets, on each side, half the turn from this facet's normal to the other's: with u the edge's in-plane unit normal pointing away
+    /// from the opposite corner and b the normalized sum of the two facet normals, atan2(b.u, b.n). Any other edge gets 0, and so does a fold.
+    /// </summary>
+    private static float[] Creases(List<int> corner, List<float3> pos, List<float3> nor)
+    {
+        var sides = new Dictionary<(int, int), List<int>>();
+        for (int s = 0; s < corner.Count; s++)
+        {
+            int t = s / 3, k = s % 3;
+            int p = corner[3 * t + (k + 1) % 3], q = corner[3 * t + (k + 2) % 3];
+            var key = p < q ? (p, q) : (q, p);
+            if (!sides.TryGetValue(key, out var list)) sides[key] = list = new List<int>(2);
+            list.Add(s);
+        }
+        var crease = new float[corner.Count];
+        foreach (var list in sides.Values)
+        {
+            if (list.Count != 2) continue;
+            foreach (int s in list)
+            {
+                int t = s / 3, k = s % 3, other = list[0] == s ? list[1] : list[0];
+                var n = nor[3 * t]; var m = nor[3 * (other / 3)];
+                var p = pos[3 * t + (k + 1) % 3]; var q = pos[3 * t + (k + 2) % 3]; var r = pos[3 * t + k];
+                var u = Unit(math.cross(Unit(q - p), n));
+                if (math.dot(u, r - p) > 0) u = -u;
+                var b = Unit(n + m);
+                if (math.lengthsq(b) == 0) continue;
+                crease[s] = MathF.Atan2(math.dot(b, u), math.dot(b, n));
+            }
+            // A fold, two triangles lying over each other, has no edge to bevel: the sides disagree on which way it turns.
+            if (crease[list[0]] * crease[list[1]] < 0) crease[list[0]] = crease[list[1]] = 0;
+        }
+        return crease;
     }
 
     private static float3 Unit(float3 v)

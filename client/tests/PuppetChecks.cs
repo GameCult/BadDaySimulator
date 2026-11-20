@@ -121,6 +121,71 @@ public static class PuppetChecks
         Check(worstRatio <= StretchLimit, $"every joint bent up to 45 degrees stretches an edge {worstRatio:F2}x its bind length, over {StretchLimit}x");
         Check(worstLength <= 0.17f, $"every joint bent up to 45 degrees makes a skinned edge {worstLength:F3} m long, over 0.17 m");
         Check(worstLength90 <= 0.25f, $"every joint bent up to 90 degrees makes a skinned edge {worstLength90:F3} m long, over 0.25 m");
+
+        Creases(puppet, Check);
+    }
+
+    /// <summary>
+    /// The bevel's creases, measured without PuppetField's indices: corners are welded by position and each edge is matched by its two
+    /// welded corners. An edge two triangles share carries the same crease on both sides, half the angle between the facet normals,
+    /// positive exactly where the neighbour's far corner lies behind this facet's plane; every other edge carries 0.
+    /// </summary>
+    private static void Creases(PuppetShape shape, Action<bool, string> check)
+    {
+        var id = new Dictionary<(long, long, long), int>();
+        var corner = new int[shape.Positions.Length];
+        for (int i = 0; i < corner.Length; i++)
+        {
+            var p = shape.Positions[i];
+            var key = ((long)Math.Round(p.x * 1e5), (long)Math.Round(p.y * 1e5), (long)Math.Round(p.z * 1e5));
+            if (!id.TryGetValue(key, out corner[i])) id[key] = corner[i] = id.Count;
+        }
+        var sides = new Dictionary<(int, int), List<int>>();
+        for (int s = 0; s < corner.Length; s++)
+        {
+            int t = s / 3, k = s % 3, p = corner[3 * t + (k + 1) % 3], q = corner[3 * t + (k + 2) % 3];
+            var key = p < q ? (p, q) : (q, p);
+            if (!sides.TryGetValue(key, out var list)) sides[key] = list = new List<int>();
+            list.Add(s);
+        }
+        check(shape.Crease.Length == shape.Positions.Length, $"the puppet has {shape.Crease.Length} creases for {shape.Positions.Length} triangle corners");
+        if (shape.Crease.Length != shape.Positions.Length) return;
+        int shared = 0, creased = 0, folds = 0, badFold = 0, asymmetric = 0, notHalf = 0, badSign = 0, loose = 0, badLoose = 0;
+        foreach (var list in sides.Values)
+        {
+            if (list.Count != 2)
+            {
+                loose++;
+                if (list.Any(s => shape.Crease[s] != 0)) badLoose++;
+                continue;
+            }
+            shared++;
+            int a = list[0], b = list[1];
+            float3 na = shape.Normals[3 * (a / 3)], nb = shape.Normals[3 * (b / 3)];
+            float angle = MathF.Atan2(math.length(math.cross(na, nb)), math.dot(na, nb));
+            if (angle < 1e-2f) continue; // a flat edge has no convexity to speak of, and its crease is below the float noise of the sign
+            // Convex from a side: the neighbour's far corner (the corner opposite the shared edge) lies behind this facet's plane.
+            bool convexA = math.dot(na, shape.Positions[b] - shape.Positions[3 * (a / 3) + (a % 3 + 1) % 3]) < 0;
+            bool convexB = math.dot(nb, shape.Positions[a] - shape.Positions[3 * (b / 3) + (b % 3 + 1) % 3]) < 0;
+            if (convexA != convexB)
+            {
+                // The triangles lie over each other: there is no edge to bevel.
+                folds++;
+                if (shape.Crease[a] != 0 || shape.Crease[b] != 0) badFold++;
+                continue;
+            }
+            creased++;
+            if (MathF.Abs(shape.Crease[a] - shape.Crease[b]) > 1e-5f) asymmetric++;
+            if (MathF.Abs(MathF.Abs(shape.Crease[a]) - 0.5f * angle) > 1e-4f || MathF.Abs(MathF.Abs(shape.Crease[b]) - 0.5f * angle) > 1e-4f) notHalf++;
+            if ((shape.Crease[a] > 0) != convexA || (shape.Crease[b] > 0) != convexB) badSign++;
+        }
+        check(shared > 1000 && creased > 100, $"the crease check is vacuous: {shared} shared edges, {creased} turning more than a hundredth of a radian");
+        check(folds < shared / 100, $"{folds} of {shared} shared edges are folds, over one in a hundred");
+        check(badFold == 0, $"{badFold} of {folds} fold edges carry a crease");
+        check(asymmetric == 0, $"{asymmetric} of {shared} shared edges carry different creases on their two sides");
+        check(notHalf == 0, $"{notHalf} of {shared} shared edges have a crease that is not half the angle between the facet normals");
+        check(badSign == 0, $"{badSign} of {creased} turning edges have a crease whose sign does not match the edge's convexity");
+        check(badLoose == 0, $"{badLoose} of {loose} edges not shared by exactly two triangles carry a crease");
     }
 
     /// <summary>The mesh's connected pieces with coincident triangle corners welded.</summary>
