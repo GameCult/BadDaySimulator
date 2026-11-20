@@ -97,18 +97,29 @@ public partial class RenderCheck : Node
     private const int MinPairs = 20000;
 
     /// <summary>The flicker check's reference is this many times the window on a side; each view must reach at least this many interior and highlight pixels (see <see cref="FlickerCheck"/>) or it proves nothing.</summary>
-    private const int FlickerSupersample = 8, MinFlickerPixels = 20000, MinFlickerHighlights = 200;
+    private const int FlickerSupersample = 8, MinFlickerPixels = 15000, MinFlickerHighlights = 200;
 
     private const float HighlightLuma = 245f;
 
     /// <summary>
-    /// The bounds on the <see cref="FlickerViews"/>, fitted to all of them and not to one (measured on the five play framings and the two close ones; no bound is met by fitting a single framing, the shipped shader
-    /// reads 1.34 at the shipped one and 1.19 at another). The p99 flicker ratio: the shipped glaze reads 1.19 to 1.35 in the play framings and 1.16 and 1.20 close; kernel 0 reads 1.56 to 2.19 and 1.46 and 1.49,
-    /// so the bounds sit between (1.45 play, 1.33 close). The highlight shift
-    /// in levels of 255: shipped at most 0.93 (and 1.18 in other poses Soul tried); the paper's pixel variance 1/(2 pi) reads 1.57 to 4.38 in the play framings and 1/12, double the shipped, 1.65 at two of them
-    /// and 2.33 at the shipped framing, so 1.5. The silhouette ring (where MSAA works, and the interior pixels do not look): the ring's mean luma std over the reference's, the shipped 1.02 to 1.10, without MSAA 1.12 to 1.29 and 1.26 in both close views, so 1.17; the ratio also fails without MSAA in most play framings (1.40 to 1.52), but that is the interior seeing triangle edges, not what MSAA is for.
+    /// The bounds on the flicker views, fitted to every pose and framing it draws (the session pose in seven framings, the puppet bent 30 and 60 degrees in three each) and not to one: the shipped shader reads
+    /// 1.34 at the shipped framing and 1.19 at another. The p99 flicker ratio: shipped 1.19 to 1.35 play and 1.16 to 1.22 close; kernel 0 1.56 to 2.19 play and 1.30 to 1.49 close (the bent 60 close view reads 1.30, so
+    /// it is the other views that fail it there), the bounds between (1.45, 1.33). The highlight shift in levels of 255: shipped at most 0.97; the paper's pixel variance 1/(2 pi) reads 1.52 to 4.31 in the five session
+    /// play framings and 1.28 at most bent, and 1/12, double the shipped, 2.30 and 1.64 in two session framings and nothing bent, so 1.5; both overblurs are therefore caught only in the session pose. The silhouette
+    /// ring, where MSAA works and the interior pixels do not look: the ring's mean |shown - reference| in levels of luma, shipped 16.1 to 18.9, widened or overblurred shaders up to 20.4, no MSAA 25.4 to 29.4, so 22
+    /// (the ring's std against the reference's overlapped between shipped and no MSAA once the pose moved, so it is not the metric). The orbit's crawl, the halo's mean error second difference: shipped 5.6, kernel 0 10.5,
+    /// no MSAA 6.1, the widened smoothstep 7.0, so 8.
     /// </summary>
-    private const float MaxFlickerRatioPlay = 1.45f, MaxFlickerRatioClose = 1.33f, MaxHighlightShift = 1.5f, MaxSilhouetteRatio = 1.17f;
+    private const float MaxFlickerRatioPlay = 1.45f, MaxFlickerRatioClose = 1.33f, MaxHighlightShift = 1.5f, MaxSilhouetteError = 22f, MaxOrbitCrawl = 8f;
+
+    private const int OrbitFrames = 30, MinOrbitSamples = 1000;
+
+    private static readonly float OrbitStep = Mathf.DegToRad(0.15f);
+
+    private static readonly int[] FlickerBends = { 30, 60 };
+
+    /// <summary>The views (indices into <see cref="FlickerViews"/>) the bent poses are drawn in: the shipped play framing, the head-and-torso play framing and the close one on the hold point.</summary>
+    private static readonly int[] FlickerBentViews = { 0, 3, 6 };
 
     private const int BendSeed = 7;
     private const float BendDegrees = 60f;
@@ -191,7 +202,7 @@ public partial class RenderCheck : Node
         if (lift < MinGlowLift) { GD.PrintErr($"RENDER FAIL: the chamber's light lifts the puppet by {lift:F2} levels, under {MinGlowLift}; the box's glow does not light the body"); ok = false; }
         ok &= await GlazeCheck(main, shape, carriers, world);
         ok &= await NormalCheck(main, shape, carriers, world);
-        ok &= await FlickerCheck(main);
+        ok &= await FlickerCheck(main, shape, carriers);
         return ok;
     }
 
@@ -481,10 +492,10 @@ public partial class RenderCheck : Node
     /// project's MSAA) is drawn in each of the <see cref="FlickerViews"/> from 16 camera positions on a sub-pixel grid, and by a viewport <see cref="FlickerSupersample"/> times the window's size, MSAA off, box-filtered
     /// down in linear light, which is what a pixel would show if it averaged the scene over its own area. On the pixels the puppet covers fully in every reference frame (eroded by one pixel), the 99th percentile of the
     /// per-pixel standard deviation of luma over the shifts must be at most <see cref="MaxFlickerRatioPlay"/> (<see cref="MaxFlickerRatioClose"/> from 0.7 m) times the reference's, and the mean luma over the pixels the reference
-    /// lights to <see cref="HighlightLuma"/> or more within <see cref="MaxHighlightShift"/> levels of the reference's. On the silhouette's ring, which MSAA owns, the mean standard deviation is at most
-    /// <see cref="MaxSilhouetteRatio"/> times the reference's.
+    /// lights to <see cref="HighlightLuma"/> or more within <see cref="MaxHighlightShift"/> levels of the reference's. On the silhouette's ring, which MSAA owns, the mean |shown - reference| is at most
+    /// <see cref="MaxSilhouetteError"/> levels. The same views are drawn with the puppet bent 30 and 60 degrees (<see cref="FlickerBends"/>), and <see cref="FlickerOrbit"/> turns the camera slowly at the shipped framing.
     /// </summary>
-    private async Task<bool> FlickerCheck(Main main)
+    private async Task<bool> FlickerCheck(Main main, PuppetShape shape, Node3D[] bodies)
     {
         var window = GetWindow();
         var home = window.Size;
@@ -513,13 +524,23 @@ public partial class RenderCheck : Node
 
         bool ok = true;
         puppet.Glazed = true;
-        foreach (var view in FlickerViews) ok &= await FlickerShifts(rig, view);
+        foreach (var view in FlickerViews) ok &= await FlickerShifts(rig, view, view.Label);
+        ok &= await FlickerOrbit(rig, FlickerViews[0]);
+        // The same puppet bent, under a moved parent, as the oracle frames pose it: its highlights fall elsewhere, and a bound fitted to the session pose alone fails the shipped shader here.
+        main.Bodies.Transform = new Transform3D(new Basis(Vector3.Up, 0.45f), new Vector3(0.15f, 0f, 0.1f));
+        foreach (int degrees in FlickerBends)
+        {
+            await Pose(shape, bodies, degrees);
+            for (int i = 0; i < 8; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw); // let the skin follow the carriers before the first reference frame
+            var bent = rig with { Head = bodies.OrderByDescending(c => c.GlobalPosition.Y).First().GlobalPosition, Torso = bodies[Array.IndexOf(shape.Ids, 101UL)].GlobalPosition };
+            foreach (int v in FlickerBentViews) ok &= await FlickerShifts(bent, FlickerViews[v], $"bent {degrees} {FlickerViews[v].Label}");
+        }
         reference.QueueFree();
         window.Size = home;
         return ok;
     }
 
-    private async Task<bool> FlickerShifts(FlickerRig rig, FlickerView view)
+    private async Task<bool> FlickerShifts(FlickerRig rig, FlickerView view, string label)
     {
         int w = rig.W, h = rig.H;
         var shifts = new List<Vector2>();
@@ -549,17 +570,70 @@ public partial class RenderCheck : Node
         int pixels = eroded.Count(b => b), highlights = highlight.Count(b => b);
         float shownP99 = P99(Deviation(drawn, eroded)), referenceP99 = P99(Deviation(supersampled, eroded));
         float ratio = shownP99 / Mathf.Max(referenceP99, 1e-3f);
-        float shownRing = Deviation(drawn, ring).Average(), referenceRing = Deviation(supersampled, ring).Average();
-        float ringRatio = shownRing / Mathf.Max(referenceRing, 1e-3f);
+        float ringError = RingError(drawn, supersampled, ring);
         float highlightShift = highlights == 0 ? 0 : Mathf.Abs(Mean(drawn, highlight) - Mean(supersampled, highlight));
         float maxRatio = view.Distance < 1f ? MaxFlickerRatioClose : MaxFlickerRatioPlay;
-        GD.Print($"RENDER flicker ({view.Label}): {pixels} interior pixels, {highlights} highlight; p99 luma std {shownP99:F1} against the {FlickerSupersample}x reference's {referenceP99:F1} (ratio {ratio:F2}); highlight mean shift {highlightShift:F2}; silhouette ring mean std {shownRing:F2} against {referenceRing:F2} (ratio {ringRatio:F2})");
+        GD.Print($"RENDER flicker ({label}): {pixels} interior pixels, {highlights} highlight; p99 luma std {shownP99:F1} against the {FlickerSupersample}x reference's {referenceP99:F1} (ratio {ratio:F2}); highlight mean shift {highlightShift:F2}; silhouette ring mean error {ringError:F2}");
         bool ok = true;
-        if (pixels < MinFlickerPixels || highlights < MinFlickerHighlights) { GD.PrintErr($"RENDER FAIL: the {view.Label} flicker view reaches {pixels} interior and {highlights} highlight pixels, under {MinFlickerPixels} and {MinFlickerHighlights}; it proves nothing"); ok = false; }
-        if (ratio > maxRatio) { GD.PrintErr($"RENDER FAIL: the highlights flicker in the {view.Label} view: p99 luma std {shownP99:F1} is {ratio:F2} times the supersampled reference's {referenceP99:F1}, over {maxRatio}"); ok = false; }
-        if (highlightShift > MaxHighlightShift) { GD.PrintErr($"RENDER FAIL: the {view.Label} view's highlights are {highlightShift:F2} levels from the reference's, over {MaxHighlightShift}; the glaze is blurred away or brighter than the studio"); ok = false; }
-        if (ringRatio > MaxSilhouetteRatio) { GD.PrintErr($"RENDER FAIL: the {view.Label} view's silhouette crawls: mean luma std {shownRing:F2} on its ring is {ringRatio:F2} times the reference's {referenceRing:F2}, over {MaxSilhouetteRatio}; the 3D is not antialiased"); ok = false; }
+        if (pixels < MinFlickerPixels || highlights < MinFlickerHighlights) { GD.PrintErr($"RENDER FAIL: the {label} flicker view reaches {pixels} interior and {highlights} highlight pixels, under {MinFlickerPixels} and {MinFlickerHighlights}; it proves nothing"); ok = false; }
+        if (ratio > maxRatio) { GD.PrintErr($"RENDER FAIL: the highlights flicker in the {label} view: p99 luma std {shownP99:F1} is {ratio:F2} times the supersampled reference's {referenceP99:F1}, over {maxRatio}"); ok = false; }
+        if (highlightShift > MaxHighlightShift) { GD.PrintErr($"RENDER FAIL: the {label} view's highlights are {highlightShift:F2} levels from the reference's, over {MaxHighlightShift}; the glaze is blurred away or brighter than the studio"); ok = false; }
+        if (ringError > MaxSilhouetteError) { GD.PrintErr($"RENDER FAIL: the {label} view's silhouette is {ringError:F2} levels from the supersampled reference's on average, over {MaxSilhouetteError}; the 3D is not antialiased"); ok = false; }
         return ok;
+    }
+
+    /// <summary>
+    /// A slow continuous orbit at the shipped framing (<see cref="OrbitFrames"/> frames of 0.15 degrees, no sub-pixel grid): the crawl the player sees. At each pixel the error against the supersampled
+    /// reference, shown minus reference, is differenced twice in time, |e(t) - (e(t-1) + e(t+1)) / 2|; the true motion cancels, and what is left is the pixel's own shimmer. It is read on the halo of the
+    /// highlights (pixels the reference leaves under <see cref="HighlightLuma"/> with a 4-neighbour at or over it, fully covered in the three frames), where a point-sampled highlight's edge steps from pixel to pixel;
+    /// a mask on the reference's lit pixels would rather rank blur (a filtered highlight is dimmer there, an unfiltered one saturates and is quiet). The mean must be at most <see cref="MaxOrbitCrawl"/> levels.
+    /// </summary>
+    private async Task<bool> FlickerOrbit(FlickerRig rig, FlickerView view)
+    {
+        int w = rig.W, h = rig.H;
+        var supersampled = new List<float[]>();
+        var coverage = new List<float[]>();
+        var drawn = new List<float[]>();
+        for (int f = 0; f < OrbitFrames; f++)
+        {
+            rig.Place(view, view.Yaw + OrbitStep * f, Vector2.Zero);
+            var (luma, cover) = await Supersample(rig.Reference, w, h);
+            supersampled.Add(luma);
+            coverage.Add(cover);
+            drawn.Add(await Draw(rig));
+        }
+        double sum = 0;
+        long count = 0;
+        for (int f = 1; f < OrbitFrames - 1; f++)
+        {
+            var interior = Interior(w, h, new[] { coverage[f - 1], coverage[f], coverage[f + 1] });
+            var lit = supersampled[f];
+            for (int i = w + 1; i < interior.Length - w - 1; i++)
+            {
+                if (!interior[i] || lit[i] >= HighlightLuma) continue;
+                if (lit[i - 1] < HighlightLuma && lit[i + 1] < HighlightLuma && lit[i - w] < HighlightLuma && lit[i + w] < HighlightLuma) continue;
+                float e0 = drawn[f - 1][i] - supersampled[f - 1][i], e1 = drawn[f][i] - lit[i], e2 = drawn[f + 1][i] - supersampled[f + 1][i];
+                sum += Mathf.Abs(e1 - 0.5f * (e0 + e2));
+                count++;
+            }
+        }
+        float crawl = count == 0 ? 0 : (float)(sum / count);
+        GD.Print($"RENDER flicker (orbit, {OrbitFrames} frames of 0.15 degrees): {count} halo samples; mean error second difference {crawl:F2} levels");
+        bool ok = true;
+        if (count < MinOrbitSamples) { GD.PrintErr($"RENDER FAIL: the orbit reaches {count} halo samples, under {MinOrbitSamples}; it proves nothing"); ok = false; }
+        if (crawl > MaxOrbitCrawl) { GD.PrintErr($"RENDER FAIL: the highlights crawl under a slow orbit: the halo's error second difference averages {crawl:F2} levels, over {MaxOrbitCrawl}"); ok = false; }
+        return ok;
+    }
+
+    /// <summary>The mean over the frames and the ring's pixels of |shown - reference|, in levels of luma: the silhouette's own antialiasing, which MSAA does and the shader does not.</summary>
+    private static float RingError(List<float[]> shown, List<float[]> reference, bool[] ring)
+    {
+        double sum = 0;
+        long count = 0;
+        for (int k = 0; k < shown.Count; k++)
+            for (int i = 0; i < ring.Length; i++)
+                if (ring[i]) { sum += Mathf.Abs(shown[k][i] - reference[k][i]); count++; }
+        return count == 0 ? 0 : (float)(sum / count);
     }
 
     private async Task<float[]> Draw(FlickerRig rig)
