@@ -183,7 +183,6 @@ public partial class RenderCheck : Node
             puppet.Glazed = true;
             for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
             var glazed = Capture(shape, world, pngArg);
-            puppet.Glazed = false;
 
             var sorted = bisque.Levels.OrderBy(l => l).ToList();
             float bisqueClipped = (float)bisque.Levels.Count(l => l >= 250f) / Math.Max(1, sorted.Count);
@@ -198,7 +197,7 @@ public partial class RenderCheck : Node
             if (changedShare < MinGlazeShare) { GD.PrintErr($"RENDER FAIL: the glaze changes {changedShare:P1} of the puppet's pixels from {label}, under {MinGlazeShare:P0}; there is no glaze"); ok = false; }
             if (yaw == 0f && glazedClipped > MaxGlazedClipped) { GD.PrintErr($"RENDER FAIL: {glazedClipped:P1} of the glazed puppet's pixels are clipped from {label}, over {MaxGlazedClipped:P0}; the porcelain is white-out"); ok = false; }
         }
-        return ok;
+        return ok; // the glaze stays on, as shipped: the normal views that follow must not see it
     }
 
     private static float Level(Image image, int pixel)
