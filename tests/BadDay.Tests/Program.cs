@@ -249,6 +249,27 @@ public static class Program
             Check(session.Actor.GoalIndex == ChamberBrain.WithdrawIndex, "the goal left Withdraw as the box went off");
         }),
 
+        ("pain box: a break after a mend is a row, not the time to break: the result's break is the first one and never after the run's end", () =>
+        {
+            var pose = new[] { Lodur.Quat.Identity };
+            var session = new PainBoxSession(Default with { MaxSeconds = 300.0 }, 1, new Lodur.BoxStimulus(0f, 0f, 0f, 1f, 1f, 1f), 1, pose, pose);
+            var point = new float[1];
+            var strengths = new float[1];
+            var targets = new Lodur.Quat[1];
+            while (!session.Withdrew) session.Tick(point, point, point, strengths, targets);
+            session.SetIntensity(0.0);
+            while (session.Actor.Drive.WillBroken) session.Tick(point, point, point, strengths, targets);
+            session.SetIntensity(PainBox.MaxLevel);
+            int breaks = 0;
+            while (!session.Finished && breaks < 1)
+            {
+                if ((session.Tick(point, point, point, strengths, targets) & Lodur.TickEvents.WillBroke) != 0) breaks++;
+            }
+            var r = session.Result();
+            Check(breaks == 1 && r.Timeline.Count(e => e.Kind == EntryKind.WillBroke) == 2, "the will did not break a second time: the test no longer exercises the rule");
+            Check(r.TimeToBreakMs == 14730 && r.TimeToBreakMs <= r.EndMs, $"break {r.TimeToBreakMs} ms, end {r.EndMs} ms");
+        }),
+
         ("chamber release: the withdrawal is the Brain's release goal by id, not any goal change; an id the Brain lacks is refused", () =>
         {
             var r = PainBoxSimulation.Run(Default with { ReleaseGoalId = "hold-hand", MaxSeconds = 30.0 }, 1);

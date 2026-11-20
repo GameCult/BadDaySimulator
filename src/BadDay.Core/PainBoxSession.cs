@@ -114,7 +114,7 @@ public sealed class PainBoxSession
         }
         if ((events & TickEvents.WillBroke) != 0)
         {
-            _breakTick = tick;
+            if (_breakTick < 0) _breakTick = tick; // the snap; a break after a mend is a row, never the time to break
             Log(tick, EntryKind.WillBroke);
         }
         if (tick % _sampleEvery == 0) Log(tick, EntryKind.Sample);
