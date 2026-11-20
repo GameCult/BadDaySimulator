@@ -11,7 +11,7 @@ namespace BadDay.Client.Tests;
 /// It poses the carriers in a bent pose (every joint turned at random) under a moved and turned BodyRenderer, renders one frame of the
 /// puppet alone on black, and compares the rendered silhouette with the silhouette of the same mesh skinned on the CPU from the
 /// carriers and the spread bind (not from anything Puppet computed) and projected through the camera. Intersection over union must be
-/// at least <see cref="MinIou"/>. It also looks at the light, with the chamber near full glow: the puppet's faces must not clip to white and must differ from each other.
+/// at least <see cref="MinIou"/>. It also looks at the light, with the chamber near full glow: the puppet's faces must not clip to white and must differ from each other, and the chamber's light must lift the puppet over the same frame with that light off (so the glow is bounded from below as well).
 /// <c>godot --path client res://tests/RenderCheck.tscn [-- --png=path]</c>; exit code 0 passes, 1 fails. It needs a window, so it is
 /// not part of the headless smoke.
 /// </summary>
@@ -31,6 +31,9 @@ public partial class RenderCheck : Node
 
     /// <summary>The puppet's facets must differ: its 10th to 90th percentile brightness spans at least this many of 255 levels.</summary>
     private const float MinSpread = 30f;
+
+    /// <summary>The chamber's glow must light the puppet: with the light on, the mean level of the puppet's pixels must exceed the same frame with the light off by at least this many of 255 levels (the shipped light lifts it 9.8). A glow of 0 fails.</summary>
+    private const float MinGlowLift = 5f;
 
     private const int BendSeed = 7;
     private const float BendDegrees = 60f;
@@ -115,27 +118,44 @@ public partial class RenderCheck : Node
         }
 
         int both = 0, either = 0, clipped = 0;
+        var puppetPixels = new System.Collections.Generic.List<int>();
         var levels = new System.Collections.Generic.List<float>();
         for (int i = 0; i < covered.Length; i++)
         {
             if (covered[i] || drawn[i]) either++;
             if (!covered[i] || !drawn[i]) continue;
             both++;
+            puppetPixels.Add(i);
             var px = image.GetPixel(i % w, i / w);
             float level = Mathf.Max(px.R, Mathf.Max(px.G, px.B)) * 255f;
             levels.Add(level);
             if (level >= 250f) clipped++;
         }
+        float meanOn = levels.Count == 0 ? 0 : levels.Average();
         levels.Sort();
         float lit = levels.Count;
         float spread = lit == 0 ? 0 : levels[(int)(lit * 0.9f)] - levels[(int)(lit * 0.1f)];
         float iou = either == 0 ? 0 : (float)both / either;
         float share = lit == 0 ? 1 : clipped / lit;
+
+        // The control: the same frame with the chamber's light off, over the same pixels.
+        var glowLight = main.Chamber.GetChildren().OfType<OmniLight3D>().Single();
+        float energy = glowLight.LightEnergy;
+        glowLight.LightEnergy = 0f;
+        for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+        var dark = GetViewport().GetTexture().GetImage();
+        dark.Convert(Image.Format.Rgba8);
+        glowLight.LightEnergy = energy;
+        float meanOff = puppetPixels.Count == 0 ? 0 : puppetPixels.Average(i => { var px = dark.GetPixel(i % w, i / w); return Mathf.Max(px.R, Mathf.Max(px.G, px.B)) * 255f; });
+        float lift = meanOn - meanOff;
+
+        GD.Print($"RENDER glow lift {lift:F2} levels (mean {meanOn:F1} lit, {meanOff:F1} with the chamber light off)");
         GD.Print($"RENDER iou {iou:F4} (covered {covered.Count(x => x)}, drawn {drawn.Count(x => x)}), clipped {share:P1} of {lit} puppet pixels, 10th to 90th percentile level spread {spread:F0} of 255");
         bool ok = true;
         if (iou < MinIou) { GD.PrintErr($"RENDER FAIL: the drawn silhouette matches the CPU-skinned mesh with IoU {iou:F3}, under {MinIou}"); ok = false; }
         if (share > MaxClipped) { GD.PrintErr($"RENDER FAIL: {share:P1} of the puppet's pixels are clipped to white, over {MaxClipped:P0}; the facets cannot read"); ok = false; }
         if (spread < MinSpread) { GD.PrintErr($"RENDER FAIL: the puppet's pixels span only {spread:F0} levels between the 10th and 90th percentile, under {MinSpread}; the facets do not differ"); ok = false; }
+        if (lift < MinGlowLift) { GD.PrintErr($"RENDER FAIL: the chamber's light lifts the puppet by {lift:F2} levels, under {MinGlowLift}; the box's glow does not light the body"); ok = false; }
         return ok;
     }
 

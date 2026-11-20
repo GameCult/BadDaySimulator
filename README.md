@@ -84,7 +84,7 @@ Exports need export templates (not installed here yet), so the client runs from 
 
 The smoke has no renderer. `RenderCheck.tscn` is the check that does: it poses the puppet in a bent pose under a moved parent, renders one frame
 (gl_compatibility, the client's renderer), and compares the drawn silhouette with the mesh skinned on the CPU (intersection over union, at
-least 0.999: a correct render measures 1.0000, and a forearm bone 10 degrees off, a bone 2 cm off and hard weights fail), and checks the lit puppet is not clipped to white. Add `-- --png=<path>` to keep the frame. It needs a display.
+least 0.999: a correct render measures 1.0000, and a forearm bone 10 degrees off, a bone 2 cm off and hard weights fail), and checks the lit puppet is not clipped to white and that the chamber's light still lights it (a glow of 0 fails). Add `-- --png=<path>` to keep the frame. It needs a display.
 Known gaps: the silhouette does not see the shading normal (a puppet whose NORMAL is left unskinned passes) or the culling box (a 1 cm `CustomAabb` passes).
 
 
