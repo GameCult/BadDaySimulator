@@ -95,7 +95,7 @@ public static class PuppetChecks
         {
             var shape = Build(cell);
             var owned = new int[real.Count];
-            for (int v = 0; v < shape.Positions.Length; v++) owned[shape.WeightA[v] >= 0.5f ? shape.BoneA[v] : shape.BoneB[v]]++;
+            for (int v = 0; v < shape.Vertices.Length; v++) owned[shape.WeightA[v] >= 0.5f ? shape.BoneA[v] : shape.BoneB[v]]++;
             return cell <= thinnest + 1e-6f && Pieces(shape) == 1 && owned.Min() > 0;
         }
         // The look constants may be changed by the operator's joint-look question, within what the mesh can hold: a blend wider than
@@ -123,7 +123,17 @@ public static class PuppetChecks
         Check(worstLength90 <= 0.25f, $"every joint bent up to 90 degrees makes a skinned edge {worstLength90:F3} m long, over 0.25 m");
 
         Mesher(puppet, Check);
-        Creases(puppet, Check);
+        AcrossIsPositionWeld(puppet, Check);
+    }
+
+    /// <summary>The corner slot's vertex, in the spread bind.</summary>
+    private static float3 At(PuppetShape shape, int slot) => shape.Vertices[shape.Corners[slot]];
+
+    /// <summary>The unit normal of a triangle seen from outside (the winding is clockwise from outside), from its corners.</summary>
+    private static float3 Facet(PuppetShape shape, int triangle)
+    {
+        var cross = math.cross(At(shape, 3 * triangle + 1) - At(shape, 3 * triangle), At(shape, 3 * triangle + 2) - At(shape, 3 * triangle));
+        return -cross / math.length(cross);
     }
 
     /// <summary>
@@ -135,48 +145,35 @@ public static class PuppetChecks
     private static void Mesher(PuppetShape shape, Action<bool, string> check)
     {
         int count = shape.Triangles;
-        var id = new Dictionary<(long, long, long), int>();
-        var corner = new int[shape.Positions.Length];
-        for (int i = 0; i < corner.Length; i++)
+        int folds = 0, edges = 0;
+        for (int s = 0; s < shape.Across.Length; s++)
         {
-            var p = shape.Positions[i];
-            var key = ((long)Math.Round(p.x * 1e5), (long)Math.Round(p.y * 1e5), (long)Math.Round(p.z * 1e5));
-            if (!id.TryGetValue(key, out corner[i])) id[key] = corner[i] = id.Count;
-        }
-        var sides = new Dictionary<(int, int), List<int>>();
-        for (int s = 0; s < corner.Length; s++)
-        {
-            int t = s / 3, k = s % 3, p = corner[3 * t + (k + 1) % 3], q = corner[3 * t + (k + 2) % 3];
-            var key = p < q ? (p, q) : (q, p);
-            if (!sides.TryGetValue(key, out var list)) sides[key] = list = new List<int>();
-            list.Add(s);
-        }
-        int folds = 0;
-        foreach (var list in sides.Values)
-        {
-            if (list.Count != 2) continue;
-            int a = list[0], b = list[1];
-            float3 na = shape.Normals[3 * (a / 3)], nb = shape.Normals[3 * (b / 3)];
-            if (MathF.Atan2(math.length(math.cross(na, nb)), math.dot(na, nb)) < 1e-2f) continue;
-            bool convexA = math.dot(na, shape.Positions[b] - shape.Positions[3 * (a / 3) + (a % 3 + 1) % 3]) < 0;
-            bool convexB = math.dot(nb, shape.Positions[a] - shape.Positions[3 * (b / 3) + (b % 3 + 1) % 3]) < 0;
+            int o = shape.Across[s];
+            if (o < s) continue;
+            edges++;
+            float3 na = Facet(shape, s / 3), nb = Facet(shape, o / 3);
+            if (MathF.Atan2(math.length(math.cross(na, nb)), math.dot(na, nb)) < 1e-2f) continue; // a flatter edge has no convexity to speak of
+            // Convex from a side: the neighbour's far corner (the corner opposite the shared edge) lies behind this facet's plane.
+            bool convexA = math.dot(na, At(shape, o) - At(shape, 3 * (s / 3) + (s % 3 + 1) % 3)) < 0;
+            bool convexB = math.dot(nb, At(shape, s) - At(shape, 3 * (o / 3) + (o % 3 + 1) % 3)) < 0;
             if (convexA != convexB) folds++;
         }
-        check(folds == 0, $"{folds} of {sides.Count} edges are folds: their two triangles disagree on convexity");
+        check(edges > 1000, $"the mesher check is vacuous: {edges} shared edges");
+        check(folds == 0, $"{folds} of {edges} shared edges are folds: their two triangles disagree on convexity");
 
         // Facing into the body: an odd crossing count from just outside the face means the face looks inward.
         var directions = new[] { math.normalize(new float3(0.5773f, 0.3011f, 0.7571f)), math.normalize(new float3(-0.2113f, 0.8317f, -0.5129f)) };
         int inward = 0; float smallest = float.MaxValue;
         for (int t = 0; t < count; t++)
         {
-            var a = shape.Positions[3 * t]; var b = shape.Positions[3 * t + 1]; var c = shape.Positions[3 * t + 2];
+            var a = At(shape, 3 * t); var b = At(shape, 3 * t + 1); var c = At(shape, 3 * t + 2);
             smallest = MathF.Min(smallest, 0.5f * math.length(math.cross(b - a, c - a)));
-            var origin = (a + b + c) / 3f + shape.Normals[3 * t] * 1e-3f;
+            var origin = (a + b + c) / 3f + Facet(shape, t) * 1e-3f;
             bool both = true;
             foreach (var d in directions)
             {
                 int crossings = 0;
-                for (int u = 0; u < count; u++) if (Crosses(origin, d, shape.Positions[3 * u], shape.Positions[3 * u + 1], shape.Positions[3 * u + 2])) crossings++;
+                for (int u = 0; u < count; u++) if (Crosses(origin, d, At(shape, 3 * u), At(shape, 3 * u + 1), At(shape, 3 * u + 2))) crossings++;
                 both &= crossings % 2 == 1;
             }
             if (both) inward++;
@@ -200,82 +197,45 @@ public static class PuppetChecks
     }
 
     /// <summary>
-    /// The bevel's creases, measured without PuppetField's indices: corners are welded by position and each edge is matched by its two
-    /// welded corners. An edge two triangles share carries the same crease on both sides, half the angle between the facet normals,
-    /// positive exactly where the neighbour's far corner lies behind this facet's plane; every other edge carries 0.
+    /// <see cref="PuppetShape.Across"/> is the edge match a weld by position makes: vertices at the same place are one, and an edge joins
+    /// the corners opposite it in the two triangles that have it, or nothing where it has other than two.
     /// </summary>
-    private static void Creases(PuppetShape shape, Action<bool, string> check)
+    private static void AcrossIsPositionWeld(PuppetShape shape, Action<bool, string> check)
     {
         var id = new Dictionary<(long, long, long), int>();
-        var corner = new int[shape.Positions.Length];
-        for (int i = 0; i < corner.Length; i++)
+        var weld = new int[shape.Corners.Length];
+        for (int s = 0; s < weld.Length; s++)
         {
-            var p = shape.Positions[i];
+            var p = At(shape, s);
             var key = ((long)Math.Round(p.x * 1e5), (long)Math.Round(p.y * 1e5), (long)Math.Round(p.z * 1e5));
-            if (!id.TryGetValue(key, out corner[i])) id[key] = corner[i] = id.Count;
+            if (!id.TryGetValue(key, out weld[s])) id[key] = weld[s] = id.Count;
         }
         var sides = new Dictionary<(int, int), List<int>>();
-        for (int s = 0; s < corner.Length; s++)
+        for (int s = 0; s < weld.Length; s++)
         {
-            int t = s / 3, k = s % 3, p = corner[3 * t + (k + 1) % 3], q = corner[3 * t + (k + 2) % 3];
+            int t = s / 3, k = s % 3, p = weld[3 * t + (k + 1) % 3], q = weld[3 * t + (k + 2) % 3];
             var key = p < q ? (p, q) : (q, p);
             if (!sides.TryGetValue(key, out var list)) sides[key] = list = new List<int>();
             list.Add(s);
         }
-        check(shape.Crease.Length == shape.Positions.Length, $"the puppet has {shape.Crease.Length} creases for {shape.Positions.Length} triangle corners");
-        if (shape.Crease.Length != shape.Positions.Length) return;
-        int shared = 0, creased = 0, folds = 0, badFold = 0, asymmetric = 0, notHalf = 0, badSign = 0, loose = 0, badLoose = 0;
+        int wrong = 0, shared = 0, loose = 0;
         foreach (var list in sides.Values)
         {
-            if (list.Count != 2)
-            {
-                loose++;
-                if (list.Any(s => shape.Crease[s] != 0)) badLoose++;
-                continue;
-            }
-            shared++;
-            int a = list[0], b = list[1];
-            float3 na = shape.Normals[3 * (a / 3)], nb = shape.Normals[3 * (b / 3)];
-            float angle = MathF.Atan2(math.length(math.cross(na, nb)), math.dot(na, nb));
-            if (angle < 1e-2f) continue; // a flat edge has no convexity to speak of, and its crease is below the float noise of the sign
-            // Convex from a side: the neighbour's far corner (the corner opposite the shared edge) lies behind this facet's plane.
-            bool convexA = math.dot(na, shape.Positions[b] - shape.Positions[3 * (a / 3) + (a % 3 + 1) % 3]) < 0;
-            bool convexB = math.dot(nb, shape.Positions[a] - shape.Positions[3 * (b / 3) + (b % 3 + 1) % 3]) < 0;
-            if (convexA != convexB)
-            {
-                // The triangles lie over each other: there is no edge to bevel.
-                folds++;
-                if (shape.Crease[a] != 0 || shape.Crease[b] != 0) badFold++;
-                continue;
-            }
-            creased++;
-            if (MathF.Abs(shape.Crease[a] - shape.Crease[b]) > 1e-5f) asymmetric++;
-            if (MathF.Abs(MathF.Abs(shape.Crease[a]) - 0.5f * angle) > 1e-4f || MathF.Abs(MathF.Abs(shape.Crease[b]) - 0.5f * angle) > 1e-4f) notHalf++;
-            if ((shape.Crease[a] > 0) != convexA || (shape.Crease[b] > 0) != convexB) badSign++;
+            if (list.Count == 2) { shared++; if (shape.Across[list[0]] != list[1] || shape.Across[list[1]] != list[0]) wrong++; }
+            else { loose++; foreach (int s in list) if (shape.Across[s] != -1) wrong++; }
         }
-        check(shared > 1000 && creased > 100, $"the crease check is vacuous: {shared} shared edges, {creased} turning more than a hundredth of a radian");
-        check(badFold == 0, $"{badFold} of {folds} fold edges carry a crease");
-        check(asymmetric == 0, $"{asymmetric} of {shared} shared edges carry different creases on their two sides");
-        check(notHalf == 0, $"{notHalf} of {shared} shared edges have a crease that is not half the angle between the facet normals");
-        check(badSign == 0, $"{badSign} of {creased} turning edges have a crease whose sign does not match the edge's convexity");
-        check(badLoose == 0, $"{badLoose} of {loose} edges not shared by exactly two triangles carry a crease");
+        check(shape.Across.Length == shape.Corners.Length, $"the puppet has {shape.Across.Length} Across entries for {shape.Corners.Length} corner slots");
+        check(shared > 1000, $"the Across check is vacuous: {shared} shared edges and {loose} not");
+        check(wrong == 0, $"{wrong} corner slots' Across differs from the edge match a weld by position makes");
     }
 
-    /// <summary>The mesh's connected pieces with coincident triangle corners welded.</summary>
+    /// <summary>The mesh's connected pieces.</summary>
     public static int Pieces(PuppetShape shape)
     {
-        var id = new Dictionary<(long, long, long), int>();
-        var corner = new int[shape.Positions.Length];
-        for (int i = 0; i < corner.Length; i++)
-        {
-            var p = shape.Positions[i];
-            var key = ((long)Math.Round(p.x * 1e5), (long)Math.Round(p.y * 1e5), (long)Math.Round(p.z * 1e5));
-            if (!id.TryGetValue(key, out corner[i])) id[key] = corner[i] = id.Count;
-        }
-        var parent = Enumerable.Range(0, id.Count).ToArray();
+        var parent = Enumerable.Range(0, shape.Vertices.Length).ToArray();
         int Find(int x) { while (parent[x] != x) x = parent[x] = parent[parent[x]]; return x; }
-        for (int t = 0; t < corner.Length; t += 3) { parent[Find(corner[t + 1])] = Find(corner[t]); parent[Find(corner[t + 2])] = Find(corner[t]); }
-        return corner.Select(Find).Distinct().Count();
+        for (int t = 0; t < shape.Corners.Length; t += 3) { parent[Find(shape.Corners[t + 1])] = Find(shape.Corners[t]); parent[Find(shape.Corners[t + 2])] = Find(shape.Corners[t]); }
+        return shape.Corners.Select(Find).Distinct().Count();
     }
 
     /// <summary>
@@ -284,13 +244,13 @@ public static class PuppetChecks
     /// </summary>
     public static (float Ratio, float Length) Stretch(PuppetShape shape, Rigid[] bones)
     {
-        float3 Skin(int v) { float w = shape.WeightA[v]; var p = shape.Positions[v]; return bones[shape.BoneA[v]].Apply(p) * w + bones[shape.BoneB[v]].Apply(p) * (1 - w); }
+        float3 Skin(int v) { float w = shape.WeightA[v]; var p = shape.Vertices[v]; return bones[shape.BoneA[v]].Apply(p) * w + bones[shape.BoneB[v]].Apply(p) * (1 - w); }
         float ratio = 0, length = 0;
-        for (int t = 0; t < shape.Positions.Length; t += 3)
+        for (int t = 0; t < shape.Corners.Length; t += 3)
             for (int e = 0; e < 3; e++)
             {
-                int a = t + e, b = t + (e + 1) % 3;
-                float bind = math.length(shape.Positions[a] - shape.Positions[b]);
+                int a = shape.Corners[t + e], b = shape.Corners[t + (e + 1) % 3];
+                float bind = math.length(shape.Vertices[a] - shape.Vertices[b]);
                 float now = math.length(Skin(a) - Skin(b));
                 length = MathF.Max(length, now);
                 if (bind > 1e-5f) ratio = MathF.Max(ratio, now / bind);

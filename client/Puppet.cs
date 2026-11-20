@@ -156,22 +156,18 @@ public partial class Puppet : Node3D
     /// <summary>
     /// The shape as one surface: VERTEX in the spread bind, the facet NORMAL, CUSTOM0 (the edge-distance basis: vertex k of a triangle holds
     /// its altitude h_k = 2 * area / |edge k| in component k and 0 in the others, the triangle's smallest altitude in w), CUSTOM1 (bone A,
-    /// bone B, weight A) and CUSTOM2 (the triangle's three creases, the same at all three vertices).
+    /// bone B, weight A) and CUSTOM2 (the triangle's three creases: zero until PuppetSkin derives them, so the bevel does nothing here).
     /// </summary>
     private static ArrayMesh MeshOf(PuppetShape s)
     {
-        int n = s.Positions.Length;
+        int n = s.Corners.Length;
         var vertex = new Vector3[n]; var normal = new Vector3[n]; var edge = new float[4 * n]; var skin = new float[3 * n]; var crease = new float[3 * n];
-        for (int i = 0; i < n; i++)
-        {
-            vertex[i] = new Vector3(s.Positions[i].x, s.Positions[i].y, s.Positions[i].z);
-            normal[i] = new Vector3(s.Normals[i].x, s.Normals[i].y, s.Normals[i].z);
-            skin[3 * i] = s.BoneA[i]; skin[3 * i + 1] = s.BoneB[i]; skin[3 * i + 2] = s.WeightA[i];
-        }
         for (int t = 0; t < n; t += 3)
         {
-            var p = new[] { s.Positions[t], s.Positions[t + 1], s.Positions[t + 2] };
-            float twiceArea = CultMath.math.length(CultMath.math.cross(p[1] - p[0], p[2] - p[0]));
+            var p = new[] { s.Vertices[s.Corners[t]], s.Vertices[s.Corners[t + 1]], s.Vertices[s.Corners[t + 2]] };
+            var cross = CultMath.math.cross(p[1] - p[0], p[2] - p[0]);
+            float twiceArea = CultMath.math.length(cross);
+            var facet = -cross / twiceArea;
             var h = new float[3];
             for (int k = 0; k < 3; k++)
             {
@@ -181,9 +177,11 @@ public partial class Puppet : Node3D
             float smallest = Mathf.Min(h[0], Mathf.Min(h[1], h[2]));
             for (int k = 0; k < 3; k++)
             {
-                int i = t + k;
+                int i = t + k, c = s.Corners[i];
+                vertex[i] = new Vector3(p[k].x, p[k].y, p[k].z);
+                normal[i] = new Vector3(facet.x, facet.y, facet.z);
+                skin[3 * i] = s.BoneA[c]; skin[3 * i + 1] = s.BoneB[c]; skin[3 * i + 2] = s.WeightA[c];
                 edge[4 * i + k] = h[k]; edge[4 * i + 3] = smallest;
-                for (int e = 0; e < 3; e++) crease[3 * i + e] = s.Crease[t + e];
             }
         }
         var arrays = new Godot.Collections.Array();
