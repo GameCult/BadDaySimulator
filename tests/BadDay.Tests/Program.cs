@@ -760,6 +760,41 @@ public static class Program
             Check(brain.Goals[OfficeBrain.ComposureIndex].Pull == p.Cause.ObjectivePull && brain.Goals[OfficeBrain.RageIndex].Pull == 0.0, "the pulls are not the cause's and zero");
         }),
 
+        ("office body: the rage is visible: both hands move at least 3x faster, and over 0.5 m/s, in the 2 s after the switch than in the 2 s before, the pelvis stays within 1 cm, and two runs agree", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            var a = OfficeBody.Run(p, 1);
+            var b = OfficeBody.Run(p, 1);
+            Check(a.Run.Render() == b.Run.Render() && a.HandL.SequenceEqual(b.HandL) && a.HandR.SequenceEqual(b.HandR) && a.Pelvis.SequenceEqual(b.Pelvis), "two body runs differ");
+            Check(a.Run.Outcome == Outcome.WillBroke && a.RageTick is not null, $"outcome {a.Run.Outcome}");
+            int sw = a.RageTick!.Value;
+            Check(a.HandL.Count == sw + 6 * Hz + 1, $"the run has {a.HandL.Count} steps, the switch is at {sw}");
+            double Rms(IReadOnlyList<BodyPoint> h, int from, int to)
+            {
+                double sum = 0;
+                for (int i = from + 1; i < to; i++)
+                {
+                    double dx = h[i].X - h[i - 1].X, dy = h[i].Y - h[i - 1].Y, dz = h[i].Z - h[i - 1].Z;
+                    sum += (dx * dx + dy * dy + dz * dz) * Hz * Hz;
+                }
+                return Math.Sqrt(sum / (to - from - 1));
+            }
+            foreach (var (name, hand) in new[] { ("left", a.HandL), ("right", a.HandR) })
+            {
+                double before = Rms(hand, sw - 2 * Hz, sw), after = Rms(hand, sw, sw + 2 * Hz);
+                Check(after >= 3 * before && after > 0.5, $"{name} hand: {after:F3} m/s after the switch, {before:F3} m/s before");
+            }
+            Check(a.Strikes(0, sw) == 0 && a.Strikes(sw, a.HandL.Count) >= 8, $"strikes: {a.Strikes(0, sw)} before the switch, {a.Strikes(sw, a.HandL.Count)} after");
+            float drift = a.Pelvis.Max(q => MathF.Sqrt(MathF.Pow(q.X - a.Pelvis[0].X, 2) + MathF.Pow(q.Y - a.Pelvis[0].Y, 2) + MathF.Pow(q.Z - a.Pelvis[0].Z, 2)));
+            Check(drift < 0.01f, $"the pelvis moved {drift:F4} m");
+        }),
+
+        ("office body: the desk's emitters are sensed at the head, so the body breaks within 5 s of the headless run", () =>
+        {
+            var body = OfficeBody.Run(new StressParameters { TickSeconds = OfficeBody.TickSeconds }, 1).Run;
+            var headless = Office(new StressParameters(), 1);
+            Check(Math.Abs(body.TimeToBreakMs!.Value - headless.TimeToBreakMs!.Value) < 5000, $"body {body.TimeToBreakMs} ms, headless {headless.TimeToBreakMs} ms");
+        }),
     };
 
     private static readonly float[] Point = new float[1], Strengths = new float[1];

@@ -25,4 +25,17 @@ public sealed record Setting(IReadOnlyList<NamedEmitter> Emitters)
         new NamedEmitter("desk-phone", new Emitter(Channel.Audio, 0f, 0f, 0f, 10f)),
         new NamedEmitter("desktop", new Emitter(Channel.Interrupt, 0f, 0f, 0f, 10f)),
     });
+
+    /// <summary>The same emitters moved by (<paramref name="dx"/>, <paramref name="dy"/>, <paramref name="dz"/>): a body that senses somewhere other than the origin wants the room around it.</summary>
+    public Setting Shifted(float dx, float dy, float dz)
+    {
+        var moved = new NamedEmitter[Emitters.Count];
+        for (int i = 0; i < moved.Length; i++)
+        {
+            var e = Emitters[i].Emitter;
+            e.X += dx; e.Y += dy; e.Z += dz;
+            moved[i] = Emitters[i] with { Emitter = e };
+        }
+        return new Setting(moved);
+    }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using BadDay.Core;
 using BadDay.Ymir;
 
@@ -16,6 +17,7 @@ public static class Program
         baddaysim sweep --seed N --count M [options]   seeds N..N+M-1, break-time summary
 
         baddaysim office       --seed N [office options]   the office: stressors fill the stress bar, the will breaks, the rage follows
+        baddaysim office       --seed N --body [office options]   the same run on the Ymir ragdoll: rage time and strikes
         baddaysim office-sweep --seed N --count M [office options]
 
         options (all numbers, seconds unless noted):
@@ -98,7 +100,7 @@ public static class Program
 
     private static int ExecuteOffice(bool sweep, ulong seed, Dictionary<string, string> opts, System.IO.TextWriter output)
     {
-        if (opts.ContainsKey("body")) throw new ArgumentException("--body applies to run");
+        if (opts.ContainsKey("body") && sweep) throw new ArgumentException("--body applies to run and office");
         if (opts.ContainsKey("pay")) throw new ArgumentException("--pay applies to run and sweep; the office takes --pull");
         var defaults = new StressParameters();
         var p = defaults with
@@ -107,6 +109,7 @@ public static class Program
             MaxSeconds = Num(opts, "max", defaults.MaxSeconds),
             SampleEverySeconds = Num(opts, "every", defaults.SampleEverySeconds),
         };
+        if (opts.ContainsKey("body") && opts.ContainsKey("silence")) throw new ArgumentException("--silence does not apply to --body");
         var silences = new List<SilenceCommand>();
         if (opts.TryGetValue("silence", out var list))
         {
@@ -116,6 +119,24 @@ public static class Program
                 if (at <= 0) throw new ArgumentException($"--silence wants ID@SECONDS, got '{item}'");
                 silences.Add(new SilenceCommand(item[..at], double.Parse(item[(at + 1)..], CultureInfo.InvariantCulture)));
             }
+        }
+
+        if (opts.ContainsKey("body"))
+        {
+            var b = OfficeBody.Run(p with { TickSeconds = OfficeBody.TickSeconds }, seed);
+            output.WriteLine(OfficeTitle);
+            output.Write(b.Run.Render());
+            output.WriteLine(b.Run.Summary());
+            if (b.RageTick is { } rage)
+            {
+                int end = b.HandL.Count;
+                output.WriteLine($"rage from {b.Run.Timeline.First(e => e.Kind == StressEntryKind.GoalChanged).TimeMs} ms for " +
+                                 $"{((end - rage) / (double)OfficeBody.Hz).ToString("F1", CultureInfo.InvariantCulture)} s; strikes {b.Strikes(rage, end)} " +
+                                 $"(left {OfficeBody.CountStrikes(b.HandL, rage, end)}, right {OfficeBody.CountStrikes(b.HandR, rage, end)}), " +
+                                 $"{b.Strikes(0, rage)} before it");
+            }
+            else output.WriteLine($"no rage: the will held to {b.Run.EndMs} ms");
+            return 0;
         }
 
         if (!sweep)
