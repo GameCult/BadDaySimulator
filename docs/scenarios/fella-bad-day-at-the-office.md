@@ -22,7 +22,7 @@ top rung, not the first thing built. Each rung is demonstrable alone and measure
 | 1 | A Ymir body stands, falls and rests deterministically, read through the SoA view | merged (Ymir #2, Lodur #2) |
 | 2 | One withdrawal reflex; time-to-break may be the main metric | built as the pain box, on Lodur's Actor; connected to rung 1: the pain box runs on the Ymir ragdoll (`baddaysim run --body`) |
 | 3 | Sensory load drives the stress bar | built headless: `baddaysim office` and `office-sweep` (README, the office stress scenario) |
-| 4 | The goal flip, alone: the Brain authors the goals, the Actor commits the switch | built: the chamber's volunteer is paid and withdraws (`baddaysim run --pay`, pull = pay / (pay + $100), $100 pulls 0.5), and Office Fella rages after the break (`baddaysim office --body`); the rage is a geyser, not the design below |
+| 4 | The goal flip, alone: the Brain authors the goals, the Actor commits the switch | built: the chamber's volunteer is paid and withdraws (`baddaysim run --pay`, pull = pay / (pay + $100), $100 pulls 0.5), and Office Fella snaps, rages on a refilled will, drains, and settles calm for good (`baddaysim office --body`); the rage is a geyser, not the design below |
 | 5 | Fatigue and limb failure (jelly), alone | not built |
 | 6 | One coworker, one personality axis | not built |
 | 7 | Fella's whole bad day (this document) | design only |

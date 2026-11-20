@@ -150,21 +150,26 @@ run on Windows and on Linux.
 
 ## The office stress scenario (rungs 3 and 4)
 
-The office's stressors fill the stress bar until the will breaks, and then Office Fella goes into a rage:
+The office's stressors fill the stress bar until the will breaks, and then Office Fella snaps, rages, and settles:
 headless, one tick at a time, or on the seated puppet. The scenario is data in three parts. The **setting** names the emitters (printer, ceiling light, desk
 phone, desktop notifications) and where they sit. The **cause** holds the stressors that drive them (each with
 an onset, ramp, period, duration, intensity and jitter), and the job's pull (0.6, the keep-composure goal's). The **character** holds the sense nerve he
 hears and sees with. Lodur owns what the stimulus does: sensing, load, arousal, and the arousal
 drain on resolve. `StressSession` only writes the emitters' intensities each tick and logs the Actor's state;
-the player's lever is `Silence(stressorId)`, from the current tick on. Office Fella's Brain is data too, built in code for now (`OfficeBrain`; content later, as above): `KeepComposure` pulls with the job's pull; `Rage` (eligible once the will has broken, outranks it,
-no pull) loops wind-up and strike with each arm at 0.25 s a key. The Actor commits the switch 100 ms after the break,
-the session logs a `GoalChanged` row, and the run goes on `ReleaseSeconds` (6 s) after the Brain's release goal
-(`ReleaseGoalId`, `rage`) takes over, or to 180 s if the will holds. Who has the day is a `Character` (his senses; `Character.OfficeFella`),
+the player's lever is `Silence(stressorId)`, from the current tick on. Office Fella's Brain is data too, built in code for now (`OfficeBrain`; content later, as above): `KeepComposure` pulls with the job's pull; `Rage` (eligible once the will has broken, `Breaks >= 1`, outranks it,
+no pull) loops wind-up and strike with each arm at 0.25 s a key. It refills his will on entry, is involuntary for its first second
+(`RageOnsetSeconds`) and then costs `RageEffort` (0.05) a second, so the rage drains the will it was given. When that will runs dry
+and breaks a second time (5-20 s after the snap) `Calm` takes over: his composed pose at normal strength, involuntary since his will is spent,
+terminal as data (it gates on `Breaks >= 2`, which never falls, and nothing outranks it): he throws no further fit
+(ruling `lodur:ruling:fella-calm-after-rage`). The Actor commits each switch 100 ms after its break,
+the session logs a `GoalChanged` row for each, and the run goes on `ReleaseSeconds` (6 s, the settle: the seated body is still by then) after the Brain's release goal
+(`ReleaseGoalId`, `calm`) takes over, or to 180 s if the will holds. `TimeToBreakMs` is the first break, the snap; the second `WillBroke` row is the rage running dry.
+The chamber's release is declared the same way (`PainBoxParameters.ReleaseGoalId`, `withdraw`), and its withdrawal is one-way: a will that mends does not give the hand back. Who has the day is a `Character` (his senses; `Character.OfficeFella`),
 apart from the setting and the cause. Each scenario builds its own Brain from its own parameters; one entry point keyed by character id
 waits for Brains as content. Headless the rage moves nothing; `office --body` runs it on the puppet.
 
 The stress bar is `1 - resolve` and reads **lost composure**; the label is one constant
-(`StressResult.StressBarLabel`) pending `lodur:question:stress-bar-meaning`.
+(`StressResult.StressBarLabel`) pending `lodur:question:stress-bar-meaning`. Through the arc it empties at the rage's refill, fills as the rage drains, and reads full through calm (his resolve is spent).
 
 - `src/BadDay.Core/Setting.cs`, `Cause.cs`: the office's defaults, in code, not persisted yet.
 - `src/BadDay.Core/StressSession.cs`: one run, driven per tick by the headless run, the sweep, the CLI and a client.
