@@ -248,10 +248,20 @@ public static class Program
                 break;
             }
             Check(mended && session.Actor.Drive.Breaks > 0, "the will never mended: the test no longer exercises the rule");
-            // The box goes off at the tick of the mend: the will no longer reads broken, and a reader that asked WillBroken would call the run a disabled box with the will intact.
+            // A second past the mend: a withdraw gate that read WillBroken would switch back after DeliberateLatency (10 ticks), so stopping at the first mended tick cannot see it.
+            for (int i = 0; i < 100; i++)
+            {
+                session.Tick(point, point, point, strengths, targets);
+                Check(session.Actor.GoalIndex == ChamberBrain.WithdrawIndex && !session.Actor.Drive.WillBroken, $"the goal left Withdraw {i} ticks after the will mended");
+            }
+            // The box goes off with the will mended: a reader that asked WillBroken would call the run a disabled box with the will intact.
             session.SwitchOff();
-            Check(!session.BoxOn && !session.Disabled(), "a box going off the moment of the mend ended the run as a disabled box");
-            Check(session.Actor.GoalIndex == ChamberBrain.WithdrawIndex, "the goal left Withdraw as the box went off");
+            Check(!session.BoxOn && !session.Disabled(), "a box going off after the mend ended the run as a disabled box");
+            for (int i = 0; i < 100; i++)
+            {
+                session.Tick(point, point, point, strengths, targets);
+                Check(session.Actor.GoalIndex == ChamberBrain.WithdrawIndex, $"the goal left Withdraw {i} ticks after the box went off");
+            }
         }),
 
         ("pain box: a break after a mend is a row, not the time to break: the result's break is the first one and never after the run's end", () =>
