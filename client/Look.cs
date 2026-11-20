@@ -10,6 +10,9 @@ public static class Look
     public static readonly Color Figure = new(0.9f, 0.9f, 0.88f);
     public static readonly Color Glow = new(0.85f, 0.95f, 1f);
 
+    /// <summary>The chamber light at full glow. At 3 it washed the whole dummy out to white (56% of its pixels clipped at near full glow); at 0.1 under 1% clip. RenderCheck bounds the clipped share and the facet contrast.</summary>
+    public const float GlowLightEnergy = 0.1f;
+
     /// <summary>The puppet's blend radius (m): how far limbs flow into the body they hang from.</summary>
     public const float SminRadius = 0.025f;
 
@@ -31,7 +34,7 @@ public static class Look
     public static DirectionalLight3D Sun() => new()
     {
         RotationDegrees = new Vector3(-50f, 35f, 0f),
-        LightEnergy = 0.5f,
+        LightEnergy = 0.25f, // the sun on a white-ish puppet with the ambient must stay under white, or the facets wash out: RenderCheck bounds the clipped share
         ShadowEnabled = true,
     };
 

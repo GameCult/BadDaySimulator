@@ -42,6 +42,6 @@ public partial class Chamber : Node3D
         Glow = glow;
         _material.AlbedoColor = new Color(Look.Glow, 0.06f + 0.3f * glow);
         _material.EmissionEnergyMultiplier = 0.1f + 2.5f * glow;
-        _glow.LightEnergy = 3f * glow;
+        _glow.LightEnergy = Look.GlowLightEnergy * glow;
     }
 }
