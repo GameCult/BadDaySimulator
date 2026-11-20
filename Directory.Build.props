@@ -3,5 +3,8 @@
     <!-- Sibling Lodur checkout (main, from the nervous-layers merge on): the nervous model BDS consumes. Set LODUR_ROOT to override. -->
     <LodurRoot Condition="'$(LodurRoot)' == '' and '$(LODUR_ROOT)' != ''">$(LODUR_ROOT)</LodurRoot>
     <LodurRoot Condition="'$(LodurRoot)' == ''">$(MSBuildThisFileDirectory)..\Lodur</LodurRoot>
+    <!-- Sibling CultLib checkout (GameCult.Geometry for the client's puppet mesh, 42dce361 or main). Set CULTLIB_ROOT to override. -->
+    <CultLibRoot Condition="'$(CultLibRoot)' == '' and '$(CULTLIB_ROOT)' != ''">$(CULTLIB_ROOT)</CultLibRoot>
+    <CultLibRoot Condition="'$(CultLibRoot)' == ''">$(MSBuildThisFileDirectory)..\CultLib</CultLibRoot>
   </PropertyGroup>
 </Project>
