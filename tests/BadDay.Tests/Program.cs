@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using BadDay.Core;
 using BadDay.Ymir;
+using Quat = Lodur.Quat;
 
 namespace BadDay.Tests;
 
@@ -281,7 +282,163 @@ public static class Program
             Check(Cause.Office.Senses.Threshold == 0.05 && Cause.Office.Senses.SensitisationGrowth == 0.0 && Cause.Office.Senses.ConductionDelaySeconds == 0.0,
                 "the office does not pass its own sense parameters");
         }),
+
+        ("office: the same seed gives the same bytes, and sessions stepped in turn equal each run alone", () =>
+        {
+            var p = new StressParameters();
+            Check(Office(p, 1).Render() == Office(p, 1).Render(), "rendered timelines differ");
+            var a = NewOffice(p, 1);
+            var b = NewOffice(p, 2);
+            while (!a.Finished || !b.Finished)
+            {
+                if (!a.Finished) Step(a);
+                if (!b.Finished) Step(b);
+            }
+            Check(a.Result().Render() == Office(p, 1).Render() && b.Result().Render() == Office(p, 2).Render(), "stepped sessions differ from runs alone");
+        }),
+
+        ("office: an empty cause gives no load, resolve 1 on every row, and the run endures", () =>
+        {
+            var r = Office(new StressParameters { Cause = Cause.Office with { Stressors = Array.Empty<Stressor>() } }, 1);
+            Check(r.Outcome == Outcome.Endured && r.TimeToBreakMs is null && r.EndMs == 180000, $"outcome {r.Outcome} at {r.EndMs}");
+            Check(r.Timeline.All(e => e.Load == 0.0 && e.Arousal == 0.0 && e.Resolve == 1.0), "an empty office loaded the character");
+            Check(r.Timeline[^1].Kind == StressEntryKind.Endured, "no Endured row");
+        }),
+
+        ("office tuning [P]: seeds 1..50, at least 80% break within 180 s, and p10 and p90 break times differ by more than 20%", () =>
+        {
+            var sweep = StressSweep.Run(new StressParameters(), 1, 50);
+            Check(sweep.Broke >= 40, $"only {sweep.Broke} of 50 broke");
+            var b = sweep.Results.Where(r => r.TimeToBreakMs.HasValue).Select(r => (double)r.TimeToBreakMs!.Value).OrderBy(x => x).ToArray();
+            double p10 = b[(int)(b.Length * 0.1)], p90 = b[(int)(b.Length * 0.9)];
+            Check((p90 - p10) / p10 > 0.2, $"p10 {p10} and p90 {p90} ms differ by under 20%");
+        }),
+
+        ("office: the break sits near 90 s at pull 0.6 with the office sense nerve, and Lodur's default nerve breaks later", () =>
+        {
+            long own = MedianBreak(new StressParameters(), 1, 20);
+            long lodurDefault = MedianBreak(new StressParameters { Cause = Cause.Office with { Senses = new Lodur.NerveParameters() } }, 1, 20);
+            Check(own is > 75000 and < 100000, $"median break {own} ms");
+            Check(lodurDefault > own * 1.05, $"default nerve breaks at {lodurDefault} ms, office nerve at {own} ms");
+        }),
+
+        ("office: monotone in load: scale 1.5 breaks no later, and removing any stressor breaks no sooner", () =>
+        {
+            var p = new StressParameters();
+            long baseline = MedianBreak(p, 1, 20);
+            Check(MedianBreak(p with { Cause = p.Cause.Scaled(1.5) }, 1, 20) <= baseline, "scale 1.5 lengthened the median break");
+            foreach (var s in p.Cause.Stressors)
+            {
+                long without = MedianBreak(p with { Cause = p.Cause.Without(s.Id) }, 1, 20);
+                Check(without >= baseline, $"removing {s.Id} shortened the median break ({without} < {baseline})");
+            }
+        }),
+
+        ("office: silencing is the player lever: the silenced emitter writes nothing from that tick, one Silenced row is logged, and the median break comes later", () =>
+        {
+            var p = new StressParameters();
+            long baseline = MedianBreak(p, 1, 20);
+            Check(MedianBreak(p, 1, 20, new SilenceCommand("printer", 20)) > baseline, "silencing the printer at 20 s did not delay the median break");
+
+            var silenced = NewOffice(p, 1);
+            var control = NewOffice(p, 1);
+            while (silenced.TickIndex < 2000) { Step(silenced); Step(control); }
+            silenced.Silence("printer");
+            silenced.Silence("printer"); // again: no second row
+            bool controlSounded = false;
+            while (silenced.TickIndex < 4000)
+            {
+                Step(silenced); Step(control);
+                controlSounded |= control.Emitters[0].Intensity > 0.0;
+                Check(silenced.Emitters[0].Intensity == 0.0, $"the silenced printer wrote {silenced.Emitters[0].Intensity} at tick {silenced.TickIndex}");
+            }
+            Check(controlSounded, "the control printer never sounded, so the check proved nothing");
+            var rows = silenced.Result().Timeline.Where(e => e.Kind == StressEntryKind.Silenced).ToArray();
+            Check(rows.Length == 1 && rows[0].TimeMs == 20000, "expected exactly one Silenced row at 20000 ms");
+            bool threw = false;
+            try { silenced.Silence("no-such-stressor"); } catch (ArgumentException) { threw = true; }
+            Check(threw, "an unknown stressor id was accepted");
+        }),
+
+        ("office: a stressor naming an emitter the setting lacks is refused before any tick", () =>
+        {
+            var p = new StressParameters { Cause = Cause.Office with { Stressors = new[] { new Stressor("x", "nowhere", 0, 0, null, 1, 0.5, 0) } } };
+            bool threw = false;
+            try { NewOffice(p, 1); } catch (ArgumentException) { threw = true; }
+            Check(threw, "an unknown emitter id was accepted");
+        }),
+
+        ("office: after one 10 s burst resolve does not rise while arousal is at or above the threshold, then it rises", () =>
+        {
+            var burst = new Stressor("burst", "printer", 0, 0, null, 10, 0.5, 0);
+            var p = new StressParameters { MaxSeconds = 120, Cause = Cause.Office with { Stressors = new[] { burst } } };
+            var s = NewOffice(p, 1);
+            double gate = p.Drive.ResolveRecoversBelowArousal, prev = 1.0, lowest = 1.0;
+            int heldDown = 0, rose = 0;
+            while (!s.Finished)
+            {
+                Step(s);
+                var d = s.Actor.Drive;
+                if (d.Arousal >= gate)
+                {
+                    Check(d.Resolve <= prev, $"resolve rose to {d.Resolve} at tick {s.TickIndex} with arousal {d.Arousal}");
+                    if (d.Resolve < 1.0) heldDown++;
+                }
+                else if (d.Resolve > prev) rose++;
+                lowest = Math.Min(lowest, d.Resolve);
+                prev = d.Resolve;
+            }
+            Check(heldDown > 1000, "arousal never held the gate shut, so the check proved nothing");
+            Check(rose > 1000 && prev > lowest + 0.001, "resolve never recovered once the room was quiet");
+            Check(s.Result().Outcome == Outcome.Endured, "the burst broke the will");
+        }),
+
+        ("office: the stress column is 1 - resolve on every rendered row", () =>
+        {
+            var lines = Office(new StressParameters(), 3).Render().Split('\n', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
+            Check(lines.Length > 10, "too few rows");
+            foreach (var line in lines)
+            {
+                var f = line.Split(' ');
+                double resolve = double.Parse(f[7], System.Globalization.CultureInfo.InvariantCulture);
+                double stress = double.Parse(f[8], System.Globalization.CultureInfo.InvariantCulture);
+                Check(f.Length == 10 && Math.Abs(stress - (1.0 - resolve)) < 0.0015, $"row '{line}'");
+            }
+        }),
+
+        ("the pain box is untouched: run --seed 1 and sweep --seed 1 --count 20 hash to the output captured before the office existed", () =>
+        {
+            string Hash(params string[] a)
+            {
+                var w = new StringWriter();
+                BadDay.Cli.Program.Execute(a, w);
+                var bytes = System.Text.Encoding.UTF8.GetBytes(w.ToString().Replace("\r\n", "\n"));
+                return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+            }
+            Check(Hash("run", "--seed", "1") == "a3a800612f1e610deb8c648ea74a0a3e2f4639541a46d92af0d1bcfbdd8cfb45", "run --seed 1 changed");
+            Check(Hash("sweep", "--seed", "1", "--count", "20") == "2cc88f9ffbbf301b8264c0be600edb34b21a3b572f927ed96ea49eda20dc73db", "sweep --seed 1 --count 20 changed");
+        }),
     };
+
+    private static readonly Quat[] Pose = { Quat.Identity };
+    private static readonly float[] Point = new float[1], Strengths = new float[1];
+    private static readonly Quat[] Targets = new Quat[1];
+
+    private static StressSession NewOffice(StressParameters p, ulong seed) => new(p, seed, 1, Pose, Pose);
+
+    private static void Step(StressSession s) => s.Tick(Point, Point, Point, Strengths, Targets);
+
+    private static StressResult Office(StressParameters p, ulong seed, params SilenceCommand[] silences) =>
+        StressSimulation.Run(p, seed, silences);
+
+    /// <summary>The median break time over <paramref name="count"/> seeds; a run that endured counts as never.</summary>
+    private static long MedianBreak(StressParameters p, ulong first, int count, params SilenceCommand[] silences)
+    {
+        var times = new List<long>();
+        for (int i = 0; i < count; i++) times.Add(Office(p, first + (ulong)i, silences).TimeToBreakMs ?? long.MaxValue);
+        times.Sort();
+        return times[times.Count / 2];
+    }
 
     private static int Tick(long ms) => (int)Math.Round(ms * Hz / 1000.0);
 
