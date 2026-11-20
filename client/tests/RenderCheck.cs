@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using BadDay.Ymir;
 using Godot;
 
 namespace BadDay.Client.Tests;
@@ -101,17 +102,13 @@ public partial class RenderCheck : Node
     private const float HighlightLuma = 245f;
 
     /// <summary>
-    /// The 99th percentile of the per-pixel luma standard deviation under sub-pixel camera shifts, as a multiple of the supersampled reference's. The shipped glaze (spec AA and MSAA 4x) measures
-    /// 1.19 in the play view and 1.16 in the close view; the glaze without the prefilter (kernel 0, or the studio unfiltered) 1.56 and 1.46; without MSAA 1.40 and 1.21 (the interior metric does see
-    /// triangle edges, in the play view); the studio's smoothstep widened for energy-gaining blur 1.31 and 1.37.
+    /// The bounds on the <see cref="FlickerViews"/>, fitted to all of them and not to one (measured on the five play framings and the two close ones; no bound is met by fitting a single framing, the shipped shader
+    /// reads 1.34 at the shipped one and 1.19 at another). The p99 flicker ratio: the shipped glaze reads 1.19 to 1.35 in the play framings and 1.16 and 1.20 close; kernel 0 reads 1.56 to 2.19 and 1.46 and 1.49,
+    /// so the bounds sit between (1.45 play, 1.33 close). The highlight shift
+    /// in levels of 255: shipped at most 0.93 (and 1.18 in other poses Soul tried); the paper's pixel variance 1/(2 pi) reads 1.57 to 4.38 in the play framings and 1/12, double the shipped, 1.65 at two of them
+    /// and 2.33 at the shipped framing, so 1.5. The silhouette ring (where MSAA works, and the interior pixels do not look): the ring's mean luma std over the reference's, the shipped 1.02 to 1.10, without MSAA 1.12 to 1.29 and 1.26 in both close views, so 1.17; the ratio also fails without MSAA in most play framings (1.40 to 1.52), but that is the interior seeing triangle edges, not what MSAA is for.
     /// </summary>
-    private const float MaxFlickerRatio = 1.3f;
-
-    /// <summary>
-    /// How far the mean luma over the reference's highlights (<see cref="HighlightLuma"/> or more) may move from the reference's, in levels of 255. The shipped glaze measures 0.2 in the play view and
-    /// 0.3 in the close view; the pixel filter's variance at the paper's 1/(2 pi) instead of 1/24, which blurs the highlight away, 1.6 and 0.1, so the bound sits between.
-    /// </summary>
-    private const float MaxHighlightShift = 1f;
+    private const float MaxFlickerRatioPlay = 1.45f, MaxFlickerRatioClose = 1.33f, MaxHighlightShift = 1.5f, MaxSilhouetteRatio = 1.17f;
 
     private const int BendSeed = 7;
     private const float BendDegrees = 60f;
@@ -441,14 +438,51 @@ public partial class RenderCheck : Node
         return ok;
     }
 
+    /// <summary>One framing of the flicker check: what the camera aims at, from which side, how high, how far (FOV 55 throughout, OrbitCamera's).</summary>
+    private readonly record struct FlickerView(string Label, FlickerAim Aim, float Yaw, float Pitch, float Distance);
+
+    private enum FlickerAim { Hold, Head, Torso }
+
     /// <summary>
-    /// The glaze must not flicker: a highlight whose pixel value jumps as the camera moves by a fraction of a pixel crawls on screen. The puppet (glaze on, the shipped shader
-    /// and the project's MSAA) is drawn from 16 camera positions on a sub-pixel grid in the play view and the close view; the same shifts are drawn by a
-    /// viewport <see cref="FlickerSupersample"/> times the window's size, MSAA off, box-filtered down in linear light, which is what a pixel would show if it averaged the
-    /// highlight over its own area. On the pixels the puppet covers fully in every reference frame (eroded by one pixel, so the silhouette, which MSAA owns, is out), the
-    /// per-pixel standard deviation of luma over the shifts must have its 99th percentile at most <see cref="MaxFlickerRatio"/> times the reference's in both views, and the mean luma
-    /// over the pixels the reference lights to <see cref="HighlightLuma"/> or more must be within <see cref="MaxHighlightShift"/> levels of the reference's (a filter that blurs
-    /// the highlight away, or adds energy, moves it).
+    /// The framings. The first is where OrbitCamera starts (the hold point, yaw 0.35, pitch 0.2, 2.4 m); the rest move the aim, the side, the height and the distance, because the highlights
+    /// that flicker are where the facets happen to face the studio, and a bound fitted to one framing fails the shipped shader in another (the shipped framing reads 1.34, the head-and-torso
+    /// framing at yaw 0.5 reads 1.19). The last two look at the head and shoulders from 0.7 m.
+    /// </summary>
+    private static readonly FlickerView[] FlickerViews =
+    {
+        new("play", FlickerAim.Hold, 0.35f, 0.2f, 2.4f),
+        new("play side", FlickerAim.Hold, -0.5f, 0.2f, 2.4f),
+        new("play level", FlickerAim.Hold, 0.35f, 0f, 2.4f),
+        new("play head", FlickerAim.Head, 0.5f, 0.15f, 2.4f),
+        new("play torso", FlickerAim.Torso, 0.35f, 0.2f, 2.4f),
+        new("close", FlickerAim.Head, 0.5f, 0.15f, 0.7f),
+        new("close hold", FlickerAim.Hold, 0.35f, 0.2f, 0.7f),
+    };
+
+    /// <summary>The camera, the supersampled twin that sees what it sees, and the points the views aim at.</summary>
+    private sealed record FlickerRig(Camera3D Camera, Camera3D ReferenceCamera, SubViewport Reference, Viewport Viewport, int W, int H, Vector3 Hold, Vector3 Head, Vector3 Torso)
+    {
+        public void Place(FlickerView view, float yaw, Vector2 shift)
+        {
+            var target = view.Aim switch { FlickerAim.Hold => Hold, FlickerAim.Head => Head * 0.45f + Torso * 0.55f, _ => Torso };
+            Camera.Fov = 55f;
+            var direction = new Vector3(Mathf.Sin(yaw) * Mathf.Cos(view.Pitch), Mathf.Sin(view.Pitch), Mathf.Cos(yaw) * Mathf.Cos(view.Pitch));
+            Camera.GlobalPosition = target + direction * view.Distance;
+            Camera.LookAt(target, Vector3.Up);
+            float pixel = 2f * view.Distance * Mathf.Tan(Mathf.DegToRad(55f) / 2f) / H;
+            Camera.GlobalPosition += Camera.GlobalBasis.X * shift.X * pixel + Camera.GlobalBasis.Y * shift.Y * pixel;
+            ReferenceCamera.Fov = Camera.Fov;
+            ReferenceCamera.GlobalTransform = Camera.GlobalTransform;
+        }
+    }
+
+    /// <summary>
+    /// The glaze must not flicker: a highlight whose pixel value jumps as the camera moves by a fraction of a pixel crawls on screen. The puppet in the pose the player sees (the shipped shader and the
+    /// project's MSAA) is drawn in each of the <see cref="FlickerViews"/> from 16 camera positions on a sub-pixel grid, and by a viewport <see cref="FlickerSupersample"/> times the window's size, MSAA off, box-filtered
+    /// down in linear light, which is what a pixel would show if it averaged the scene over its own area. On the pixels the puppet covers fully in every reference frame (eroded by one pixel), the 99th percentile of the
+    /// per-pixel standard deviation of luma over the shifts must be at most <see cref="MaxFlickerRatioPlay"/> (<see cref="MaxFlickerRatioClose"/> from 0.7 m) times the reference's, and the mean luma over the pixels the reference
+    /// lights to <see cref="HighlightLuma"/> or more within <see cref="MaxHighlightShift"/> levels of the reference's. On the silhouette's ring, which MSAA owns, the mean standard deviation is at most
+    /// <see cref="MaxSilhouetteRatio"/> times the reference's.
     /// </summary>
     private async Task<bool> FlickerCheck(Main main)
     {
@@ -459,7 +493,6 @@ public partial class RenderCheck : Node
         var puppet = main.Bodies.GetNode<Puppet>("Puppet");
         var camera = main.GetNode<Camera3D>("Camera");
         camera.Current = true;
-        puppet.Glazed = true;
         puppet.ShowNormals = false;
         // The pose the player sees: the session's own, under an unmoved body renderer, not the bent pose of the oracle frames.
         main.Bodies.Transform = Transform3D.Identity;
@@ -470,80 +503,87 @@ public partial class RenderCheck : Node
         int w = viewport.GetTexture().GetWidth(), h = viewport.GetTexture().GetHeight();
 
         var carriers = puppet.GetChildren().OfType<Node3D>().Where(c => c.Name.ToString().StartsWith("Body")).ToArray();
-        var head = carriers.OrderByDescending(c => c.GlobalPosition.Y).First().GlobalPosition;
-        var torso = puppet.GetNode<Node3D>("Body101").GlobalPosition;
-        // Both views look at the head and shoulders from the same side: the play view from the distance and field of view OrbitCamera starts at (2.4 m, 55 degrees), the close view from 0.7 m.
-        var target = head * 0.45f + torso * 0.55f;
-        var views = new (string Label, float Distance)[] { ("play", 2.4f), ("close", 0.7f) };
-        const float yaw = 0.5f, pitch = 0.15f;
-
         var reference = new SubViewport { Size = new Vector2I(w * FlickerSupersample, h * FlickerSupersample), RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled, Msaa3D = Viewport.Msaa.Disabled };
         var referenceCamera = new Camera3D { Current = true, Fov = 55f };
         reference.AddChild(referenceCamera);
         AddChild(reference);
-
-        var shifts = new List<Vector2>();
-        for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) shifts.Add(new Vector2((i + 0.5f) / 4f - 0.5f, (j + 0.5f) / 4f - 0.5f));
+        var rig = new FlickerRig(camera, referenceCamera, reference, viewport, w, h,
+            new Vector3(BodyPainBox.HoldPoint.X, BodyPainBox.HoldPoint.Y, BodyPainBox.HoldPoint.Z),
+            carriers.OrderByDescending(c => c.GlobalPosition.Y).First().GlobalPosition, puppet.GetNode<Node3D>("Body101").GlobalPosition);
 
         bool ok = true;
-        foreach (var (label, distance) in views)
-        {
-            void Place(Vector2 shift)
-            {
-                camera.Fov = 55f;
-                var direction = new Vector3(Mathf.Sin(yaw) * Mathf.Cos(pitch), Mathf.Sin(pitch), Mathf.Cos(yaw) * Mathf.Cos(pitch));
-                camera.GlobalPosition = target + direction * distance;
-                camera.LookAt(target, Vector3.Up);
-                float pixel = 2f * distance * Mathf.Tan(Mathf.DegToRad(55f) / 2f) / h;
-                camera.GlobalPosition += camera.GlobalBasis.X * shift.X * pixel + camera.GlobalBasis.Y * shift.Y * pixel;
-                referenceCamera.Fov = camera.Fov;
-                referenceCamera.GlobalTransform = camera.GlobalTransform;
-            }
-
-            var supersampled = new List<float[]>();
-            var coverage = new List<float[]>();
-            foreach (var shift in shifts)
-            {
-                Place(shift);
-                var (luma, cover) = await Supersample(reference, w, h);
-                supersampled.Add(luma);
-                coverage.Add(cover);
-            }
-            var drawn = new List<float[]>();
-            foreach (var shift in shifts)
-            {
-                Place(shift);
-                for (int i = 0; i < 3; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
-                var image = viewport.GetTexture().GetImage();
-                image.Convert(Image.Format.Rgba8);
-                drawn.Add(Luma(image.GetData(), w * h));
-            }
-
-            var interior = new bool[w * h];
-            Array.Fill(interior, true);
-            foreach (var cover in coverage) for (int i = 0; i < interior.Length; i++) interior[i] &= cover[i] >= 0.999f;
-            var eroded = new bool[w * h];
-            for (int y = 1; y < h - 1; y++)
-                for (int x = 1; x < w - 1; x++)
-                {
-                    int i = y * w + x;
-                    eroded[i] = interior[i] && interior[i - 1] && interior[i + 1] && interior[i - w] && interior[i + w];
-                }
-            var highlight = new bool[w * h];
-            for (int i = 0; i < highlight.Length; i++) highlight[i] = eroded[i] && supersampled.Any(l => l[i] >= HighlightLuma);
-
-            int pixels = eroded.Count(b => b), highlights = highlight.Count(b => b);
-            float shownP99 = P99(Deviation(drawn, eroded)), referenceP99 = P99(Deviation(supersampled, eroded));
-            float shownMean = Mean(drawn, highlight), referenceMean = Mean(supersampled, highlight);
-            float ratio = shownP99 / Mathf.Max(referenceP99, 1e-3f), highlightShift = Mathf.Abs(shownMean - referenceMean);
-            GD.Print($"RENDER flicker ({label}): {pixels} interior pixels, {highlights} highlight; p99 luma std {shownP99:F1} against the {FlickerSupersample}x reference's {referenceP99:F1} (ratio {ratio:F2}); highlight mean {shownMean:F1} against {referenceMean:F1} (shift {highlightShift:F1})");
-            if (pixels < MinFlickerPixels || highlights < MinFlickerHighlights) { GD.PrintErr($"RENDER FAIL: the {label} flicker view reaches {pixels} interior and {highlights} highlight pixels, under {MinFlickerPixels} and {MinFlickerHighlights}; it proves nothing"); ok = false; }
-            if (ratio > MaxFlickerRatio) { GD.PrintErr($"RENDER FAIL: the glaze's highlights flicker in the {label} view: p99 luma std {shownP99:F1} is {ratio:F2} times the supersampled reference's {referenceP99:F1}, over {MaxFlickerRatio}"); ok = false; }
-            if (highlightShift > MaxHighlightShift) { GD.PrintErr($"RENDER FAIL: the {label} view's highlights average {shownMean:F1}, {highlightShift:F1} levels from the reference's {referenceMean:F1}, over {MaxHighlightShift}; the glaze is blurred away or brighter than the studio"); ok = false; }
-        }
+        puppet.Glazed = true;
+        foreach (var view in FlickerViews) ok &= await FlickerShifts(rig, view);
         reference.QueueFree();
         window.Size = home;
         return ok;
+    }
+
+    private async Task<bool> FlickerShifts(FlickerRig rig, FlickerView view)
+    {
+        int w = rig.W, h = rig.H;
+        var shifts = new List<Vector2>();
+        for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) shifts.Add(new Vector2((i + 0.5f) / 4f - 0.5f, (j + 0.5f) / 4f - 0.5f));
+        var supersampled = new List<float[]>();
+        var coverage = new List<float[]>();
+        foreach (var shift in shifts)
+        {
+            rig.Place(view, view.Yaw, shift);
+            var (luma, cover) = await Supersample(rig.Reference, w, h);
+            supersampled.Add(luma);
+            coverage.Add(cover);
+        }
+        var drawn = new List<float[]>();
+        foreach (var shift in shifts)
+        {
+            rig.Place(view, view.Yaw, shift);
+            drawn.Add(await Draw(rig));
+        }
+
+        var eroded = Interior(w, h, coverage);
+        var ring = new bool[w * h];
+        for (int i = 0; i < ring.Length; i++) ring[i] = !eroded[i] && coverage.Any(c => c[i] > 0.001f) && !coverage.All(c => c[i] >= 0.999f);
+        var highlight = new bool[w * h];
+        for (int i = 0; i < highlight.Length; i++) highlight[i] = eroded[i] && supersampled.Any(l => l[i] >= HighlightLuma);
+
+        int pixels = eroded.Count(b => b), highlights = highlight.Count(b => b);
+        float shownP99 = P99(Deviation(drawn, eroded)), referenceP99 = P99(Deviation(supersampled, eroded));
+        float ratio = shownP99 / Mathf.Max(referenceP99, 1e-3f);
+        float shownRing = Deviation(drawn, ring).Average(), referenceRing = Deviation(supersampled, ring).Average();
+        float ringRatio = shownRing / Mathf.Max(referenceRing, 1e-3f);
+        float highlightShift = highlights == 0 ? 0 : Mathf.Abs(Mean(drawn, highlight) - Mean(supersampled, highlight));
+        float maxRatio = view.Distance < 1f ? MaxFlickerRatioClose : MaxFlickerRatioPlay;
+        GD.Print($"RENDER flicker ({view.Label}): {pixels} interior pixels, {highlights} highlight; p99 luma std {shownP99:F1} against the {FlickerSupersample}x reference's {referenceP99:F1} (ratio {ratio:F2}); highlight mean shift {highlightShift:F2}; silhouette ring mean std {shownRing:F2} against {referenceRing:F2} (ratio {ringRatio:F2})");
+        bool ok = true;
+        if (pixels < MinFlickerPixels || highlights < MinFlickerHighlights) { GD.PrintErr($"RENDER FAIL: the {view.Label} flicker view reaches {pixels} interior and {highlights} highlight pixels, under {MinFlickerPixels} and {MinFlickerHighlights}; it proves nothing"); ok = false; }
+        if (ratio > maxRatio) { GD.PrintErr($"RENDER FAIL: the highlights flicker in the {view.Label} view: p99 luma std {shownP99:F1} is {ratio:F2} times the supersampled reference's {referenceP99:F1}, over {maxRatio}"); ok = false; }
+        if (highlightShift > MaxHighlightShift) { GD.PrintErr($"RENDER FAIL: the {view.Label} view's highlights are {highlightShift:F2} levels from the reference's, over {MaxHighlightShift}; the glaze is blurred away or brighter than the studio"); ok = false; }
+        if (ringRatio > MaxSilhouetteRatio) { GD.PrintErr($"RENDER FAIL: the {view.Label} view's silhouette crawls: mean luma std {shownRing:F2} on its ring is {ringRatio:F2} times the reference's {referenceRing:F2}, over {MaxSilhouetteRatio}; the 3D is not antialiased"); ok = false; }
+        return ok;
+    }
+
+    private async Task<float[]> Draw(FlickerRig rig)
+    {
+        for (int i = 0; i < 3; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+        var image = rig.Viewport.GetTexture().GetImage();
+        image.Convert(Image.Format.Rgba8);
+        return Luma(image.GetData(), rig.W * rig.H);
+    }
+
+    /// <summary>The pixels the puppet covers fully in every one of the coverage maps, eroded by one pixel.</summary>
+    private static bool[] Interior(int w, int h, IEnumerable<float[]> covers)
+    {
+        var full = new bool[w * h];
+        Array.Fill(full, true);
+        foreach (var cover in covers) for (int i = 0; i < full.Length; i++) full[i] &= cover[i] >= 0.999f;
+        var eroded = new bool[w * h];
+        for (int y = 1; y < h - 1; y++)
+            for (int x = 1; x < w - 1; x++)
+            {
+                int i = y * w + x;
+                eroded[i] = full[i] && full[i - 1] && full[i + 1] && full[i - w] && full[i + w];
+            }
+        return eroded;
     }
 
     /// <summary>The reference frame of the current camera: the supersampled viewport box-filtered to the window's size in linear light, as luma (Rec. 709 weights on the encoded levels, 0 to 255) and the share of its samples the puppet covers (any channel over 31 of 255, on black).</summary>
