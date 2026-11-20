@@ -748,7 +748,7 @@ public static class Program
         ("office calm tail: arousal on the calm row starts from where the rage left it, falls without rising to exactly 0 by CalmFadeSeconds and stays 0 to the end, while the stressors keep sounding", () =>
         {
             var p = new StressParameters { SampleEverySeconds = 0.1 };
-            int sounding = 0;
+            int sounding = 0, loaded = 0;
             for (ulong seed = 1; seed <= 20; seed++)
             {
                 var r = Office(p, seed);
@@ -759,12 +759,19 @@ public static class Program
                 for (int i = 1; i < tail.Count; i++) Check(tail[i].Arousal <= tail[i - 1].Arousal, $"seed {seed}: arousal rose at {tail[i].TimeMs} ms");
                 var mid = tail.First(e => e.TimeMs >= calm.TimeMs + 2500);
                 Check(mid.Arousal > 0.0, $"seed {seed}: arousal was already {mid.Arousal} at 2.5 s into calm; the fade is a hard cut");
-                var after = tail.Where(e => e.TimeMs >= calm.TimeMs + (long)(p.CalmFadeSeconds * 1000)).ToList();
-                Check(after.Count > 40 && after.All(e => e.Arousal == 0.0), $"seed {seed}: arousal not exactly 0 from {p.CalmFadeSeconds} s after calm to the end");
+                // The fade is 3 s by the ruling's "a few seconds", written out here rather than read back from CalmFadeSeconds: a fade of 2.6 s is already 0 at 2.8 s, one of 3.9 s is not yet 0 at 3.0 s.
+                Check(tail.First(e => e.TimeMs >= calm.TimeMs + 2800).Arousal > 0.0, $"seed {seed}: arousal already 0 at 2.8 s into calm");
+                var after = tail.Where(e => e.TimeMs >= calm.TimeMs + 3000).ToList();
+                Check(after.Count > 40 && after.All(e => e.Arousal == 0.0), $"seed {seed}: arousal not exactly 0 from 3 s after calm to the end");
+                // His senses fade with it: load is 0 from a tick past the fade's end (Sense reads the gain a tick late), and some of the load is still there a second in.
+                Check(tail.Where(e => e.TimeMs >= calm.TimeMs + 3100).All(e => e.Load == 0.0), $"seed {seed}: load above 0 after the fade");
+                if (tail.Any(e => e.TimeMs >= calm.TimeMs + 500 && e.TimeMs <= calm.TimeMs + 1500 && e.Load > 0.0)) loaded++;
                 if (after.Any(e => e.Audio > 0.0 || e.Visual > 0.0 || e.Interrupt > 0.0)) sounding++;
             }
             // The stressors are periodic and some seeds have a quiet 5 s window after the fade; across the seeds the office does keep sounding, so calm silenced his senses and not the office.
-            Check(sounding >= 10, $"stressors sounded after the fade on only {sounding} of 20 seeds");
+            Check(sounding >= 19, $"stressors sounded after the fade on only {sounding} of 20 seeds");
+            // A hard cut or a gain that goes to 0 at once leaves no load in the fade's first second; a fade carries it on 10 of seeds 1..20 (the rest have no stressor sounding then).
+            Check(loaded >= 10, $"load was above 0 in the first 1.5 s of calm on only {loaded} of 20 seeds");
         }),
 
         ("pain box parity: sweep --seed 1 --count 20 hashes to the output before rung 4, and run --seed 1 does too once the break row's goal reads Withdraw as it then did", () =>
@@ -951,6 +958,21 @@ public static class Program
                 Check(r.Timeline.Count(e => e.Kind == StressEntryKind.GoalChanged) == 2, $"seed {seed}: a goal changed after calm");
                 Check(r.Timeline.Where(e => e.TimeMs >= calm.TimeMs).All(e => e.Goal == OfficeGoal.Calm), $"seed {seed}: the goal column left Calm");
                 Check(r.Timeline.Where(e => e.TimeMs >= calm.TimeMs + 5000).Any(e => e.Load > 0.0), $"seed {seed}: no load after calm; the test no longer presses on the goal");
+            }
+        }),
+
+        ("office calm is terminal on the shipped calm: over a full-length run the goal never leaves Calm, though his will mends in the quiet", () =>
+        {
+            // The default fade, so the senses are silenced as shipped, and the release moved off calm so the run goes the 180 s. With no load his arousal stays 0 and resolve mends from 0:
+            // a calm that gated on a mended will would be lost here, which the open-senses test above cannot reach.
+            for (ulong seed = 1; seed <= 3; seed++)
+            {
+                var r = Office(new StressParameters { ReleaseGoalId = "keep-composure" }, seed);
+                var calm = r.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm);
+                Check(r.EndMs == 180000, $"seed {seed}: ended at {r.EndMs}");
+                Check(r.Timeline.Count(e => e.Kind == StressEntryKind.GoalChanged) == 2, $"seed {seed}: a goal changed after calm");
+                Check(r.Timeline.Where(e => e.TimeMs >= calm.TimeMs).All(e => e.Goal == OfficeGoal.Calm), $"seed {seed}: the goal column left Calm");
+                Check(r.Timeline.Where(e => e.TimeMs >= calm.TimeMs).Max(e => e.Resolve) > 0.05, $"seed {seed}: his will never mended after calm; the test no longer reaches the mend");
             }
         }),
 
