@@ -11,7 +11,7 @@ render_mode cull_back;
 //            distance, in bind metres, to edge k, the edge opposite vertex k); w is the triangle's smallest altitude.
 //   CUSTOM2: the triangle's three creases, crease[k] for edge k: half the turn from this facet's normal to the neighbour's,
 //            positive where the edge is convex (PuppetShape.Crease).
-// The in-plane direction to each edge comes from screen derivatives of the distances, so the shader never evaluates the field.
+// The in-plane direction to each edge comes from screen derivatives of the distances, so the shader never evaluates the SDF.
 // At an edge the tilt is exactly the bisector from both sides, so the normal is continuous across it.
 const int MAX_BONES = 32;
 uniform mat4 bones[MAX_BONES];
