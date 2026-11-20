@@ -76,6 +76,7 @@ public partial class Smoke : Node
         // Reset fails here, not after hundreds.
         for (ulong seed = 1; seed <= 3; seed++) { PressReset(seed); await Frame(); }
         Check(_main.Bodies.PuppetMeshBuilds == 1, $"the puppet mesh was built {_main.Bodies.PuppetMeshBuilds} times by the third Reset; the signature never changed, so once");
+        CameraChecks.Run(failure => Check(false, "camera: " + failure), _main);
         if (_failures.Count > 0) return;
 
         // Seed 1 at the default intensity against the headless run: events, and the hand at ticks 240 and 1500.
