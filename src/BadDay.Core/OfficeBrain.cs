@@ -4,7 +4,7 @@ using Lodur;
 namespace BadDay.Core;
 
 /// <summary>What the office timeline's goal column names: the goal in force, by <see cref="OfficeBrain"/>'s index. Display only.</summary>
-public enum OfficeGoal { KeepComposure, Rage }
+public enum OfficeGoal { KeepComposure, Rage, Calm }
 
 /// <summary>
 /// The poses Office Fella's goals write, one rotation per muscle: the composed pose he holds while he keeps his
@@ -21,18 +21,25 @@ public sealed record OfficePoses(Quat[] Composed, Quat[] Flinch, Quat[][] RageKe
 
 /// <summary>
 /// Office Fella's Brain: keep-composure (the job, pulling with <see cref="Cause.ObjectivePull"/>) until the will
-/// breaks, then rage (a geyser: no pull, nothing held down, the rage keys in a loop). Authored as data; the Actor
-/// commits the switch, so the timeline's goal column is read back from <see cref="Actor.GoalIndex"/>.
+/// breaks, then rage (a geyser: no pull, nothing held down, the rage keys in a loop; it refills his will on entry, is
+/// involuntary for its first <see cref="StressParameters.RageOnsetSeconds"/> and then costs will at
+/// <see cref="StressParameters.RageEffort"/> a second), until that will runs dry and breaks a second time, and then calm:
+/// his composed pose at normal strength, for good (ruling lodur:ruling:fella-calm-after-rage). Calm is terminal as
+/// data: it gates on Breaks, which never falls, and nothing outranks it. Authored as data; the Actor commits the
+/// switches, so the timeline's goal column is read back from <see cref="Actor.GoalIndex"/>.
 /// </summary>
 public static class OfficeBrain
 {
     public const int ComposureIndex = 0;
     public const int RageIndex = 1;
+    public const int CalmIndex = 2;
 
-    /// <summary>The rage goal's id: what the scenario's release waits for.</summary>
     public const string RageId = "rage";
 
-    public static OfficeGoal GoalAt(int index) => index == RageIndex ? OfficeGoal.Rage : OfficeGoal.KeepComposure;
+    /// <summary>The calm goal's id: what the scenario's release waits for (<see cref="StressParameters.ReleaseGoalId"/>).</summary>
+    public const string CalmId = "calm";
+
+    public static OfficeGoal GoalAt(int index) => index switch { RageIndex => OfficeGoal.Rage, CalmIndex => OfficeGoal.Calm, _ => OfficeGoal.KeepComposure };
 
     public static Brain Build(StressParameters p, OfficePoses poses) => new()
     {
@@ -51,7 +58,10 @@ public static class OfficeBrain
                 Id = RageId,
                 Priority = 1.0,
                 Pull = 0.0,
-                When = new[] { new Condition(DriveQuantity.WillBroken, ConditionOp.AtLeast, 1.0) },
+                When = new[] { new Condition(DriveQuantity.Breaks, ConditionOp.AtLeast, 1.0) },
+                EntryResolve = 1.0,
+                Effort = p.RageEffort,
+                InvoluntarySeconds = p.RageOnsetSeconds,
                 Behaviour = new PoseBehaviour
                 {
                     Keys = poses.RageKeys,
@@ -59,6 +69,14 @@ public static class OfficeBrain
                     FlinchPose = poses.RageKeys[0],
                     Hold = p.Hold with { HoldStrength = 1f, FlinchGain = 0.0, StrainShake = 0.0 },
                 },
+            },
+            new GoalSpec
+            {
+                Id = CalmId,
+                Priority = 2.0,
+                When = new[] { new Condition(DriveQuantity.Breaks, ConditionOp.AtLeast, 2.0) },
+                InvoluntarySeconds = double.PositiveInfinity,
+                Behaviour = new PoseBehaviour { Keys = new[] { poses.Composed }, FlinchPose = poses.Flinch, Hold = p.Hold },
             },
         },
     };

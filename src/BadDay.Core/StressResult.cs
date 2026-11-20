@@ -18,7 +18,7 @@ public sealed record StressResult(
     ulong Seed,
     /// <summary>WillBroke (the run goes on through the release) or Endured; the office has no box to disable.</summary>
     Outcome Outcome,
-    /// <summary>When the run ended: the release after the rage took over, or MaxSeconds.</summary>
+    /// <summary>When the run ended: the release after calm took over, or MaxSeconds.</summary>
     long EndMs,
     /// <summary>Time resolve hit zero, ms; null unless the will broke.</summary>
     long? TimeToBreakMs,

@@ -130,8 +130,12 @@ public static class Program
             if (b.RageTick is { } rage)
             {
                 int end = b.HandL.Count;
-                output.WriteLine($"rage from {b.Run.Timeline.First(e => e.Kind == StressEntryKind.GoalChanged).TimeMs} ms for " +
-                                 $"{((end - rage) / (double)OfficeBody.Hz).ToString("F1", CultureInfo.InvariantCulture)} s; strikes {b.Strikes(rage, end)} " +
+                StressEntry? calm = b.Run.Timeline.Any(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm)
+                    ? b.Run.Timeline.First(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm) : null;
+                int rageEnd = calm is null ? end : (int)Math.Round(calm.Value.TimeMs * OfficeBody.Hz / 1000.0);
+                string how = calm is null ? "clipped by --max, no calm" : $"to calm at {calm.Value.TimeMs} ms";
+                output.WriteLine($"rage from {b.Run.Timeline.First(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Rage).TimeMs} ms for " +
+                                 $"{((rageEnd - rage) / (double)OfficeBody.Hz).ToString("F1", CultureInfo.InvariantCulture)} s ({how}); strikes {b.Strikes(rage, end)} " +
                                  $"(left {OfficeBody.CountStrikes(b.HandL, rage, end)}, right {OfficeBody.CountStrikes(b.HandR, rage, end)}), " +
                                  $"{b.Strikes(0, rage)} before it");
             }

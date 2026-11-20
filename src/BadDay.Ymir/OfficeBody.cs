@@ -18,9 +18,9 @@ public readonly record struct BodyPoint(float X, float Y, float Z);
 public sealed record OfficeBodyResult(
     StressResult Run, IReadOnlyList<BodyPoint> HandL, IReadOnlyList<BodyPoint> HandR, IReadOnlyList<BodyPoint> Pelvis)
 {
-    /// <summary>The tick the rage took over (the GoalChanged row); null if the will held.</summary>
-    public int? RageTick => Run.Timeline.Any(e => e.Kind == StressEntryKind.GoalChanged)
-        ? (int)Math.Round(Run.Timeline.First(e => e.Kind == StressEntryKind.GoalChanged).TimeMs * OfficeBody.Hz / 1000.0)
+    /// <summary>The tick the rage took over (the GoalChanged row whose goal is Rage); null if the will held.</summary>
+    public int? RageTick => Run.Timeline.Any(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Rage)
+        ? (int)Math.Round(Run.Timeline.First(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Rage).TimeMs * OfficeBody.Hz / 1000.0)
         : null;
 
     /// <summary>Strikes by both hands from tick <paramref name="from"/> up to <paramref name="to"/>, see <see cref="OfficeBody.CountStrikes"/>.</summary>
@@ -31,7 +31,7 @@ public sealed record OfficeBodyResult(
 /// Office Fella on the seated puppet: <see cref="SeatedPuppet"/>'s world, the desk's emitters moved to where the head
 /// sits and sensed there, and the same <see cref="StressSession"/> the headless run drives. Per step: the body reports its
 /// points, the session decides (Lodur's Actor commits the Brain's goals, <see cref="OfficeBrain"/>), the ragdoll is driven,
-/// the world steps. The run ends as the session ends, the release after the rage takes over.
+/// the world steps. The run ends as the session ends, the release after calm takes over.
 /// </summary>
 public static class OfficeBody
 {
