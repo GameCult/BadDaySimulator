@@ -25,8 +25,28 @@ public sealed class PainBox
     /// <summary>The first tick the box is off; <see cref="long.MaxValue"/> when it is never disabled.</summary>
     public long DisableTick { get; private set; }
 
-    /// <summary>The intensity the ramp scales: the parameters' <c>BoxIntensity</c> until a caller sets it.</summary>
-    public double Level { get; set; }
+    /// <summary>The largest intensity the box takes: ten times the strongest the models use, small enough that no product with the ramp and noise can overflow.</summary>
+    public const double MaxLevel = 10.0;
+
+    private double _level;
+
+    /// <summary>
+    /// The intensity the ramp scales: the parameters' <c>BoxIntensity</c> until a caller sets it. The one rule for every
+    /// writer, the constructor included: finite, not negative, at most <see cref="MaxLevel"/>; anything else throws
+    /// <see cref="ArgumentOutOfRangeException"/> and leaves the level as it was.
+    /// </summary>
+    public double Level
+    {
+        get => _level;
+        set
+        {
+            if (!double.IsFinite(value) || value < 0.0 || value > MaxLevel)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), value, $"The box intensity is finite, from 0 to {MaxLevel}.");
+            }
+            _level = value;
+        }
+    }
 
     /// <summary>Switches the box off from <paramref name="tick"/>; an earlier switch-off stands.</summary>
     public void SwitchOff(long tick) => DisableTick = Math.Min(DisableTick, tick);
