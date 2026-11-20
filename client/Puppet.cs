@@ -57,6 +57,9 @@ public partial class Puppet : Node3D
     /// <summary>What the puppet is made of now, or null before the first build or while it draws nothing (too many bodies).</summary>
     public PuppetShape? Shape => _model.Shape;
 
+    /// <summary>The world centre of the puppet's drawn bounds (the mesh's <c>CustomAabb</c>, in the skin's space), or null before the first draw.</summary>
+    public Vector3? Centre => _mesh is { CustomAabb: { } box } && box.HasSurface() ? _skin.GlobalTransform * (box.Position + box.Size / 2) : null;
+
     public override void _Ready() => AddChild(_skin);
 
     /// <summary>Where the puppet draws body <paramref name="stableId"/> now (world), or null if it draws no such body.</summary>
