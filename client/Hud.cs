@@ -27,7 +27,7 @@ public partial class Hud : CanvasLayer
         var row = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         margin.AddChild(row);
 
-        _readout.AddThemeColorOverride("font_color", new Color(0.08f, 0.08f, 0.08f));
+        _readout.AddThemeColorOverride("font_color", new Color(0.92f, 0.92f, 0.9f));
         _readout.AddThemeFontSizeOverride("font_size", 16);
         _readout.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         _readout.MouseFilter = Control.MouseFilterEnum.Ignore;
@@ -37,18 +37,18 @@ public partial class Hud : CanvasLayer
         row.AddChild(controls);
 
         var seedRow = new HBoxContainer();
-        seedRow.AddChild(new Label { Text = "Seed", Modulate = new Color(0.08f, 0.08f, 0.08f) });
+        seedRow.AddChild(new Label { Text = "Seed", Modulate = new Color(0.92f, 0.92f, 0.9f) });
         seedRow.AddChild(_seed);
         controls.AddChild(seedRow);
         controls.AddChild(Button("Reset", () => _main.Reset((ulong)_seed.Value)));
 
-        controls.AddChild(new Label { Text = "Intensity", Modulate = new Color(0.08f, 0.08f, 0.08f) });
+        controls.AddChild(new Label { Text = "Intensity", Modulate = new Color(0.92f, 0.92f, 0.9f) });
         _intensity.Value = _main.Intensity;
         _intensity.ValueChanged += v => _main.SetIntensity(v);
         controls.AddChild(_intensity);
 
         controls.AddChild(Button("Box off", () => _main.SwitchOff()));
-        var slow = new CheckButton { Text = "Slow motion", Modulate = new Color(0.08f, 0.08f, 0.08f) };
+        var slow = new CheckButton { Text = "Slow motion", Modulate = new Color(0.92f, 0.92f, 0.9f) };
         slow.Toggled += on => _main.SetSlowMotion(on);
         controls.AddChild(slow);
     }

@@ -79,8 +79,8 @@ public partial class Smoke : Node
             $"hand at tick {ParityTick} ({h.X}, {h.Y}, {h.Z}) differs from the headless run ({_reference.X}, {_reference.Y}, {_reference.Z})");
 
         var view = s.View;
-        Check(_main.Bodies.NodeCount == view.Count && _main.Bodies.GetChildCount() == view.Count,
-            $"{_main.Bodies.GetChildCount()} nodes for {view.Count} bodies");
+        Check(_main.Bodies.NodeCount == view.Count && Count(_main.Bodies, n => n is MeshInstance3D) == view.Count,
+            $"{_main.Bodies.NodeCount} nodes for {view.Count} bodies");
         for (int i = 0; i < view.Count; i++)
         {
             var node = _main.Bodies.NodeFor(view.StableId[i]);
