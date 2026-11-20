@@ -15,9 +15,16 @@ public partial class Puppet : Node3D
     private readonly HashSet<ulong> _seen = new();
     private readonly StandardMaterial3D _dynamic = Look.Matte(Look.Figure);
 
-    public int NodeCount => _nodes.Count;
+    public int BodyCount => _nodes.Count;
 
-    public MeshInstance3D? NodeFor(ulong stableId) => _nodes.GetValueOrDefault(stableId);
+    /// <summary>The material the puppet is drawn in.</summary>
+    public BaseMaterial3D Material => _dynamic;
+
+    /// <summary>Where the puppet draws body <paramref name="stableId"/> now (world), or null if it draws no such body.</summary>
+    public Transform3D? PoseOf(ulong stableId) => _nodes.TryGetValue(stableId, out var n) ? n.Transform : null;
+
+    /// <summary>The same pose as it is rendered this frame, between the last two ticks.</summary>
+    public Transform3D? InterpolatedPoseOf(ulong stableId) => _nodes.TryGetValue(stableId, out var n) ? n.GetGlobalTransformInterpolated() : null;
 
     /// <summary>Makes the nodes match the lanes: creates the missing, frees the gone, then poses every node. <paramref name="teleport"/> skips the interpolation from the previous pose.</summary>
     public void Sync(in Box3DSoaView view, bool teleport = false)

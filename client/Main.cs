@@ -7,36 +7,53 @@ using Godot;
 namespace BadDay.Client;
 
 /// <summary>
-/// The client's root. Godot's physics frame decides when a tick happens (120 Hz, physics interpolation on, Godot's own
+/// The client's root. Godot's physics frame decides when a tick happens (physics interpolation on, Godot's own
 /// physics engine Dummy); <see cref="BodyPainBoxSession"/> decides everything a tick does. This node only steps it,
-/// draws it and forwards the player's commands to it.
+/// draws it and forwards the player's commands to it. A session that cannot start (the native library is missing, say)
+/// is reported once in <see cref="Failure"/> and the log, and nothing ticks until a Reset succeeds.
 /// </summary>
 public partial class Main : Node3D
 {
-    private const int LogLines = 6;
+    /// <summary>Slow motion runs this fraction of the session steps per real second.</summary>
+    private const double SlowFactor = 0.25;
 
-    private readonly List<string> _log = new();
+    private readonly List<BodyEvent> _events = new();
     private BodyRenderer _bodies = null!;
     private Chamber _chamber = null!;
     private OrbitCamera _camera = null!;
     private Hud _hud = null!;
     private BodyPainBoxSession? _session;
     private double _intensity = new PainBoxParameters().BoxIntensity;
-    private bool _deltaReported;
 
-    public BodyPainBoxSession Session => _session ?? throw new InvalidOperationException("Main has no session before _Ready.");
+    public BodyPainBoxSession Session => _session ?? throw new InvalidOperationException($"Main has no session ({Failure ?? "before _Ready"}).");
     public BodyRenderer Bodies => _bodies;
+    public Chamber Chamber => _chamber;
+    public Hud Hud => _hud;
     public ulong Seed { get; private set; } = 1;
+
+    /// <summary>Why the session could not start, or null. Cleared by the next successful Reset.</summary>
+    public string? Failure { get; private set; }
 
     /// <summary>The intensity the box is set to; the next Reset starts with it.</summary>
     public double Intensity => _intensity;
 
-    public bool SlowMotion => Engine.TimeScale < 1.0;
-    public IReadOnlyList<string> Log => _log;
+    public bool SlowMotion { get; private set; }
+
+    /// <summary>Every event the session has reported since the last Reset, oldest first.</summary>
+    public IReadOnlyList<BodyEvent> Events => _events;
+
+    /// <summary>
+    /// The box's intensity as the player should see it. The session stops writing it once a run ends because the box
+    /// was switched off, so the last written value would stay on screen; that run ended with the box off.
+    /// </summary>
+    public double ShownBoxIntensity =>
+        _session is { } s ? (s.Finished && s.Result().Outcome == Outcome.BoxDisabled ? 0.0 : s.BoxIntensity) : 0.0;
 
     /// <summary>The parameters of a run at the given box intensity: every default except the 1/120 s tick the body needs.</summary>
     public static PainBoxParameters ParametersFor(double intensity) =>
         new() { TickSeconds = BodyPainBox.TickSeconds, BoxIntensity = intensity };
+
+    private static int StepsPerSecond(double speed) => (int)Math.Round(speed / BodyPainBox.TickSeconds);
 
     public override void _Ready()
     {
@@ -55,7 +72,7 @@ public partial class Main : Node3D
 
     public override void _ExitTree()
     {
-        Engine.TimeScale = 1.0;
+        Engine.PhysicsTicksPerSecond = StepsPerSecond(1.0);
         _session?.Dispose();
         _session = null;
     }
@@ -63,12 +80,7 @@ public partial class Main : Node3D
     public override void _PhysicsProcess(double delta)
     {
         if (_session is null) return;
-        if (Math.Abs(delta - BodyPainBox.TickSeconds) > 1e-9 && !_deltaReported)
-        {
-            _deltaReported = true;
-            GD.PushError($"BadDay: physics delta {delta} is not 1/120; the session steps 1/120 s regardless.");
-        }
-        _session.Step(); // never Godot's delta: the ragdoll's gains are tuned at 1/120
+        _session.Step(); // one step of 1/120 s per physics frame; never Godot's delta, whatever the frame rate
         Present(teleport: false);
     }
 
@@ -77,9 +89,19 @@ public partial class Main : Node3D
     {
         _session?.Dispose();
         _session = null;
-        _session = new BodyPainBoxSession(ParametersFor(_intensity), seed);
+        Failure = null;
+        _events.Clear();
         Seed = seed;
-        _log.Clear();
+        try
+        {
+            _session = new BodyPainBoxSession(ParametersFor(_intensity), seed);
+        }
+        catch (Exception e) // the session's start can fail in native code (library missing, ABI mismatch): report once, tick nothing
+        {
+            Failure = $"{e.GetType().Name}: {e.Message}";
+            GD.PushError($"BadDay: cannot start a run: {e}");
+            return;
+        }
         Present(teleport: true);
     }
 
@@ -92,22 +114,27 @@ public partial class Main : Node3D
 
     public void SwitchOff() => _session?.SwitchOff();
 
-    public void SetSlowMotion(bool on) => Engine.TimeScale = on ? 0.25 : 1.0;
+    /// <summary>
+    /// Slow motion is fewer session steps per real second: Godot runs its physics frames at a quarter of the rate and each
+    /// frame still steps the session 1/120 s, so the run is the same run, slower, and interpolation smooths the pose
+    /// between ticks. (Engine.TimeScale would only scale the delta, which the session never uses.)
+    /// </summary>
+    public void SetSlowMotion(bool on)
+    {
+        SlowMotion = on;
+        Engine.PhysicsTicksPerSecond = StepsPerSecond(on ? SlowFactor : 1.0);
+    }
 
     private void Present(bool teleport)
     {
         var s = Session;
         _bodies.Sync(s.View, teleport);
-        _chamber.Sync(s);
+        _chamber.Sync(s, ShownBoxIntensity);
         Span<BodyEvent> events = stackalloc BodyEvent[8];
         int n;
         while ((n = s.DrainEvents(events)) > 0)
         {
-            for (int i = 0; i < n; i++)
-            {
-                _log.Add($"{events[i].Tick * BodyPainBox.TickSeconds,6:F2} s  {events[i].Events}");
-                if (_log.Count > LogLines) _log.RemoveAt(0);
-            }
+            for (int i = 0; i < n; i++) _events.Add(events[i]);
         }
     }
 }

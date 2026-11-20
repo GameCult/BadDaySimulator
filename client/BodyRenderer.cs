@@ -14,9 +14,17 @@ public partial class BodyRenderer : Node3D
     private readonly Dictionary<ulong, MeshInstance3D> _scenery = new();
     private readonly StandardMaterial3D _material = Look.Matte(Look.Scenery);
 
-    public int NodeCount => _puppet.NodeCount + _scenery.Count;
+    /// <summary>Bodies drawn, static and dynamic.</summary>
+    public int BodyCount => _puppet.BodyCount + _scenery.Count;
 
-    public MeshInstance3D? NodeFor(ulong stableId) => _puppet.NodeFor(stableId) ?? _scenery.GetValueOrDefault(stableId);
+    public BaseMaterial3D PuppetMaterial => _puppet.Material;
+    public BaseMaterial3D SceneryMaterial => _material;
+
+    /// <summary>Where body <paramref name="stableId"/> is drawn now, or null if it is not drawn.</summary>
+    public Transform3D? PoseOf(ulong stableId) => _puppet.PoseOf(stableId) ?? (_scenery.TryGetValue(stableId, out var n) ? n.Transform : null);
+
+    /// <summary>The same pose as rendered this frame, between the last two ticks (a static body does not move).</summary>
+    public Transform3D? InterpolatedPoseOf(ulong stableId) => _puppet.InterpolatedPoseOf(stableId) ?? PoseOf(stableId);
 
     public override void _Ready() => AddChild(_puppet);
 
