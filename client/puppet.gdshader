@@ -107,7 +107,6 @@ void fragment() {
 	EMISSION = show_normals ? n * 0.5 + 0.5 : vec3(0.0);
 	if (!show_normals && glaze > 0.0) {
 		vec3 r = reflect(-VIEW, n);
-		if (!studio_in_view) r = mat3(INV_VIEW_MATRIX) * r;
 		float f = 0.04 + 0.96 * pow(1.0 - clamp(dot(n, VIEW), 0.0, 1.0), 5.0);
 		EMISSION += glaze * f * studio(r);
 	}

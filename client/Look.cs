@@ -71,18 +71,14 @@ public static class Look
     public const float AmbientEnergy = 0.06f;
     public static readonly Color AmbientColor = new(0.9f, 0.93f, 1f);
 
-    /// <summary>
-    /// Whether the studio turns with the camera, as a photographer's lights do (the recommended option of the open question
-    /// lodur:question:bds-porcelain-studio-follows-camera): form and glints on every side as the player orbits, at the cost of the key's floor
-    /// shadow swinging with the camera. False fixes the studio in the world: the rig is parented to the camera's parent and the glaze reads
-    /// the world-space directions; the figure goes flat from the sides the studio does not face.
-    /// </summary>
-    public const bool StudioFollowsCamera = true;
-
-    /// <summary>The scene's environment (a colour background, a colour ambient, linear, no glow) and the studio's lights, carried by <paramref name="camera"/>.</summary>
+    /// <summary>The scene's environment (a colour background, a colour ambient, linear, no glow) and the studio's lights, carried by <paramref name="camera"/>: a shadowing key and two rims, its children.</summary>
     public static WorldEnvironment Studio(Camera3D camera)
     {
-        Rig(camera);
+        // The studio turns with the camera, as a photographer's lights do (lodur:ruling:porcelain-studio-follows-camera): form and glints on every
+        // side as the player orbits, at the cost of the key's floor shadow swinging with the camera.
+        camera.AddChild(Light("StudioKey", KeyDirection, KeyEnergy, true, new Color(1f, 0.98f, 0.95f)));
+        camera.AddChild(Light("StudioRimA", RimDirectionA, RimEnergyA, false, RimTint));
+        camera.AddChild(Light("StudioRimB", RimDirectionB, RimEnergyB, false, RimTint));
         return new WorldEnvironment
         {
             Environment = new Godot.Environment
@@ -95,15 +91,6 @@ public static class Look
                 TonemapMode = Godot.Environment.ToneMapper.Linear,
             },
         };
-    }
-
-    /// <summary>The key (with the shadow) and the two rims, from the studio's directions, as children of the camera (or of its parent, when the studio is fixed in the world).</summary>
-    public static void Rig(Camera3D camera)
-    {
-        Node host = StudioFollowsCamera ? camera : camera.GetParent();
-        host.AddChild(Light("StudioKey", KeyDirection, KeyEnergy, true, new Color(1f, 0.98f, 0.95f)));
-        host.AddChild(Light("StudioRimA", RimDirectionA, RimEnergyA, false, RimTint));
-        host.AddChild(Light("StudioRimB", RimDirectionB, RimEnergyB, false, RimTint));
     }
 
     private static DirectionalLight3D Light(string name, Vector3 from, float energy, bool shadow, Color color) => new()
@@ -123,7 +110,6 @@ public static class Look
         material.SetShaderParameter("backlight", Backlight);
         material.SetShaderParameter("glaze", GlazeStrength);
         material.SetShaderParameter("glaze_pool", GlazePool);
-        material.SetShaderParameter("studio_in_view", StudioFollowsCamera);
         material.SetShaderParameter("studio_room", Room);
         material.SetShaderParameter("studio_key_dir", KeyDirection);
         material.SetShaderParameter("studio_key_size", KeySize);

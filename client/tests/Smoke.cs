@@ -185,7 +185,7 @@ public partial class Smoke : Node
             foreach (var key in rig.Where(l => l.ShadowEnabled))
             {
                 var shinesAlong = camera.GlobalBasis.Inverse() * -key.GlobalBasis.Z; // the key's direction of travel in the camera's space
-                Check(Look.StudioFollowsCamera == (shinesAlong + Look.KeyDirection).Length() < 1e-3f, $"the key shines along {shinesAlong} in the camera's space after the camera turned {turn} rad; the studio does not follow the camera");
+                Check((shinesAlong + Look.KeyDirection).Length() < 1e-3f, $"the key shines along {shinesAlong} in the camera's space after the camera turned {turn} rad; the studio does not follow the camera");
             }
         }
         camera.GlobalTransform = home;
