@@ -66,7 +66,7 @@ Synaptic Induction Chamber, the dummy strapped to a stool with its right hand in
 input only. Godot's physics engine is set to Dummy; each 120 Hz physics frame the client calls
 `BodyPainBoxSession.Step()` once and draws Ymir's lanes: one pose-carrying node per stable id, and the body drawn as one
 skinned SDF mesh (a surface-nets isosurface of the shape lanes, limbs smooth-blended into the body they hang from and
-joined by a ball at each joint, built once at startup and rebuilt only when the bodies or joints change; flat-shaded).
+joined by a ball at each joint, built once at startup and rebuilt only when the bodies or joints change; flat-shaded, each edge softened by a 4 mm bevel: `Look.BevelWidth`, the facet normal tilted to the edge's bisector in the fragment shader from per-edge creases `PuppetField` derives from the mesh).
 Needs the .NET 8+ SDK, cmake and a C compiler (MinGW gcc on Windows), the sibling Lodur, Ymir (with joint origin lanes, ABI 8) and CultLib
 checkouts (`..\Lodur`, `..\Ymir`, `..\CultLib`, or `LODUR_ROOT`, `YMIR_ROOT` and `CULTLIB_ROOT`; CultLib must be a clean checkout of
 42dce361, the revision Ymir admits, or the build refuses), and Godot 4.7.2 mono.
@@ -84,8 +84,8 @@ Exports need export templates (not installed here yet), so the client runs from 
 
 The smoke has no renderer. `RenderCheck.tscn` is the check that does: it poses the puppet in a bent pose under a moved parent, renders one frame
 (gl_compatibility, the client's renderer), and compares the drawn silhouette with the mesh skinned on the CPU (intersection over union, at
-least 0.999: a correct render measures 1.0000, and a forearm bone 10 degrees off, a bone 2 cm off and hard weights fail), and checks the lit puppet is not clipped to white and that the chamber's light still lights it (a glow of 0 fails). Add `-- --png=<path>` to keep the frame. It needs a display.
-Known gaps: the silhouette does not see the shading normal (a puppet whose NORMAL is left unskinned passes) or the culling box (a 1 cm `CustomAabb` passes).
+least 0.999: a correct render measures 1.0000, and a forearm bone 10 degrees off, a bone 2 cm off and hard weights fail), and checks the lit puppet is not clipped to white and that the chamber's light still lights it (a glow of 0 fails). It also draws the shading normal close up on the torso (the soft bevel) and compares it with a CPU reference: 90th percentile error at most 2 degrees, and 1.5 across the bevel band (a bevel that is off, unskinned normals or the wrong width fail). Add `-- --png=<path>` or `-- --normals-png=<path>` to keep a frame. It needs a display.
+Known gap: the culling box (a 1 cm `CustomAabb` passes).
 
 
 ### Modeled
