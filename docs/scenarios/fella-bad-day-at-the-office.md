@@ -124,7 +124,7 @@ behaviour, so a stressor can start or stop because of what a coworker decides.
 `resolve <= 0`, the drive's own value. Pain-box rule, unchanged: resolve drains with sensory load and strain
 (holding startle down), scaled by `(1 - objectivePull)`, and recovers only when load is low. So quiet gaps
 matter, and a player can silence stressors to extend phase 1. No separate "stress bar" state exists; the bar the
-player sees is `1 - resolve`.
+player sees is arousal, not resolve (ruling `lodur:ruling:stress-bar-shows-arousal-calm-silences`).
 
 If the schedule ends with resolve above zero the outcome is `Endured` and phase 2 never runs. For testing
 phase 2 alone, `testHooks.forceBreakAtSeconds` flips Fella at a fixed time (a test hook, not a game feature).
