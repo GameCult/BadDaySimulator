@@ -776,7 +776,7 @@ public static class Program
             }
         }),
 
-        ("office golden [P]: the rows up to the break are rung 3's bytes, the 50-seed sweep ends in its captured line, and the run's own bytes are captured (re-captured with the arc: the rage refills his will, a second break and calm follow)", () =>
+        ("office golden [P]: the rows up to the break are rung 3's bytes, the 50-seed sweep ends in its captured line, and the run's own bytes are captured (re-captured with the arc and again for the 8 s settle)", () =>
         {
             string Out(params string[] a)
             {
@@ -792,7 +792,7 @@ public static class Program
             for (int i = 2; i <= brk; i++) rung3.Add(lines[i].Replace(" KeepComposure", i == brk ? " Withdraw" : " HoldHand"));
             rung3.Add(lines[^1]);
             Check(Hash(string.Join('\n', rung3) + "\n") == "66098b69834c3c8b5e5b694f0059b8ed566e31d332f36be7e57baf70ae650823", "the office's rows up to the break differ from rung 3's");
-            Check(Hash(string.Join('\n', lines) + "\n") == "b4e56329126e49192d2212b5acfcb63bd5691845571ff727fafec6745e7c42fc", $"office --seed 1 changed: {Hash(string.Join('\n', lines) + "\n")}");
+            Check(Hash(string.Join('\n', lines) + "\n") == "14e226cbb85d68bb9104314b08802c3c20207f378456915a004b60f1ab657089", $"office --seed 1 changed: {Hash(string.Join('\n', lines) + "\n")}");
             var last = Out("office-sweep", "--seed", "1", "--count", "50").TrimEnd('\n').Split('\n')[^1];
             Check(last == "runs 50: broke 50, endured 0; time to break min/median/max ms: 72670/86570/113420; min resolve of endured runs: -", $"sweep line changed: {last}");
         }),
@@ -815,7 +815,7 @@ public static class Program
                 Check(r.Timeline.Where(e => e.TimeMs < rage.TimeMs).All(e => e.Goal == OfficeGoal.KeepComposure), $"seed {seed}: a row before the rage is not KeepComposure");
                 Check(r.Timeline.Where(e => e.TimeMs >= rage.TimeMs && e.TimeMs < calm.TimeMs).All(e => e.Goal == OfficeGoal.Rage), $"seed {seed}: a row in the rage is not Rage");
                 Check(r.Timeline.Where(e => e.TimeMs >= calm.TimeMs).All(e => e.Goal == OfficeGoal.Calm), $"seed {seed}: a row from calm on is not Calm");
-                Check(r.Outcome == Outcome.WillBroke && r.EndMs == calm.TimeMs + 6000, $"seed {seed}: ended at {r.EndMs}, calm was at {calm.TimeMs}");
+                Check(r.Outcome == Outcome.WillBroke && r.EndMs == calm.TimeMs + 8000, $"seed {seed}: ended at {r.EndMs}, calm was at {calm.TimeMs}");
             }
             var short_ = Office(new StressParameters { ReleaseSeconds = 2.0 }, 1);
             Check(short_.EndMs == short_.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm).TimeMs + 2000, "ReleaseSeconds did not set the settle time");
@@ -846,7 +846,7 @@ public static class Program
             Check(r.EndMs == 180000 && r.Outcome == Outcome.WillBroke, $"releasing on a goal the Brain never switches to ended the run at {r.EndMs}");
             var rage = Office(new StressParameters { ReleaseGoalId = OfficeBrain.RageId }, 1);
             var sw = rage.Timeline.First(e => e.Kind == StressEntryKind.GoalChanged);
-            Check(sw.Goal == OfficeGoal.Rage && rage.EndMs == sw.TimeMs + 6000, $"releasing on the rage ended the run at {rage.EndMs}, the rage was at {sw.TimeMs}");
+            Check(sw.Goal == OfficeGoal.Rage && rage.EndMs == sw.TimeMs + 8000, $"releasing on the rage ended the run at {rage.EndMs}, the rage was at {sw.TimeMs}");
             bool threw = false;
             try { NewOffice(new StressParameters { ReleaseGoalId = "nowhere" }, 1); } catch (ArgumentException) { threw = true; }
             Check(threw, "a release goal the Brain lacks was accepted");
@@ -871,7 +871,7 @@ public static class Program
             int sw = a.RageTick!.Value;
             var calmRow = a.Run.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm);
             int calmTick = (int)Math.Round(calmRow.TimeMs * Hz / 1000.0);
-            Check(a.HandL.Count == calmTick + 6 * Hz + 1, $"the run has {a.HandL.Count} steps, calm is at {calmTick}");
+            Check(a.HandL.Count == calmTick + 8 * Hz + 1, $"the run has {a.HandL.Count} steps, calm is at {calmTick}");
             double Rms(IReadOnlyList<BodyPoint> h, int from, int to)
             {
                 double sum = 0;
@@ -919,6 +919,32 @@ public static class Program
                     Check(still < 0.05, $"seed {seed} {name} hand: {still:F3} m/s at its fastest in the run's last second");
                 }
             }
+        }),
+
+        ("office body settle: the seated body is still when the run ends: no hand faster than 0.025 m/s (half the 0.05 limit) over the last second, on the seeds that were tightest at 6 s and every seed 1..100 when BDS_SETTLE_SWEEP is set", () =>
+        {
+            // The release is a timer (the office never ends on body stillness), so the timer is calibrated and this is where that is checked.
+            // 6 s left seeds 55 and 100 at 0.0512 and 0.0521 m/s; at 8 s the worst of seeds 1..100 is 0.0124 m/s (seed 100). The full sweep takes about a minute:
+            //   BDS_SETTLE_SWEEP=1 dotnet run -c Release --project tests/BadDay.Tests -- "office body settle"
+            var seeds = Environment.GetEnvironmentVariable("BDS_SETTLE_SWEEP") is { Length: > 0 }
+                ? Enumerable.Range(1, 100).Select(n => (ulong)n)
+                : new ulong[] { 1, 2, 3, 7, 55, 69, 100 };
+            double worst = 0.0;
+            ulong worstSeed = 0;
+            foreach (ulong seed in seeds)
+            {
+                var a = OfficeBody.Run(new StressParameters { TickSeconds = OfficeBody.TickSeconds }, seed);
+                foreach (var h in new[] { a.HandL, a.HandR })
+                {
+                    for (int k = h.Count - Hz; k < h.Count; k++)
+                    {
+                        double dx = h[k].X - h[k - 1].X, dy = h[k].Y - h[k - 1].Y, dz = h[k].Z - h[k - 1].Z;
+                        double v = Math.Sqrt(dx * dx + dy * dy + dz * dz) * Hz;
+                        if (v > worst) { worst = v; worstSeed = seed; }
+                    }
+                }
+            }
+            Check(worst < 0.025, $"seed {worstSeed}: a hand still moves at {worst:F4} m/s in the run's last second");
         }),
 
         ("office body: the desk's emitters are sensed at the head, so the body breaks within 0.5 s of the headless run (sensed at a hand it is 3.6 s off)", () =>

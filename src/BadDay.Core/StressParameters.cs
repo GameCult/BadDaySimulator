@@ -11,8 +11,8 @@ public sealed record StressParameters
     public double MaxSeconds { get; init; } = 180.0;
     public double SampleEverySeconds { get; init; } = 1.0;
 
-    /// <summary>How long the run goes on after the release goal (calm) takes over, seconds [P]: the settle time. Calibrated on the body so the seated puppet is still by the end (hand speed under 0.05 m/s from 5 s after calm, seeds 1-5); the headless run ends at the same time, one rule for every path.</summary>
-    public double ReleaseSeconds { get; init; } = 6.0;
+    /// <summary>How long the run goes on after the release goal (calm) takes over, seconds [P]: the settle time. Calibrated on the body so the seated puppet is still by the end: over seeds 1-100 the fastest hand in the last second is 0.0124 m/s at 8 s (0.0521 at 6 s, over the 0.05 m/s stillness limit; 0.0259 at 7 s), checked by the office body settle test; the headless run ends at the same time, one rule for every path.</summary>
+    public double ReleaseSeconds { get; init; } = 8.0;
 
     /// <summary>What the rage costs his will per second while it is voluntary, resolve units [P]: the rage refills his will, and this is how fast it runs dry (about 20 s from full, so the rage lasts 5-20 s with the senses still pressing).</summary>
     public double RageEffort { get; init; } = 0.05;

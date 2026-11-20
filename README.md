@@ -162,7 +162,7 @@ no pull) loops wind-up and strike with each arm at 0.25 s a key. It refills his 
 and breaks a second time (5-20 s after the snap) `Calm` takes over: his composed pose at normal strength, involuntary since his will is spent,
 terminal as data (it gates on `Breaks >= 2`, which never falls, and nothing outranks it): he throws no further fit
 (ruling `lodur:ruling:fella-calm-after-rage`). The Actor commits each switch 100 ms after its break,
-the session logs a `GoalChanged` row for each, and the run goes on `ReleaseSeconds` (6 s, the settle: the seated body is still by then) after the Brain's release goal
+the session logs a `GoalChanged` row for each, and the run goes on `ReleaseSeconds` (8 s, the settle: the seated body is under 0.025 m/s by then on every seed 1-100) after the Brain's release goal
 (`ReleaseGoalId`, `calm`) takes over, or to 180 s if the will holds. `TimeToBreakMs` is the first break, the snap; the second `WillBroke` row is the rage running dry.
 The chamber's release is declared the same way (`PainBoxParameters.ReleaseGoalId`, `withdraw`), and its withdrawal is one-way: a will that mends does not give the hand back. Who has the day is a `Character` (his senses; `Character.OfficeFella`),
 apart from the setting and the cause. Each scenario builds its own Brain from its own parameters; one entry point keyed by character id
