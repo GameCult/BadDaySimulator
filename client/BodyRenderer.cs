@@ -6,7 +6,7 @@ namespace BadDay.Client;
 
 /// <summary>
 /// Draws Ymir's world from its lanes and writes nothing back. The static bodies (floor, stool) are plain boxes drawn
-/// here; every dynamic body belongs to the <see cref="Puppet"/>, the one swappable owner of the puppet's mesh.
+/// here; every dynamic body belongs to the <see cref="Puppet"/>, which draws them as one skinned SDF mesh.
 /// </summary>
 public partial class BodyRenderer : Node3D
 {
@@ -19,6 +19,9 @@ public partial class BodyRenderer : Node3D
 
     /// <summary>The colour the puppet is drawn in.</summary>
     public Color PuppetColor => _puppet.Color;
+    /// <summary>What the puppet's mesh is made of now, or null while it draws none.</summary>
+    public PuppetShape? PuppetShape => _puppet.Shape;
+
     public BaseMaterial3D SceneryMaterial => _material;
 
     /// <summary>Where body <paramref name="stableId"/> is drawn now, or null if it is not drawn.</summary>

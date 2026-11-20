@@ -10,6 +10,15 @@ public static class Look
     public static readonly Color Figure = new(0.9f, 0.9f, 0.88f);
     public static readonly Color Glow = new(0.85f, 0.95f, 1f);
 
+    /// <summary>The puppet's blend radius (m): how far limbs flow into the body they hang from.</summary>
+    public const float SminRadius = 0.025f;
+
+    /// <summary>The joint ball's radius beyond what touches both limbs, in units of the thinner limb's thickness.</summary>
+    public const float JointBallScale = 0.5f;
+
+    /// <summary>The radius (m) the puppet's boxes are rounded by, so the isosurface has no sawtooth bands on their edges.</summary>
+    public const float BoxRound = 0.03f;
+
     public static Godot.Environment Environment() => new()
     {
         BackgroundMode = Godot.Environment.BGMode.Color,

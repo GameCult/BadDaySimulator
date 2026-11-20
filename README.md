@@ -64,12 +64,14 @@ session, `BodyPainBoxSession` (create, `Step`, read `Hand` and the world's lanes
 `client/` is a Godot 4.7.2 (mono) project that renders the body run and takes the player's commands: the
 Synaptic Induction Chamber, the dummy strapped to a stool with its right hand in the box. It owns presentation and
 input only. Godot's physics engine is set to Dummy; each 120 Hz physics frame the client calls
-`BodyPainBoxSession.Step()` once and draws Ymir's lanes (one node per stable id, shapes from the Kind and Size lanes).
-Needs the .NET 8+ SDK, cmake and a C compiler (MinGW gcc on Windows), the sibling Lodur and Ymir checkouts
-(`..\Lodur`, `..\Ymir`, or `LODUR_ROOT` and `YMIR_ROOT`), and Godot 4.7.2 mono.
+`BodyPainBoxSession.Step()` once and draws Ymir's lanes: one pose-carrying node per stable id, and the body drawn as one
+skinned SDF mesh (a surface-nets isosurface of the shape lanes, limbs smooth-blended into the body they hang from and
+joined by a ball at each joint, built once at startup and rebuilt only when the bodies or joints change; flat-shaded).
+Needs the .NET 8+ SDK, cmake and a C compiler (MinGW gcc on Windows), the sibling Lodur, Ymir (with joint origin lanes, ABI 8) and CultLib
+checkouts (`..\Lodur`, `..\Ymir`, `..\CultLib`, or `LODUR_ROOT`, `YMIR_ROOT` and `CULTLIB_ROOT`), and Godot 4.7.2 mono.
 
 ```
-dotnet build client/BadDay.Client.csproj     # Lodur, Ymir (cmake) and BDS, plus ymir_box3d.dll, into client/.godot/mono/temp/bin/Debug
+dotnet build client/BadDay.Client.csproj     # CultLib Geometry, Lodur, Ymir (cmake) and BDS, plus ymir_box3d.dll, into client/.godot/mono/temp/bin/Debug
 <godot> --path client                        # play: right-drag orbits, the wheel zooms
 <godot> --headless --path client res://tests/Smoke.tscn   # the smoke; exit code 0 passes
 ```
