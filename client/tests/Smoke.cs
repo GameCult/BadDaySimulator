@@ -57,6 +57,8 @@ public partial class Smoke : Node
     private async Task Scenario()
     {
         CheckEngineAndScene();
+        PuppetChecks.Run(failure => Check(false, "puppet: " + failure));
+        if (_failures.Count > 0) return;
 
         // Slow motion, by wall clock: a quarter of the session steps per real second, the same run.
         await Frames(10);
@@ -69,6 +71,12 @@ public partial class Smoke : Node
 
         // The rest runs the physics clock fast; the session still steps 1/120 s per frame.
         Engine.PhysicsTicksPerSecond = 1200;
+
+        // A Reset is not a topology change: the mesh stays the one built at startup. Checked after three resets so a rebuild per
+        // Reset fails here, not after hundreds.
+        for (ulong seed = 1; seed <= 3; seed++) { PressReset(seed); await Frame(); }
+        Check(_main.Bodies.PuppetShape?.Builds == 1, $"the puppet mesh was built {_main.Bodies.PuppetShape?.Builds} times by the third Reset; the signature never changed, so once");
+        if (_failures.Count > 0) return;
 
         // Seed 1 at the default intensity against the headless run: events, and the hand at ticks 240 and 1500.
         PressReset(1);
