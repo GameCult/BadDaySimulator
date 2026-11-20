@@ -41,7 +41,7 @@ public partial class RenderCheck : Node
     private const float MinGlazeShare = 0.03f, MaxGlazedClipped = 0.12f;
 
     /// <summary>From behind the torso's back is one broad face that mirrors the key, so the glaze clips 20.4% there (measured): the bound has margin over that and fails a white-out.</summary>
-    private const float MaxGlazedClippedBehind = 0.30f;
+    private const float MaxGlazedClippedBehind = 0.24f;
 
     /// <summary>
     /// The glaze and the lights are one studio: the pixels the glaze lights most (<see cref="HighlightLevels"/> or more above the bisque) must reflect a direction that Look's studio
