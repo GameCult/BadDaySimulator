@@ -52,6 +52,11 @@ public partial class Puppet : Node3D
         new Basis(new Vector3(r.R._m00, r.R._m10, r.R._m20), new Vector3(r.R._m01, r.R._m11, r.R._m21), new Vector3(r.R._m02, r.R._m12, r.R._m22)),
         new Vector3(r.T.x, r.T.y, r.T.z));
 
+    /// <summary>The <see cref="Rigid"/> of a Godot transform (rotation only; no scale).</summary>
+    public static Rigid ToRigid(Transform3D t) => new(
+        new CultMath.float3x3(new CultMath.float3(t.Basis.Row0.X, t.Basis.Row0.Y, t.Basis.Row0.Z), new CultMath.float3(t.Basis.Row1.X, t.Basis.Row1.Y, t.Basis.Row1.Z), new CultMath.float3(t.Basis.Row2.X, t.Basis.Row2.Y, t.Basis.Row2.Z)),
+        new CultMath.float3(t.Origin.X, t.Origin.Y, t.Origin.Z));
+
     /// <summary>Makes the carriers match the lanes (creates the missing, frees the gone, poses every one), then rebuilds the mesh if the topology changed. <paramref name="teleport"/> skips the interpolation from the previous pose.</summary>
     public void Sync(in Box3DSoaView view, bool teleport = false)
     {

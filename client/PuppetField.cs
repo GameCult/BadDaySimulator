@@ -79,13 +79,16 @@ public sealed class PuppetShape
 /// </summary>
 public static class PuppetField
 {
-    /// <summary>The grid cell, the minimum that resolves the thinnest limb (radius 40 mm).</summary>
+    /// <summary>The grid cell (m): the coarsest at which the thinnest limb, radius 40 mm, still spans two cells across (PuppetChecks measures this against the coarser cells).</summary>
     public const float Cell = 0.04f;
 
     /// <summary>How far a Spherical joint's child subtree swings in the bind pose, so a limb hanging beside the trunk is not webbed to it.</summary>
     public const float SpreadDegrees = 20f;
 
     private const int Newton = 2;
+
+    /// <summary>A body's radius, or for a box its smallest half extent: the thickness of the limb it draws.</summary>
+    public static float Thickness(Box3DSoaKind kind, float3 size) => kind == Box3DSoaKind.Box ? math.min(size.x, math.min(size.y, size.z)) : size.x;
 
     /// <summary>The bodies of the lanes that are drawn: a shape, not an Anchor or a StaticBox.</summary>
     public static bool HasShape(Box3DSoaKind kind) => kind is Box3DSoaKind.Sphere or Box3DSoaKind.Capsule or Box3DSoaKind.Box;
@@ -94,7 +97,8 @@ public static class PuppetField
     public static bool Qualifies(Box3DSoaJointKind joint, Box3DSoaKind a, Box3DSoaKind b) =>
         joint is Box3DSoaJointKind.Revolute or Box3DSoaJointKind.Spherical or Box3DSoaJointKind.Weld && HasShape(a) && HasShape(b);
 
-    public static PuppetShape Build(IReadOnlyList<PuppetBody> bodies, IReadOnlyList<PuppetJoint> joints, float smin, float ballScale, float boxRound)
+    /// <summary>Builds the shape on a grid of <paramref name="cell"/> metres (the shipped <see cref="Cell"/>; the resolution check sweeps it).</summary>
+    public static PuppetShape Build(IReadOnlyList<PuppetBody> bodies, IReadOnlyList<PuppetJoint> joints, float smin, float ballScale, float boxRound, float cell = Cell)
     {
         int n = bodies.Count;
         // The first qualifying joint with body b as its B decides b's blend (lane order); every other joint of b is ignored.
@@ -120,7 +124,7 @@ public static class PuppetField
         }
 
         var field = new Field(bodies, t, joints, jointOf, smin, ballScale, boxRound);
-        return Mesh(field, bodies, t, joints, smin);
+        return Mesh(field, bodies, t, joints, smin, cell);
     }
 
     private static int Depth(int[] up, int i)
@@ -141,7 +145,7 @@ public static class PuppetField
         return false;
     }
 
-    private static PuppetShape Mesh(Field f, IReadOnlyList<PuppetBody> bodies, Rigid[] t, IReadOnlyList<PuppetJoint> joints, float smin)
+    private static PuppetShape Mesh(Field f, IReadOnlyList<PuppetBody> bodies, Rigid[] t, IReadOnlyList<PuppetJoint> joints, float smin, float cell)
     {
         int n = bodies.Count;
         var lo = new float3(float.MaxValue, float.MaxValue, float.MaxValue); var hi = new float3(float.MinValue, float.MinValue, float.MinValue);
@@ -153,15 +157,15 @@ public static class PuppetField
             reach = MathF.Max(reach, r);
             if (f.BallR[i] > 0) { lo = math.min(lo, f.Ball[i] - f.BallR[i]); hi = math.max(hi, f.Ball[i] + f.BallR[i]); }
         }
-        float pad = smin + 2 * Cell;
+        float pad = smin + 2 * cell;
         lo -= pad; hi += pad;
-        int nx = (int)MathF.Ceiling((hi.x - lo.x) / Cell) + 1, ny = (int)MathF.Ceiling((hi.y - lo.y) / Cell) + 1, nz = (int)MathF.Ceiling((hi.z - lo.z) / Cell) + 1;
+        int nx = (int)MathF.Ceiling((hi.x - lo.x) / cell) + 1, ny = (int)MathF.Ceiling((hi.y - lo.y) / cell) + 1, nz = (int)MathF.Ceiling((hi.z - lo.z) / cell) + 1;
         var samples = new float[nx, ny, nz];
         for (int x = 0; x < nx; x++)
         for (int y = 0; y < ny; y++)
         for (int z = 0; z < nz; z++)
-            samples[x, y, z] = f.Eval(lo + new float3(x, y, z) * Cell, out _, out _, out _).w;
-        var nets = CultGeometrySurfaceNets.Extract(samples, 0f, lo, Cell);
+            samples[x, y, z] = f.Eval(lo + new float3(x, y, z) * cell, out _, out _, out _).w;
+        var nets = CultGeometrySurfaceNets.Extract(samples, 0f, lo, cell);
 
         // Two Newton steps put each net vertex on the isosurface.
         var v = new float3[nets.VertexCount];
@@ -251,7 +255,7 @@ public static class PuppetField
             }
         }
 
-        public float Thickness(int i) => _kind[i] == Box3DSoaKind.Box ? math.min(_size[i].x, math.min(_size[i].y, _size[i].z)) : _size[i].x;
+        public float Thickness(int i) => PuppetField.Thickness(_kind[i], _size[i]);
 
         /// <summary>The body's reach from its origin: the farthest the primitive extends.</summary>
         public float Extent(int i) => _kind[i] == Box3DSoaKind.Box ? math.length(_size[i]) : _size[i].x + _size[i].y;

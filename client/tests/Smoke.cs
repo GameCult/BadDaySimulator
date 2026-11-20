@@ -57,7 +57,7 @@ public partial class Smoke : Node
     private async Task Scenario()
     {
         CheckEngineAndScene();
-        PuppetChecks.Run(failure => Check(false, "puppet: " + failure));
+        PuppetChecks.Run(failure => Check(false, "puppet: " + failure), Session.View);
         if (_failures.Count > 0) return;
 
         // Slow motion, by wall clock: a quarter of the session steps per real second, the same run.
@@ -176,72 +176,26 @@ public partial class Smoke : Node
         Check(environment.BackgroundColor.Luminance < 0.2f, "the background is not dark grey");
     }
 
-    /// <summary>No skinned triangle edge may be longer than this many times its bind length.</summary>
-    private const float StretchLimit = 4f;
-
-    /// <summary>The puppet's one mesh: size, one piece, and not stretched into a web by the pose it is in or by a joint swung 90 degrees.</summary>
+    /// <summary>The puppet's one mesh as it is drawn: size, one piece, and not stretched into a web by the pose it is in or by a joint swung 90 degrees.</summary>
     private void CheckPuppetMesh(string when)
     {
         if (_main.Bodies.PuppetShape is not { } shape) { Check(false, $"{when}: the puppet has no mesh"); return; }
         Check(shape.Triangles is >= 2000 and <= 6000, $"{when}: the puppet mesh has {shape.Triangles} triangles, not 2000 to 6000");
-        int pieces = Pieces(shape);
+        int pieces = PuppetChecks.Pieces(shape);
         Check(pieces == 1, $"{when}: the puppet mesh is {pieces} pieces, not one");
 
-        var posed = new Transform3D[shape.Ids.Length];
+        var posed = new Rigid[shape.Ids.Length];
         for (int i = 0; i < posed.Length; i++)
-            posed[i] = (_main.Bodies.PoseOf(shape.Ids[i]) ?? Transform3D.Identity) * Puppet.ToTransform(shape.SpreadBind[i].Inverse());
-        float stretch = MaxStretch(shape, posed);
-        Check(stretch <= StretchLimit, $"{when}: a skinned edge is {stretch:F1}x its bind length, over {StretchLimit}x");
+            posed[i] = Puppet.ToRigid((_main.Bodies.PoseOf(shape.Ids[i]) ?? Transform3D.Identity) * Puppet.ToTransform(shape.SpreadBind[i].Inverse()));
+        float stretch = PuppetChecks.Stretch(shape, posed).Ratio;
+        Check(stretch <= PuppetChecks.StretchLimit, $"{when}: a skinned edge is {stretch:F1}x its bind length, over {PuppetChecks.StretchLimit}x");
 
-        // Every Spherical joint swung 90 degrees: its child subtree turns about the joint origin.
-        var up = Enumerable.Repeat(-1, shape.Ids.Length).ToArray();
-        foreach (var j in shape.Joints) if (up[j.B] < 0) up[j.B] = j.A;
-        foreach (var j in shape.Joints.Where(j => j.Kind == global::Ymir.Box3D.Box3DSoaJointKind.Spherical))
+        for (int j = 0; j < shape.Joints.Length; j++)
         {
-            var origin = new Vector3(j.Origin.x, j.Origin.y, j.Origin.z);
-            var swing = new Transform3D(new Basis(Vector3.Right, Mathf.Pi / 2), origin) * new Transform3D(Basis.Identity, -origin);
-            var bones = new Transform3D[shape.Ids.Length];
-            for (int i = 0; i < bones.Length; i++)
-            {
-                bool under = false;
-                for (int k = i, d = 0; k >= 0 && d <= bones.Length; k = up[k], d++) if (k == j.B) { under = true; break; }
-                bones[i] = under ? swing : Transform3D.Identity;
-            }
-            stretch = MaxStretch(shape, bones);
-            Check(stretch <= StretchLimit, $"{when}: with body {shape.Ids[j.B]} swung 90 degrees a skinned edge is {stretch:F1}x its bind length, over {StretchLimit}x");
+            if (shape.Joints[j].Kind != global::Ymir.Box3D.Box3DSoaJointKind.Spherical) continue;
+            stretch = PuppetChecks.Stretch(shape, PuppetChecks.Swing(shape, j, new CultMath.float3(1, 0, 0), MathF.PI / 2)).Ratio;
+            Check(stretch <= PuppetChecks.StretchLimit, $"{when}: with body {shape.Ids[shape.Joints[j].B]} swung 90 degrees a skinned edge is {stretch:F1}x its bind length, over {PuppetChecks.StretchLimit}x");
         }
-    }
-
-    private static float MaxStretch(PuppetShape shape, Transform3D[] bones)
-    {
-        Vector3 Bind(int v) => new(shape.Positions[v].x, shape.Positions[v].y, shape.Positions[v].z);
-        Vector3 Skin(int v) { var p = Bind(v); float w = shape.WeightA[v]; return bones[shape.BoneA[v]] * p * w + bones[shape.BoneB[v]] * p * (1 - w); }
-        float worst = 0;
-        for (int t = 0; t < shape.Positions.Length; t += 3)
-            for (int e = 0; e < 3; e++)
-            {
-                int a = t + e, b = t + (e + 1) % 3;
-                float bind = (Bind(a) - Bind(b)).Length();
-                if (bind > 1e-5f) worst = Mathf.Max(worst, (Skin(a) - Skin(b)).Length() / bind);
-            }
-        return worst;
-    }
-
-    /// <summary>Connected components of the mesh with its triangles' coincident corners welded.</summary>
-    private static int Pieces(PuppetShape shape)
-    {
-        var id = new Dictionary<(long, long, long), int>();
-        var corner = new int[shape.Positions.Length];
-        for (int i = 0; i < corner.Length; i++)
-        {
-            var p = shape.Positions[i];
-            var key = ((long)Math.Round(p.x * 1e5), (long)Math.Round(p.y * 1e5), (long)Math.Round(p.z * 1e5));
-            if (!id.TryGetValue(key, out corner[i])) id[key] = corner[i] = id.Count;
-        }
-        var parent = Enumerable.Range(0, id.Count).ToArray();
-        int Find(int x) { while (parent[x] != x) x = parent[x] = parent[parent[x]]; return x; }
-        for (int t = 0; t < corner.Length; t += 3) { parent[Find(corner[t + 1])] = Find(corner[t]); parent[Find(corner[t + 2])] = Find(corner[t]); }
-        return corner.Select(Find).Distinct().Count();
     }
 
     private void CheckPoses(string when)

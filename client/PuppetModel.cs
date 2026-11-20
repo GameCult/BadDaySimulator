@@ -42,22 +42,27 @@ public sealed class PuppetModel
     /// <summary>Reads the shape bodies and qualifying joints of the lanes and updates.</summary>
     public bool Update(in Box3DSoaView view)
     {
+        Lanes(view, _laneBodies, _laneJoints);
+        return Update(_laneBodies, _laneJoints);
+    }
+
+    /// <summary>The shape bodies (with their pose now) and the qualifying joints of the lanes: a Revolute, Spherical or Weld between two shapes.</summary>
+    public static void Lanes(in Box3DSoaView view, List<PuppetBody> bodies, List<PuppetJointLane> joints)
+    {
+        bodies.Clear(); joints.Clear();
         var kind = view.Kind;
-        var bodies = _laneBodies; bodies.Clear();
         for (int i = 0; i < kind.Length; i++)
         {
             if (!PuppetField.HasShape((Box3DSoaKind)kind[i])) continue;
             bodies.Add(new PuppetBody(view.StableId[i], (Box3DSoaKind)kind[i], new float3(view.Size0[i], view.Size1[i], view.Size2[i]),
                 Rigid.FromQuaternion(view.RotationX[i], view.RotationY[i], view.RotationZ[i], view.RotationW[i], new float3(view.PositionX[i], view.PositionY[i], view.PositionZ[i]))));
         }
-        var joints = _laneJoints; joints.Clear();
         for (int j = 0; j < view.JointCount; j++)
         {
             int a = view.JointBodyA[j], b = view.JointBodyB[j];
             if (a < 0 || b < 0 || !PuppetField.Qualifies((Box3DSoaJointKind)view.JointKind[j], (Box3DSoaKind)kind[a], (Box3DSoaKind)kind[b])) continue;
             joints.Add(new PuppetJointLane((Box3DSoaJointKind)view.JointKind[j], view.StableId[a], view.StableId[b], new float3(view.JointOriginX[j], view.JointOriginY[j], view.JointOriginZ[j])));
         }
-        return Update(bodies, joints);
     }
 
     /// <summary>
