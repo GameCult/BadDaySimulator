@@ -77,6 +77,14 @@ public partial class Smoke : Node
         for (ulong seed = 1; seed <= 3; seed++) { PressReset(seed); await Frame(); }
         Check(_main.Bodies.PuppetMeshBuilds == 1, $"the puppet mesh was built {_main.Bodies.PuppetMeshBuilds} times by the third Reset; the signature never changed, so once");
         CameraChecks.Run(failure => Check(false, "camera: " + failure), _main);
+        // The camera writes its transform on input only: one written between frames stays through them.
+        var orbit = _main.GetNode<OrbitCamera>("Camera");
+        var home = orbit.Transform;
+        var moved = new Transform3D(home.Basis.Rotated(Vector3.Up, 1f), home.Origin + new Vector3(0.1f, 0, 0));
+        orbit.Transform = moved;
+        for (int i = 0; i < 3; i++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        Check(orbit.Transform == moved, $"the camera moved itself from {moved.Origin} to {orbit.Transform.Origin} between frames");
+        orbit.Transform = home;
         if (_failures.Count > 0) return;
 
         // Seed 1 at the default intensity against the headless run: events, and the hand at ticks 240 and 1500.

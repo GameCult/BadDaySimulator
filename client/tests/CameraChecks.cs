@@ -78,8 +78,10 @@ public static class CameraChecks
         Check(Near(camera.Transform, orbited, 1e-5f), $"Alt+left-drag gave {camera.Transform}, not the middle-drag's {orbited}");
         Back();
 
-        // Over the top: a drag down of 400 px pitches 160 degrees, past the pole, and the view turns upside down rather than stopping.
-        Drag(MouseButton.Middle, new Vector2(0, 400));
+        // Over the top: a drag down of 400 px in 40 motions pitches 160 degrees, past the pole, and the view turns upside down rather than stopping.
+        Button(MouseButton.Middle, true);
+        for (int i = 0; i < 40; i++) Motion(new Vector2(0, 10), MouseButtonMask.Middle); // many small steps: a clamp near the pole would stop here
+        Button(MouseButton.Middle, false);
         Check(camera.Basis.Y.Dot(Vector3.Up) < 0, "an orbit of 160 degrees over the top did not carry the view over");
         // Upside down, a drag to the right still turns the scene with the cursor: the yaw reverses (Blender's turntable does).
         var flipped = camera.Transform;
