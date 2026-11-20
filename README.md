@@ -75,11 +75,17 @@ checkouts (`..\Lodur`, `..\Ymir`, `..\CultLib`, or `LODUR_ROOT`, `YMIR_ROOT` and
 dotnet build client/BadDay.Client.csproj     # CultLib Geometry, Lodur, Ymir (cmake) and BDS, plus ymir_box3d.dll, into client/.godot/mono/temp/bin/Debug
 <godot> --path client                        # play: right-drag orbits, the wheel zooms
 <godot> --headless --path client res://tests/Smoke.tscn   # the smoke; exit code 0 passes
+<godot> --path client res://tests/RenderCheck.tscn  # the render check, in a window (not headless); exit code 0 passes
 ```
 
 Or open `client/project.godot` in the Godot editor, Build, Play. The HUD has Reset with a seed, a live intensity
 slider, Box off and Slow motion. Do not run `godot --import` on a fresh checkout; a plain run creates `.godot`.
 Exports need export templates (not installed here yet), so the client runs from the editor and headless for now.
+
+The smoke has no renderer. `RenderCheck.tscn` is the check that does: it poses the puppet in a bent pose under a moved parent, renders one frame
+(gl_compatibility, the client's renderer), and compares the drawn silhouette with the mesh skinned on the CPU (intersection over union, at
+least 0.95), and checks the lit puppet is not clipped to white. Add `-- --png=<path>` to keep the frame. It needs a display.
+
 
 ### Modeled
 

@@ -98,11 +98,15 @@ public partial class Puppet : Node3D
     public override void _Process(double delta)
     {
         if (Shape is null) return;
+        // The bones take a body from the spread bind to its world pose. VERTEX is in the skin's model space, which Godot then
+        // carries to the world with the skin's own transform, so the bones are taken into that space first: the puppet is right
+        // under any parent, not only at the origin.
+        var toModel = _skin.GetGlobalTransformInterpolated().AffineInverse();
         var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
         var hi = new Vector3(float.MinValue, float.MinValue, float.MinValue);
         for (int i = 0; i < _boneNodes.Length; i++)
         {
-            var t = _boneNodes[i].GetGlobalTransformInterpolated();
+            var t = toModel * _boneNodes[i].GetGlobalTransformInterpolated();
             _bones[i] = new Projection(t * _inverseBind[i]);
             lo = lo.Min(t.Origin); hi = hi.Max(t.Origin);
         }
