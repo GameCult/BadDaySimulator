@@ -63,6 +63,13 @@ public partial class Smoke : Node
         PuppetChecks.Run(failure => Check(false, "puppet: " + failure), Session.View);
         if (_failures.Count > 0) return;
 
+        // The puppet's pieces are built off the physics thread: its shape lands when they are, bounded here.
+        ulong waited = Time.GetTicksMsec();
+        await UntilShape(30);
+        GD.Print($"SMOKE the puppet's shape landed {Time.GetTicksMsec() - waited} ms after the puppet checks");
+        Check(_main.Bodies.PuppetShape is not null, "the puppet had no shape 30 s after the start");
+        if (_failures.Count > 0) return;
+
         // Slow motion, by wall clock: a quarter of the session steps per real second, the same run.
         await Frames(10);
         double normal = await StepsPerSecond(1000);
@@ -264,6 +271,12 @@ public partial class Smoke : Node
         if (ReferenceEquals(s, _lastSession) && !s.Finished) Check(s.TickIndex == _lastTick + 1, $"{s.TickIndex - _lastTick} steps in one physics frame");
         _lastSession = s;
         _lastTick = s.TickIndex;
+    }
+
+    private async Task UntilShape(double seconds)
+    {
+        ulong t0 = Time.GetTicksMsec();
+        while (_main.Bodies.PuppetShape is null && Time.GetTicksMsec() - t0 < seconds * 1000) await Frame();
     }
 
     private async Task Frames(int n)

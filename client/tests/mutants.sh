@@ -38,5 +38,9 @@ mutant ball-bone-root       $F 's/new PieceField(n + j, joint.A, o, radius)/new 
 mutant seam-0               $D 's/Seam = 0.002f/Seam = 0f/'                     "inside a joint ball's radius"
 mutant thigh-078            $D 's/DollPrim.Cone(V(0, .2f, 0), .07f, V(0, -.22f, 0), .05f)/DollPrim.Cone(V(0, .2f, 0), .078f, V(0, -.22f, 0), .05f)/' "fold"
 
+P=client/PuppetPieces.cs; M=client/PuppetModel.cs
+mutant no-cache             $P 's/Cache.GetOrAdd(key, _ =>/Cache.GetOrAdd(new PieceKey(System.Guid.NewGuid().ToString()), _ =>/' "piece meshes"
+mutant build-in-update      $M 's/if (_pendingSet is not { } set || !_pending.All(t => t.IsCompleted)) return false;/if (_pendingSet is not { } set) return false; Task.WaitAll(_pending);/' "pieces were not built yet"
+
 echo "$ran mutants run, $failed not as expected (logs in $LOG)"
 [ $failed -eq 0 ]

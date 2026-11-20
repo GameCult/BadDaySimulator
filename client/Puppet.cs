@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using CultMath;
 using Godot;
@@ -9,10 +10,11 @@ namespace BadDay.Client;
 
 /// <summary>
 /// The puppet: its drawn surface is one SDF isosurface mesh (<see cref="PuppetField"/>) over the dynamic bodies, flat-shaded
-/// with a soft bevel, built once and rebuilt only when the topology signature (the shape bodies and the joints that blend them)
+/// with a soft bevel, built once and rebuilt only when the topology signature (the shape bodies)
 /// changes. Per-StableId Node3D carriers hold the pose lanes so physics interpolation has something to interpolate, and every
 /// frame <see cref="PuppetSkin"/> skins the surface on the CPU by those carriers' interpolated transforms relative to the
-/// bind pose and derives its facets, creases and vertex normals; this class uploads the result into the mesh's two streams in place.
+/// bind pose and derives its facets, creases and vertex normals; this class uploads the result into the mesh's two streams in place. Nothing meshes on
+/// the tick: the model publishes a shape when its pieces are built off the physics thread, and until then the previous shape (or none) is drawn.
 /// </summary>
 public partial class Puppet : Node3D
 {
@@ -89,7 +91,8 @@ public partial class Puppet : Node3D
             for (int i = 0; i < ids.Length; i++) if (IsPuppet(kind[i])) _seen.Add(ids[i]);
             foreach (var id in new List<ulong>(_nodes.Keys))
             {
-                if (_seen.Contains(id)) continue;
+                // A body gone from the lanes keeps its carrier, and its last pose, for as long as the drawn shape names it: the new shape's Rebuild frees it.
+                if (_seen.Contains(id) || (_model.Shape?.Ids.Contains(id) ?? false)) continue;
                 _nodes[id].QueueFree();
                 _nodes.Remove(id);
             }
@@ -151,6 +154,14 @@ public partial class Puppet : Node3D
     private void Rebuild()
     {
         var shape = _model.Shape!;
+        // The carriers neither the lanes nor the new shape name are freed now: the old shape no longer draws them.
+        var named = new HashSet<ulong>(shape.Ids);
+        foreach (var id in new List<ulong>(_nodes.Keys))
+        {
+            if (_seen.Contains(id) || named.Contains(id)) continue;
+            _nodes[id].QueueFree();
+            _nodes.Remove(id);
+        }
         _boneNodes = new Node3D[shape.Ids.Length]; _inverseBind = new Transform3D[shape.Ids.Length]; _bones = new Rigid[shape.Ids.Length];
         for (int i = 0; i < shape.Ids.Length; i++) { _boneNodes[i] = _nodes[shape.Ids[i]]; _inverseBind[i] = ToTransform(shape.Bind[i].Inverse()); }
         _surface = new PuppetSkin(shape);

@@ -97,16 +97,14 @@ public sealed record PieceCut(float3 Origin, float BallRadius)
 }
 
 /// <summary>
-/// One rigid piece's field, engine-free, in the bind: a dressed body's primitives smooth-min'd by <see cref="Doll.BodyBlend"/> (within the body only),
-/// minus its sockets; or a ball, the sphere of the joint's radius about its origin. The field is a distance
-/// bound, negative inside.
+/// One rigid piece's field, engine-free, in the piece's own frame: a body's primitives smooth-min'd by <see cref="Doll.BodyBlend"/> (within the body only)
+/// in the body's frame, minus its sockets at the joint origins in that frame; or a ball, the sphere of the joint's radius about the origin. The field is a
+/// distance bound, negative inside. <see cref="Placement"/> takes the piece to the bind: a body's by its bind, a ball's by its joint origin.
 /// </summary>
 public sealed class PieceField
 {
     private readonly DollPrim[] _prims = Array.Empty<DollPrim>();
-    private readonly Rigid _inverse;
-    private readonly Rigid _bind;
-    private readonly float3 _centre;
+    private readonly string _shape;
     private readonly float _radius;
     private readonly List<PieceCut> _cuts = new();
 
@@ -115,7 +113,10 @@ public sealed class PieceField
     public int Bone { get; }
     public bool IsBall { get; }
 
-    /// <summary>The corners of a box around the piece.</summary>
+    /// <summary>The piece's frame in the bind: the bind of a body, the translation to the joint origin for a ball.</summary>
+    public Rigid Placement { get; }
+
+    /// <summary>The corners of a box around the piece, in its frame.</summary>
     public float3 Lo { get; }
     public float3 Hi { get; }
     public IReadOnlyList<PieceCut> Cuts => _cuts;
@@ -123,33 +124,51 @@ public sealed class PieceField
     /// <summary>The grid (m) the piece is extracted on before decimation.</summary>
     public float Cell { get; }
 
-    /// <summary>The ball's centre and radius (for a ball).</summary>
-    public float3 BallCentre => _centre;
+    /// <summary>The ball's radius (for a ball).</summary>
     public float BallRadius => _radius;
 
-    internal PieceField(int index, int bone, DollPrim[] prims, Rigid bind)
+    internal PieceField(int index, int bone, DollPrim[] prims, string shape, Rigid bind)
     {
-        Index = index; Bone = bone; _prims = prims; _bind = bind; _inverse = bind.Inverse();
+        Index = index; Bone = bone; _prims = prims; _shape = shape; Placement = bind;
         var lo = new float3(float.MaxValue, float.MaxValue, float.MaxValue); var hi = -lo;
         float thinnest = float.MaxValue;
         foreach (var p in prims)
         {
-            var (c, r) = p.Bound(); var w = bind.Apply(c);
-            lo = math.min(lo, w - r); hi = math.max(hi, w + r);
+            var (c, r) = p.Bound();
+            lo = math.min(lo, c - r); hi = math.max(hi, c + r);
             thinnest = MathF.Min(thinnest, p.Thickness);
         }
         Lo = lo; Hi = hi;
         Cell = MathF.Min(Doll.BodyCell, thinnest / 2);
     }
 
-    internal PieceField(int index, int bone, float3 centre, float radius)
+    internal PieceField(int index, int bone, float3 origin, float radius)
     {
-        Index = index; Bone = bone; IsBall = true; _centre = centre; _radius = radius;
-        Lo = centre - radius; Hi = centre + radius;
+        Index = index; Bone = bone; IsBall = true; _radius = radius; _shape = "ball";
+        Placement = new Rigid(new float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1), origin);
+        Lo = new float3(-radius, -radius, -radius); Hi = new float3(radius, radius, radius);
         Cell = MathF.Min(Doll.BallCell, radius / 4);
     }
 
     internal void Cut(PieceCut cut) => _cuts.Add(cut);
+
+    /// <summary>The point of the bind <paramref name="p"/> in the piece's frame.</summary>
+    public float3 Local(float3 p) => Placement.Inverse().Apply(p);
+
+    /// <summary>
+    /// What the piece's mesh is a pure function of: the shape (a doll entry or a fallback physics shape, or a ball's radius) and its sockets (origin in the body's frame
+    /// and ball radius, to 0.1 mm, sorted). Left and right limbs share a key.
+    /// </summary>
+    public PieceKey Key
+    {
+        get
+        {
+            static long Q(float v) => (long)MathF.Round(v * 1e4f);
+            if (IsBall) return new PieceKey($"ball {Q(_radius)}");
+            var sockets = _cuts.Select(c => $"{Q(c.Origin.x)},{Q(c.Origin.y)},{Q(c.Origin.z)},{Q(c.BallRadius)}").OrderBy(x => x, StringComparer.Ordinal);
+            return new PieceKey($"{_shape}|{string.Join(";", sockets)}");
+        }
+    }
 
     private static float SmoothMin(float a, float b, float k)
     {
@@ -157,13 +176,12 @@ public sealed class PieceField
         return b + (a - b) * h - k * h * (1 - h);
     }
 
-    /// <summary>The field at world point <paramref name="p"/>.</summary>
+    /// <summary>The field at <paramref name="p"/>, in the piece's frame.</summary>
     public float Value(float3 p)
     {
-        if (IsBall) return math.length(p - _centre) - _radius;
-        var q = _inverse.Apply(p);
-        float d = _prims[0].Dist(q);
-        for (int i = 1; i < _prims.Length; i++) d = SmoothMin(d, _prims[i].Dist(q), Doll.BodyBlend);
+        if (IsBall) return math.length(p) - _radius;
+        float d = _prims[0].Dist(p);
+        for (int i = 1; i < _prims.Length; i++) d = SmoothMin(d, _prims[i].Dist(p), Doll.BodyBlend);
         foreach (var c in _cuts) d = MathF.Max(d, c.SocketRadius - math.length(p - c.Origin));
         return d;
     }
@@ -177,18 +195,18 @@ public sealed class PieceField
 
     /// <summary>
     /// The limb guard's skeleton: the primitives' axis points (a round cone's at five stations, the others' centre) that lie inside the piece, each with
-    /// half its depth as clearance; a ball's is its centre with half its radius.
+    /// half its depth as clearance; a ball's is its centre with half its radius. In the piece's frame.
     /// </summary>
     public (float3 P, float Clear)[] Guard()
     {
-        if (IsBall) return new[] { (_centre, 0.5f * _radius) };
+        if (IsBall) return new[] { (new float3(0, 0, 0), 0.5f * _radius) };
         var list = new List<(float3, float)>();
         foreach (var pr in _prims)
         {
             var stations = pr.Shape == DollShape.RoundCone ? new[] { 0f, .25f, .5f, .75f, 1f } : new[] { 0f };
             foreach (float s in stations)
             {
-                var w = _bind.Apply(pr.A + (pr.B - pr.A) * s);
+                var w = pr.A + (pr.B - pr.A) * s;
                 float v = Value(w);
                 if (v < -0.01f) list.Add((w, 0.5f * -v));
             }
@@ -209,12 +227,15 @@ public sealed class PieceField
     /// </summary>
     public bool Allowed(float3 p, bool tight)
     {
-        if (IsBall) return MathF.Abs(math.length(p - _centre) - _radius) <= Doll.BallError;
+        if (IsBall) return MathF.Abs(math.length(p) - _radius) <= Doll.BallError;
         if (MathF.Abs(Value(p)) > (tight ? Doll.SeatError : Doll.FacetError)) return false;
         foreach (var c in _cuts) if (math.length(p - c.Origin) < c.BallRadius + 0.0002f) return false;
         return true;
     }
 }
+
+/// <summary>The pieces of a puppet, bodies first then balls (see <see cref="PuppetShape"/>), with what <see cref="PuppetField.Assemble"/> needs to place them.</summary>
+public sealed record PieceSet(IReadOnlyList<PuppetBody> Bodies, IReadOnlyList<PuppetJoint> Joints, PieceField[] Fields);
 
 /// <summary>
 /// The puppet's surface, engine-free: the ball-jointed doll as rigid pieces (lodur:ruling:puppet-joints-ball-jointed-doll). Every shape body is dressed
@@ -237,43 +258,52 @@ public static class PuppetField
         joint is Box3DSoaJointKind.Revolute or Box3DSoaJointKind.Spherical or Box3DSoaJointKind.Weld && HasShape(a) && HasShape(b);
 
     /// <summary>
-    /// The pieces' fields, bodies first (piece i is body i) then one ball per joint (piece n + j): a body from its <see cref="Doll"/> entry or its physics
-    /// shape; a ball of the child's entry radius (or the child's thickness) at the joint origin, kept by the parent; at each joint both bodies lose the
-    /// socket sphere (ball radius + <see cref="Doll.Seam"/>) and nothing else.
+    /// The pieces' fields, bodies first (piece i is body i) then one ball per joint (piece n + j), each in its own frame: a body from its <see cref="Doll"/> entry
+    /// or its physics shape, in the body's frame (placed by its bind); a ball of the child's entry radius (or the child's thickness) about the joint origin, kept by
+    /// the parent; at each joint both bodies lose the socket sphere (ball radius + <see cref="Doll.Seam"/>) at the origin in their frame, and nothing else.
     /// </summary>
-    public static PieceField[] Dress(IReadOnlyList<PuppetBody> bodies, IReadOnlyList<PuppetJoint> joints)
+    public static PieceSet Pieces(IReadOnlyList<PuppetBody> bodies, IReadOnlyList<PuppetJoint> joints)
     {
         int n = bodies.Count;
-        var pieces = new PieceField[n + joints.Count];
+        var fields = new PieceField[n + joints.Count];
         for (int i = 0; i < n; i++)
-            pieces[i] = new PieceField(i, i, Doll.Find(bodies[i].Kind, bodies[i].Size)?.Prims ?? Doll.Fallback(bodies[i].Kind, bodies[i].Size), bodies[i].Bind);
+        {
+            var entry = Doll.Find(bodies[i].Kind, bodies[i].Size);
+            string shape = entry is null ? $"{bodies[i].Kind} {MathF.Round(bodies[i].Size.x * 1e4f)} {MathF.Round(bodies[i].Size.y * 1e4f)} {MathF.Round(bodies[i].Size.z * 1e4f)}" : $"entry {Array.IndexOf(Doll.Entries, entry)}";
+            fields[i] = new PieceField(i, i, entry?.Prims ?? Doll.Fallback(bodies[i].Kind, bodies[i].Size), shape, bodies[i].Bind);
+        }
         for (int j = 0; j < joints.Count; j++)
         {
             var joint = joints[j];
             var o = bodies[joint.A].Bind.Apply(joint.LocalOrigin);
             var child = Doll.Find(bodies[joint.B].Kind, bodies[joint.B].Size);
             float radius = child is { BallRadius: > 0 } ? child.BallRadius : Thickness(bodies[joint.B].Kind, bodies[joint.B].Size);
-            pieces[n + j] = new PieceField(n + j, joint.A, o, radius);
-            pieces[joint.A].Cut(new PieceCut(o, radius));
-            pieces[joint.B].Cut(new PieceCut(o, radius));
+            fields[n + j] = new PieceField(n + j, joint.A, o, radius);
+            fields[joint.A].Cut(new PieceCut(joint.LocalOrigin, radius));
+            fields[joint.B].Cut(new PieceCut(bodies[joint.B].Bind.Inverse().Apply(o), radius));
         }
-        return pieces;
+        return new PieceSet(bodies, joints, fields);
     }
 
-    /// <summary>Builds the shape: dresses the pieces, extracts each fine, decimates it, and welds the pieces' meshes into one (no vertex is shared across pieces).</summary>
+    /// <summary>One piece's mesh: extracted fine and decimated to what <see cref="PieceField.Allowed"/> says, in the piece's frame. A pure function of the piece's key; <see cref="PuppetPieces"/> caches it.</summary>
+    internal static (float3[] V, int[] Tris) Mesh(PieceField f)
+    {
+        var (v, tris) = Extract(f);
+        return PuppetDecimate.Run(v, tris, Doll.FacetAlpha, Doll.FacetScale, new DecimateRules(f.Allowed, f.Tight, f.Guard()));
+    }
+
+    /// <summary>Builds the shape and waits for it: the pieces' meshes come from <see cref="PuppetPieces"/> (built once per key), so a second build of the same doll builds nothing.</summary>
     public static PuppetShape Build(IReadOnlyList<PuppetBody> bodies, IReadOnlyList<PuppetJoint> joints)
     {
+        var set = Pieces(bodies, joints);
+        return Assemble(set, set.Fields.Select(f => PuppetPieces.Get(f.Key, f).Result).ToArray());
+    }
+
+    /// <summary>Places the pieces' meshes in the bind and welds them into one shape (no vertex is shared across pieces): a body's vertex is its bind applied, a ball's the joint origin plus it.</summary>
+    public static PuppetShape Assemble(PieceSet set, IReadOnlyList<(float3[] V, int[] Tris)> meshes)
+    {
+        var bodies = set.Bodies; var joints = set.Joints; var pieces = set.Fields;
         int n = bodies.Count;
-        var pieces = Dress(bodies, joints);
-        // Each piece is meshed and decimated on its own (nothing is shared), so they run side by side; the shape is welded in piece order.
-        var meshes = new (float3[] V, int[] Tris)[pieces.Length];
-        Parallel.For(0, pieces.Length, i =>
-        {
-            var f = pieces[i];
-            var (v, tris) = Extract(f);
-            var rules = new DecimateRules(f.Allowed, f.Tight, f.Guard());
-            meshes[i] = PuppetDecimate.Run(v, tris, Doll.FacetAlpha, Doll.FacetScale, rules);
-        });
         var vertices = new List<float3>(); var bone = new List<int>(); var piece = new List<int>();
         var corners = new List<int>();
         for (int i = 0; i < pieces.Length; i++)
@@ -281,7 +311,7 @@ public static class PuppetField
             var (v, tris) = meshes[i];
             // The nets wind every quad counter-clockwise seen from the field's outside; Godot's front face is clockwise, so each triangle is emitted reversed.
             int first = vertices.Count;
-            vertices.AddRange(v);
+            foreach (var q in v) vertices.Add(pieces[i].Placement.Apply(q));
             for (int k = 0; k < v.Length; k++) { bone.Add(pieces[i].Bone); piece.Add(i); }
             for (int k = 0; k < tris.Length; k += 3) { corners.Add(first + tris[k]); corners.Add(first + tris[k + 2]); corners.Add(first + tris[k + 1]); }
         }
@@ -292,7 +322,7 @@ public static class PuppetField
         var js = new (Box3DSoaJointKind, int, int, float3)[joints.Count]; var radii = new float[joints.Count];
         for (int j = 0; j < js.Length; j++)
         {
-            js[j] = (joints[j].Kind, joints[j].A, joints[j].B, pieces[n + j].BallCentre);
+            js[j] = (joints[j].Kind, joints[j].A, joints[j].B, pieces[n + j].Placement.T);
             radii[j] = pieces[n + j].BallRadius;
         }
         return new PuppetShape

@@ -94,7 +94,7 @@ public partial class RenderCheck : Node
     private const float CornerBlendFloor = 0.05f, MaxCornerMedian = 0.7f, MinCornerEffect = 0.8f, SharpCrease = 1.0f, SharpCreaseTop = 1.2f;
 
     /// <summary>Across triangle boundaries: the pairs of adjacent pixels the check must reach (the shares and percentiles each view allows are in <see cref="Views"/>).</summary>
-    private const int MinPairs = 3600;
+    private const int MinPairs = 20000;
 
     /// <summary>The flicker check's reference is this many times the window on a side; each view must reach at least this many interior and highlight pixels (see <see cref="FlickerCheck"/>) or it proves nothing.</summary>
     private const int FlickerSupersample = 8, MinFlickerPixels = 15000, MinFlickerHighlights = 200;
@@ -147,7 +147,10 @@ public partial class RenderCheck : Node
         var main = GD.Load<PackedScene>("res://Main.tscn").Instantiate<Main>();
         AddChild(main);
         if (main.Failure is { } failure) { GD.PrintErr("RENDER FAIL: Main could not start a session: " + failure); return false; }
-        if (main.Bodies.PuppetShape is not { } shape) { GD.PrintErr("RENDER FAIL: the puppet has no mesh"); return false; }
+        // The puppet's pieces are built off the physics thread: wait, bounded, for its shape.
+        ulong started = Time.GetTicksMsec();
+        while (main.Bodies.PuppetShape is null && Time.GetTicksMsec() - started < 30000) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        if (main.Bodies.PuppetShape is not { } shape) { GD.PrintErr("RENDER FAIL: the puppet has no mesh 30 s after the start"); return false; }
 
         // The puppet alone, on black, with a parent that is neither at the origin nor unturned.
         main.SetPhysicsProcess(false);
@@ -161,7 +164,7 @@ public partial class RenderCheck : Node
         if (main.Chamber.Glow < 0.9f) { GD.PrintErr($"RENDER FAIL: the chamber glows {main.Chamber.Glow}, not near full; the light probe proves nothing"); return false; }
         foreach (var scenery in main.Bodies.GetChildren().OfType<MeshInstance3D>()) scenery.Visible = false;
         main.GetChildren().OfType<WorldEnvironment>().Single().Environment.BackgroundColor = Colors.Black;
-        main.Bodies.Transform = new Transform3D(new Basis(Vector3.Up, 0.45f), new Vector3(0.15f, 0f, 0.1f));
+        main.Bodies.Transform = new Transform3D(new Basis(Vector3.Up, 1.0f), new Vector3(0.15f, 0f, 0.1f));
 
         // The puppet is drawn once as it was created before it is bent: a surface that kept anything from its first pose, creases above all,
         // is wrong in the next, and nothing here would see it if the bent pose were the first.
@@ -363,12 +366,12 @@ public partial class RenderCheck : Node
     private sealed record Surface(Vector3[] P, int[] Weld, Vector3[] Facet, float[] Altitude, float[] Smallest, Vector3[] VertexNormal, float[] Crease);
 
     /// <summary>
-    /// One look at the drawn normal: where from (the offset from the torso and the field of view), in which pose and at which window size, and
+    /// One look at the drawn normal: where from (the offset from the joint's origin, an index into the shape's joints, and the field of view), in which pose and at which window size, and
     /// what it must reach to prove anything (interior, bevel-band, width-capped, corner-blend and sharply creased pixels) and, if it
     /// reads the continuity across triangles, the bar for it in that pose.
     /// </summary>
     private readonly record struct NormalViewSpec(string Label, Vector3 Offset, float Fov, int Bend, Vector2I Size, string PngArg, bool Continuity, float MaxAcross30, float MaxAcrossP90,
-        int MinKept, int MinBand, int MinClamped, int MinCorner, int MinSharp);
+        int MinKept, int MinBand, int MinClamped, int MinCorner, int MinSharp, int Joint);
 
     private static readonly Vector2I Hd = new(1280, 720), FullHd = new(1920, 1080);
 
@@ -377,15 +380,16 @@ public partial class RenderCheck : Node
     /// decides, and the same far view at 1080 lines is where a width fixed at 720 lines is wrong; mid (2.2 m) is in between, where the floor and
     /// the screen width are within a tenth of each other and the width changes across the frame. Bend 90 is a pose of sharp creases: the
     /// crease clamp is reached there, and the continuity across triangles has its own bar, since some edges fold past 120 degrees and 2 px
-    /// cannot soften them.
+    /// cannot soften them. Each view looks at the joint of the doll where its floors are best reached (the joints' seat bands are where the triangles are small);
+    /// the floors are the shipped blended puppet's (cf0ef3a), not what the doll's 1300 triangles reach (see the cut report).
     /// </summary>
     private static readonly NormalViewSpec[] Views =
     {
-        new("close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 60, Hd, "--normals-png=", true, 0.022f, 9.9f, 200000, 20000, 5, 940, 73),
-        new("far", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, Hd, "--normals-far-png=", false, 0f, 0f, 10000, 100, 44, 73, 0),
-        new("bend 90 close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 90, Hd, "--normals-bend90-png=", true, 0.03f, 7f, 200000, 20000, 0, 969, 0),
-        new("mid 1080", new Vector3(1.13f, 0.645f, 1.77f), 30f, 60, FullHd, "--normals-mid-png=", false, 0f, 0f, 30000, 100, 100, 780, 40),
-        new("far 1080", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, FullHd, "--normals-far1080-png=", false, 0f, 0f, 20000, 1000, 150, 600, 20),
+        new("close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 60, Hd, "--normals-png=", true, 0.005f, 6f, 200000, 20000, 200, 5000, 1000, 9),
+        new("far", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, Hd, "--normals-far-png=", false, 0f, 0f, 10000, 100, 150, 400, 0, 10),
+        new("bend 90 close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 90, Hd, "--normals-bend90-png=", true, 0.03f, 7f, 200000, 20000, 200, 5000, 100, 0),
+        new("mid 1080", new Vector3(1.13f, 0.645f, 1.77f), 30f, 60, FullHd, "--normals-mid-png=", false, 0f, 0f, 30000, 100, 100, 3000, 40, 4),
+        new("far 1080", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, FullHd, "--normals-far1080-png=", false, 0f, 0f, 20000, 1000, 150, 3000, 20, 9),
     };
 
     private async Task<Transform3D[]> Pose(PuppetShape shape, Node3D[] carriers, float degrees)
@@ -422,7 +426,8 @@ public partial class RenderCheck : Node
             if (spec.Bend != bend)
             {
                 bend = spec.Bend;
-                surface = BuildSurface(shape, await Pose(shape, carriers, bend));
+                world = await Pose(shape, carriers, bend);
+                surface = BuildSurface(shape, world);
             }
             if (window.Size != spec.Size)
             {
@@ -431,7 +436,8 @@ public partial class RenderCheck : Node
             }
             var camera = new Camera3D { Fov = spec.Fov, Current = true };
             AddChild(camera);
-            var target = carriers[torso].GlobalPosition;
+            var joint = shape.Joints[spec.Joint];
+            var target = world[joint.A] * new Vector3(joint.Origin.x, joint.Origin.y, joint.Origin.z);
             camera.GlobalPosition = target + spec.Offset;
             camera.LookAt(target, Vector3.Up);
             puppet.ShowNormals = true;
@@ -527,7 +533,7 @@ public partial class RenderCheck : Node
         foreach (var view in FlickerViews) ok &= await FlickerShifts(rig, view, view.Label);
         ok &= await FlickerOrbit(rig, FlickerViews[0]);
         // The same puppet bent, under a moved parent, as the oracle frames pose it: its highlights fall elsewhere, and a bound fitted to the session pose alone fails the shipped shader here.
-        main.Bodies.Transform = new Transform3D(new Basis(Vector3.Up, 0.45f), new Vector3(0.15f, 0f, 0.1f));
+        main.Bodies.Transform = new Transform3D(new Basis(Vector3.Up, 1.0f), new Vector3(0.15f, 0f, 0.1f));
         foreach (int degrees in FlickerBends)
         {
             await Pose(shape, bodies, degrees);
@@ -920,7 +926,7 @@ public partial class RenderCheck : Node
         if (tiltMedian < MinBandTilt) { GD.PrintErr($"RENDER FAIL: the {label} bevel band's reference normal is {tiltMedian:F1} degrees from the facet's, under {MinBandTilt}; the check cannot see a bevel"); ok = false; }
         if (p90 > MaxNormalP90) { GD.PrintErr($"RENDER FAIL: the {label} drawn shading normal is {p90:F2} degrees from the CPU reference at the 90th percentile, over {MaxNormalP90}"); ok = false; }
         if (bandMedian > MaxBandMedian) { GD.PrintErr($"RENDER FAIL: across the {label} bevel band the drawn normal is {bandMedian:F2} degrees from the CPU reference (median), over {MaxBandMedian}; the bevel is not where or as large as the creases say"); ok = false; }
-        if (spec.MinClamped > 0 && clampedMedian > MaxClampedMedian) { GD.PrintErr($"RENDER FAIL: on the {label} triangles whose width the smallest altitude caps the drawn normal is {clampedMedian:F2} degrees from the CPU reference (median), over {MaxClampedMedian}; the cap is not where the shader puts it"); ok = false; }
+        if (clampedMedian > MaxClampedMedian) { GD.PrintErr($"RENDER FAIL: on the {label} triangles whose width the smallest altitude caps the drawn normal is {clampedMedian:F2} degrees from the CPU reference (median), over {MaxClampedMedian}; the cap is not where the shader puts it"); ok = false; }
         if (cornerErr.Count < spec.MinCorner || sharp.Count < spec.MinSharp) { GD.PrintErr($"RENDER FAIL: the {label} normal check reached {cornerErr.Count} corner-blend and {sharp.Count} sharp-crease pixels, under {spec.MinCorner} and {spec.MinSharp}; it proves nothing about them"); ok = false; }
         if (spec.MinCorner > 0 && effectMedian < MinCornerEffect) { GD.PrintErr($"RENDER FAIL: the {label} corner blend moves the reference normal by {effectMedian:F1} degrees (median), under {MinCornerEffect}; the check cannot see a corner blend that is off"); ok = false; }
         if (spec.MinCorner > 0 && cornerMedian > MaxCornerMedian) { GD.PrintErr($"RENDER FAIL: where the {label} corner blend reaches, the drawn normal is {cornerMedian:F2} degrees from the CPU reference (median), over {MaxCornerMedian}; the vertex normal is in the wrong space or the blend has the wrong radius"); ok = false; }

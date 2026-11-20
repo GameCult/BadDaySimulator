@@ -41,10 +41,18 @@ public static class PuppetChecks
         void Check(bool ok, string what) { if (!ok) fail(what); }
         PuppetModel Fresh() => new();
 
+        // A shape is published when its pieces are built: the first update starts them, the wait lets them land, and the next update publishes once.
+        bool Published(PuppetModel model, List<PuppetBody> b, List<PuppetJointLane> j)
+        {
+            bool now = model.Update(b, j);
+            model.Building?.Wait();
+            return now || model.Update(b, j);
+        }
+
         // The first update builds; the same signature again, even from new lists, never does.
         var m = Fresh();
         var (bodies, joints) = Chain();
-        Check(m.Update(bodies, joints) && m.Shape is not null, "the first update did not build the puppet");
+        Check(Published(m, bodies, joints) && m.Shape is not null, "the first update did not build the puppet");
         var first = m.Shape;
         var (again, againJoints) = Chain();
         Check(!m.Update(again, againJoints) && ReferenceEquals(m.Shape, first), "an unchanged signature rebuilt the puppet");
@@ -55,31 +63,62 @@ public static class PuppetChecks
         moved.Joints[0] = moved.Joints[0] with { Origin = new float3(9, 9, 9) };
         Check(!m.Update(moved.Bodies, moved.Joints) && ReferenceEquals(m.Shape, first), "bodies that only moved rebuilt the puppet");
 
-        // Each change of topology rebuilds exactly once, and then holds.
+        // Each change of the bodies publishes a new shape exactly once, and then holds.
         void Changes(string what, Action<List<PuppetBody>, List<PuppetJointLane>> edit)
         {
             var model = Fresh();
             var (b, j) = Chain();
-            model.Update(b, j);
+            Published(model, b, j);
             var built = model.Shape;
             edit(b, j);
-            Check(model.Update(b, j) && !ReferenceEquals(model.Shape, built), $"{what}: the signature changed and the puppet was not rebuilt");
+            Check(Published(model, b, j) && !ReferenceEquals(model.Shape, built), $"{what}: the signature changed and the puppet was not rebuilt");
             var rebuilt = model.Shape;
             Check(!model.Update(b, j) && ReferenceEquals(model.Shape, rebuilt), $"{what}: the new signature rebuilt again");
         }
-        Changes("a joint removed", (b, j) => j.RemoveAt(1));
         Changes("a body added", (b, j) => b.Add(Body(13, Box3DSoaKind.Sphere, 0.03f, 0f, 0.5f)));
         Changes("a body removed", (b, j) => { b.RemoveAt(2); j.RemoveAt(1); });
         Changes("a size changed", (b, j) => b[0] = b[0] with { Size = new float3(0.035f, 0.05f, 0f) });
         Changes("a shape kind changed", (b, j) => b[2] = b[2] with { Kind = Box3DSoaKind.Capsule, Size = new float3(0.03f, 0.02f, 0f) });
-        Changes("a joint's kind changed", (b, j) => j[0] = j[0] with { Kind = Box3DSoaJointKind.Weld });
         Changes("a body's identity changed", (b, j) => { b[1] = b[1] with { Id = 21 }; j[0] = j[0] with { B = 21 }; j[1] = j[1] with { A = 21 }; });
+
+        // Sockets and balls are fixed at first sight like the bind (lodur:ruling:doll-severed-keeps-socket): severing a joint, changing its kind or adding a joint
+        // later changes nothing and builds nothing; a body that leaves takes its joints' balls with it.
+        {
+            var model = Fresh();
+            var (b, j) = Chain();
+            Published(model, b, j);
+            var drawn = model.Shape!; long keys = PuppetPieces.Built;
+            j.RemoveAt(1);
+            Check(!model.Update(b, j) && ReferenceEquals(model.Shape, drawn), "severing a joint changed the drawn shape: its socket and ball are kept from first sight");
+            j[0] = j[0] with { Kind = Box3DSoaJointKind.Weld };
+            j.Add(new PuppetJointLane(Box3DSoaJointKind.Weld, 10, 12, new float3(0, 0.3f, 0)));
+            Check(!model.Update(b, j) && ReferenceEquals(model.Shape, drawn) && PuppetPieces.Built == keys, "a joint changed or added after first sight rebuilt the puppet: it gets no ball or socket");
+            Check(drawn.Joints.Length == 2 && drawn.PieceCount == 5, $"the chain has {drawn.Joints.Length} joints and {drawn.PieceCount} pieces, not the 2 and 5 of its first sight");
+            b.RemoveAt(2);
+            Check(Published(model, b, j) && model.Shape!.Joints.Length == 1, "a body that left kept its joint's ball");
+        }
+
+        // Pieces are cached by key and built off the tick: a body whose pieces are not built leaves Update false with the previous shape drawn, until they are.
+        {
+            var model = Fresh();
+            var (b, j) = Chain();
+            Published(model, b, j);
+            var drawn = model.Shape;
+            b[0] = b[0] with { Size = new float3(0.0371f, 0.0529f, 0f) }; // a size never built
+            Check(!model.Update(b, j) && ReferenceEquals(model.Shape, drawn), "an update whose pieces were not built yet published or dropped the previous shape");
+            Check(model.Building is not null, "an update with unbuilt pieces is not building them");
+            model.Building?.Wait();
+            Check(model.Update(b, j) && !ReferenceEquals(model.Shape, drawn), "the shape was not published once its pieces were built");
+            Check(!model.Update(b, j) && model.Building is null, "the published shape was published again");
+        }
 
         // A body with no doll entry is drawn as its physics shape, and any number of bodies is drawn: a crowd of 40 spheres builds a shape whose every body
         // owns a closed piece, and skins to a surface with a facet for every triangle.
         var many = Fresh();
+        long keysBefore = PuppetPieces.Built;
         var crowd = Enumerable.Range(0, 40).Select(i => Body((ulong)(100 + i), Box3DSoaKind.Sphere, 0.03f, 0f, i * 0.2f)).ToList();
-        Check(many.Update(crowd, new List<PuppetJointLane>()) && many.Shape is { Corners.Length: > 0 }, "a puppet of 40 bodies was not built");
+        Check(Published(many, crowd, new List<PuppetJointLane>()) && many.Shape is { Corners.Length: > 0 }, "a puppet of 40 bodies was not built");
+        Check(PuppetPieces.Built - keysBefore <= 1, $"a crowd of 40 equal spheres built {PuppetPieces.Built - keysBefore} piece meshes, not one: the pieces are not cached by key");
         var crowdShape = many.Shape!;
         Check(crowdShape.Ids.Length == 40, $"the crowd's shape carries {crowdShape.Ids.Length} bodies, not 40");
         Check(!many.Update(crowd, new List<PuppetJointLane>()), "a crowd reported a change with none");
@@ -98,8 +137,13 @@ public static class PuppetChecks
         var inputs = realLanes.Select(j => new PuppetJoint(j.Kind, index[j.A], index[j.B], real[index[j.A]].Bind.Inverse().Apply(j.Origin))).ToList();
         var clock = Stopwatch.StartNew();
         var puppet = PuppetField.Build(real, inputs);
-        long built = clock.ElapsedMilliseconds;
-        var fields = PuppetField.Dress(real, inputs);
+        long built = clock.ElapsedMilliseconds; // waits on the pieces the scene's puppet already asked for
+        var fields = PuppetField.Pieces(real, inputs).Fields;
+        Console.WriteLine($"PUPPET {PuppetPieces.Built} piece meshes built so far, {PuppetPieces.BuildMilliseconds:F0} ms summed over the thread pool");
+        long builtKeys = PuppetPieces.Built; var again2 = Stopwatch.StartNew();
+        PuppetField.Build(real, inputs);
+        Console.WriteLine($"PUPPET the same doll again, from the cache: {again2.ElapsedMilliseconds} ms, {PuppetPieces.Built - builtKeys} piece meshes built");
+        Check(PuppetPieces.Built == builtKeys, $"building the same doll twice built {PuppetPieces.Built - builtKeys} piece meshes the second time");
         var triangles = PieceTriangles(puppet);
         Console.WriteLine($"PUPPET {puppet.Triangles} triangles ({triangles.Take(real.Count).Sum(t => t.Length)} in {real.Count} bodies, {triangles.Skip(real.Count).Sum(t => t.Length)} in {inputs.Count} balls), {puppet.Vertices.Length} vertices, built in {built} ms; per piece {string.Join(" ", triangles.Select(t => t.Length))}");
 
@@ -170,7 +214,7 @@ public static class PuppetChecks
             foreach (var p in Samples(shape, triangles[f.Index]))
             {
                 probed++;
-                foreach (var c in f.Cuts) if (math.length(p - c.Origin) < c.BallRadius + 0.0002f - 1e-5f) inside++;
+                foreach (var c in f.Cuts) if (math.length(f.Local(p) - c.Origin) < c.BallRadius + 0.0002f - 1e-5f) inside++;
             }
         }
         check(probed > 1000, $"the clearance check is vacuous: {probed} points");
@@ -229,7 +273,7 @@ public static class PuppetChecks
             int ball = shape.Ids.Length + j; float socket = shape.BallRadius[j] + Doll.Seam;
             foreach (int body in new[] { a, b })
             {
-                var cup = dirs.Where(d => fields[body].Value(o + d * (socket + 0.001f)) < 0).ToArray();
+                var cup = dirs.Where(d => fields[body].Value(fields[body].Local(o + d * (socket + 0.001f))) < 0).ToArray();
                 if (cup.Length == 0) continue;
                 var axis = math.normalize(cup.Aggregate(new float3(0, 0, 0), (x, d) => x + d));
                 float cosMax = cup.Min(d => math.dot(d, axis)), thetaMax = MathF.Acos(MathF.Max(-1, cosMax));
@@ -269,7 +313,7 @@ public static class PuppetChecks
             {
                 foreach (var p in Samples(shape, triangles[f.Index]))
                 {
-                    float e = MathF.Abs(math.length(p - f.BallCentre) - f.BallRadius);
+                    float e = MathF.Abs(math.length(f.Local(p)) - f.BallRadius);
                     worstBall = MathF.Max(worstBall, e);
                     if (e > Doll.BallError + 1e-4f) overBall++;
                 }
@@ -279,10 +323,10 @@ public static class PuppetChecks
             {
                 var a = At(shape, 3 * t); var b = At(shape, 3 * t + 1); var c = At(shape, 3 * t + 2);
                 var points = new[] { a, b, c, (a + b + c) / 3f, (a + b) / 2f, (b + c) / 2f, (c + a) / 2f };
-                float worst = points.Max(p => MathF.Abs(f.Value(p)));
+                float worst = points.Max(p => MathF.Abs(f.Value(f.Local(p))));
                 worstBody = MathF.Max(worstBody, worst);
                 if (worst > Doll.FacetError + 1e-4f) over++;
-                if (!(f.Tight(a) && f.Tight(b) && f.Tight(c))) continue;
+                if (!(f.Tight(f.Local(a)) && f.Tight(f.Local(b)) && f.Tight(f.Local(c)))) continue;
                 bandTriangles++;
                 worstBand = MathF.Max(worstBand, worst);
                 if (worst > Doll.SeatError + 0.001f + 1e-4f) overBand++;
@@ -300,12 +344,13 @@ public static class PuppetChecks
     {
         int bad = 0, points = 0; float worst = float.MaxValue;
         foreach (var f in fields)
-            foreach (var (point, clear) in f.Guard())
+            foreach (var (local, clear) in f.Guard())
             {
                 points++;
+                var point = f.Placement.Apply(local);
                 float d = triangles[f.Index].Min(t => PuppetDecimate.PointTriangle(point, At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2)));
                 worst = MathF.Min(worst, d / clear);
-                if (f.Value(point) >= 0 || d < clear - 1e-4f) bad++;
+                if (f.Value(local) >= 0 || d < clear - 1e-4f) bad++;
             }
         check(points > 30, $"the limb check is vacuous: {points} guard points");
         check(bad == 0, $"{bad} of {points} guard points are outside their piece or nearer its surface than half their depth (worst {worst:F2} of the clearance)");
