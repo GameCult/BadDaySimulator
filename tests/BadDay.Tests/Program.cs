@@ -848,6 +848,38 @@ public static class Program
             Check(clipped.Outcome == Outcome.WillBroke && clipped.EndMs == 85000 && clipped.Timeline.All(e => e.Kind != StressEntryKind.Endured && e.Goal != OfficeGoal.Calm), $"a release past MaxSeconds ended at {clipped.EndMs}");
         }),
 
+        ("office rage onset: the rage is involuntary for RageOnsetSeconds, so it costs no will in that first second and drains at RageEffort after it", () =>
+        {
+            double ResolveAfter(StressParameters p, long afterMs)
+            {
+                var r = Office(p with { SampleEverySeconds = 0.1 }, 1);
+                long rageMs = r.Timeline.First(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Rage).TimeMs;
+                return r.Timeline.First(e => e.Kind == StressEntryKind.Sample && e.TimeMs >= rageMs + afterMs).Resolve;
+            }
+            var costly = new StressParameters { RageEffort = 0.5 };
+            double onsetEnd = ResolveAfter(costly, 900), later = ResolveAfter(costly, 1900), noOnset = ResolveAfter(costly with { RageOnsetSeconds = 0.0 }, 900);
+            Check(onsetEnd > 0.8, $"resolve {onsetEnd:F3} at 0.9 s into a rage with a 1 s onset: the onset cost will");
+            Check(later < onsetEnd - 0.35, $"resolve {later:F3} at 1.9 s, {onsetEnd:F3} at 0.9 s: the rage did not start costing after the onset");
+            Check(noOnset < 0.65, $"resolve {noOnset:F3} at 0.9 s into a rage with no onset: it should already be paying");
+        }),
+
+        ("office --body summary: the rage line names its span and how it ended (to calm, or clipped by --max), and a break clipped before the rage says so", () =>
+        {
+            string Out(params string[] a)
+            {
+                var w = new StringWriter();
+                BadDay.Cli.Program.Execute(a, w);
+                return w.ToString().Replace("\r\n", "\n");
+            }
+            string Rage(string o) => o.Split('\n').First(l => l.StartsWith("rage from ") || l.StartsWith("the will broke") || l.StartsWith("no rage"));
+            string full = Rage(Out("office", "--seed", "1", "--body"));
+            Check(full.StartsWith("rage from 83458 ms for 11.3 s (to calm at 94717 ms); strikes "), $"full run: {full}");
+            string clipped = Rage(Out("office", "--seed", "1", "--body", "--max", "90"));
+            Check(clipped.StartsWith("rage from 83458 ms for 6.5 s (clipped by --max, no calm); strikes "), $"clipped in the rage: {clipped}");
+            string early = Rage(Out("office", "--seed", "1", "--body", "--max", "83.4"));
+            Check(early.Contains("before the rage took over"), $"clipped before the rage: {early}");
+        }),
+
         ("office calm is terminal: with the release moved off calm the run goes to MaxSeconds, and after the Calm row the goal never changes again, whatever the senses and the mending will do", () =>
         {
             // Bursts of heavy load with quiet between: the will breaks, mends in the quiet, and breaks again, which the office's steady load never does.
