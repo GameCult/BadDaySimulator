@@ -18,11 +18,13 @@ namespace BadDay.Client.Tests;
 public partial class RenderCheck : Node
 {
     /// <summary>
-    /// A correct render measures 1.000 in this pose. The four skinning mutants Soul found (a flipped weight, no inverse bind, the
-    /// creation pose as the bind, an inverted CUSTOM1 weight) and one that ignores the parent transform measure 0.10 to 0.61, so
-    /// 0.95 keeps a wide gap on both sides.
+    /// A correct render measures 1.0000 in this pose, on every run so far, so the floor sits at the measurement's noise. Soul's
+    /// gross skinning mutants (a flipped weight, no inverse bind, the creation pose as the bind, an inverted CUSTOM1 weight, an
+    /// ignored parent) measure 0.10 to 0.61; the localized ones (a forearm bone 10 degrees off 0.982, a bone 2 cm off 0.973, hard
+    /// weights 0.998) were under a floor of 0.95 and only fail at this one. Gaps that remain: the silhouette cannot see the shading
+    /// normal (unskinned normals measure 1.0000) or the culling box (the puppet stays on screen with a 1 cm box).
     /// </summary>
-    private const float MinIou = 0.95f;
+    private const float MinIou = 0.999f;
 
     /// <summary>The puppet's lit faces: at most this share of its pixels may be at 250 or more of 255.</summary>
     private const float MaxClipped = 0.02f;
