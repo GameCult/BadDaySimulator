@@ -27,6 +27,7 @@ public partial class Puppet : Node3D
     public Puppet()
     {
         _material.SetShaderParameter("albedo", Look.Figure);
+        _material.SetShaderParameter("bevel_width", Look.BevelWidth);
         for (int i = 0; i < PuppetModel.MaxBones; i++) _bones.Add(new Projection(Transform3D.Identity));
         _skin.MaterialOverride = _material;
     }
@@ -38,6 +39,9 @@ public partial class Puppet : Node3D
 
     /// <summary>The colour the puppet is drawn in: the shader's albedo.</summary>
     public Color Color => _material.GetShaderParameter("albedo").AsColor();
+
+    /// <summary>Draws the shading normal (in view space, as n * 0.5 + 0.5) instead of the lit puppet: RenderCheck's view of what the bevel did.</summary>
+    public bool ShowNormals { set => _material.SetShaderParameter("show_normals", value); }
 
     /// <summary>What the puppet is made of now, or null before the first build or while it draws nothing (too many bodies).</summary>
     public PuppetShape? Shape => _model.Shape;
@@ -149,23 +153,49 @@ public partial class Puppet : Node3D
         _skin.Mesh = _mesh;
     }
 
-    /// <summary>The shape as one surface: VERTEX in the spread bind, the facet NORMAL, and CUSTOM1 (bone A, bone B, weight A).</summary>
+    /// <summary>
+    /// The shape as one surface: VERTEX in the spread bind, the facet NORMAL, CUSTOM0 (the edge-distance basis: vertex k of a triangle holds
+    /// its altitude h_k = 2 * area / |edge k| in component k and 0 in the others, the triangle's smallest altitude in w), CUSTOM1 (bone A,
+    /// bone B, weight A) and CUSTOM2 (the triangle's three creases, the same at all three vertices).
+    /// </summary>
     private static ArrayMesh MeshOf(PuppetShape s)
     {
         int n = s.Positions.Length;
-        var vertex = new Vector3[n]; var normal = new Vector3[n]; var skin = new float[3 * n];
+        var vertex = new Vector3[n]; var normal = new Vector3[n]; var edge = new float[4 * n]; var skin = new float[3 * n]; var crease = new float[3 * n];
         for (int i = 0; i < n; i++)
         {
             vertex[i] = new Vector3(s.Positions[i].x, s.Positions[i].y, s.Positions[i].z);
             normal[i] = new Vector3(s.Normals[i].x, s.Normals[i].y, s.Normals[i].z);
             skin[3 * i] = s.BoneA[i]; skin[3 * i + 1] = s.BoneB[i]; skin[3 * i + 2] = s.WeightA[i];
         }
+        for (int t = 0; t < n; t += 3)
+        {
+            var p = new[] { s.Positions[t], s.Positions[t + 1], s.Positions[t + 2] };
+            float twiceArea = CultMath.math.length(CultMath.math.cross(p[1] - p[0], p[2] - p[0]));
+            var h = new float[3];
+            for (int k = 0; k < 3; k++)
+            {
+                float length = CultMath.math.length(p[(k + 1) % 3] - p[(k + 2) % 3]);
+                h[k] = length > 0 ? twiceArea / length : 0;
+            }
+            float smallest = Mathf.Min(h[0], Mathf.Min(h[1], h[2]));
+            for (int k = 0; k < 3; k++)
+            {
+                int i = t + k;
+                edge[4 * i + k] = h[k]; edge[4 * i + 3] = smallest;
+                for (int e = 0; e < 3; e++) crease[3 * i + e] = s.Crease[t + e];
+            }
+        }
         var arrays = new Godot.Collections.Array();
         arrays.Resize((int)Mesh.ArrayType.Max);
         arrays[(int)Mesh.ArrayType.Vertex] = vertex;
         arrays[(int)Mesh.ArrayType.Normal] = normal;
+        arrays[(int)Mesh.ArrayType.Custom0] = edge;
         arrays[(int)Mesh.ArrayType.Custom1] = skin;
-        var format = (Mesh.ArrayFormat)((int)Mesh.ArrayCustomFormat.RgbFloat << (int)Mesh.ArrayFormat.FormatCustom1Shift);
+        arrays[(int)Mesh.ArrayType.Custom2] = crease;
+        var format = (Mesh.ArrayFormat)(((int)Mesh.ArrayCustomFormat.RgbaFloat << (int)Mesh.ArrayFormat.FormatCustom0Shift)
+            | ((int)Mesh.ArrayCustomFormat.RgbFloat << (int)Mesh.ArrayFormat.FormatCustom1Shift)
+            | ((int)Mesh.ArrayCustomFormat.RgbFloat << (int)Mesh.ArrayFormat.FormatCustom2Shift));
         var mesh = new ArrayMesh();
         mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays, null, null, format);
         return mesh;
