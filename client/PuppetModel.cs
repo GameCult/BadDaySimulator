@@ -36,9 +36,6 @@ public sealed class PuppetModel
     /// <summary>The shape built from the current signature, or null before the first update or while there are more than <see cref="MaxBones"/> shape bodies.</summary>
     public PuppetShape? Shape { get; private set; }
 
-    /// <summary>How many meshes have been built.</summary>
-    public int Builds { get; private set; }
-
     /// <summary>Reads the shape bodies and qualifying joints of the lanes and updates.</summary>
     public bool Update(in Box3DSoaView view)
     {
@@ -96,7 +93,6 @@ public sealed class PuppetModel
 
         if (bound.Count > MaxBones) { Shape = null; return true; }
         Shape = PuppetField.Build(bound, built, _smin, _ballScale, _boxRound);
-        Shape.Builds = ++Builds;
         return true;
     }
 

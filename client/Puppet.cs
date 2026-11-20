@@ -33,6 +33,9 @@ public partial class Puppet : Node3D
 
     public int BodyCount => _nodes.Count;
 
+    /// <summary>How many times the Godot mesh has been made from a shape: the one build counter, which the smoke asserts.</summary>
+    public int MeshBuilds { get; private set; }
+
     /// <summary>The colour the puppet is drawn in: the shader's albedo.</summary>
     public Color Color => _material.GetShaderParameter("albedo").AsColor();
 
@@ -142,6 +145,7 @@ public partial class Puppet : Node3D
         _boneNodes = new Node3D[shape.Ids.Length]; _inverseBind = new Transform3D[shape.Ids.Length];
         for (int i = 0; i < shape.Ids.Length; i++) { _boneNodes[i] = _nodes[shape.Ids[i]]; _inverseBind[i] = ToTransform(shape.SpreadBind[i].Inverse()); }
         _mesh = MeshOf(shape);
+        MeshBuilds++;
         _skin.Mesh = _mesh;
     }
 

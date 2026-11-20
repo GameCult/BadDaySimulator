@@ -22,6 +22,9 @@ public partial class BodyRenderer : Node3D
     /// <summary>What the puppet's mesh is made of now, or null while it draws none.</summary>
     public PuppetShape? PuppetShape => _puppet.Shape;
 
+    /// <summary>How many times the puppet's Godot mesh has been built.</summary>
+    public int PuppetMeshBuilds => _puppet.MeshBuilds;
+
     public BaseMaterial3D SceneryMaterial => _material;
 
     /// <summary>Where body <paramref name="stableId"/> is drawn now, or null if it is not drawn.</summary>

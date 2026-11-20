@@ -39,16 +39,16 @@ public static class PuppetChecks
         // The first update builds; the same signature again, even from new lists, never does.
         var m = Fresh();
         var (bodies, joints) = Chain();
-        Check(m.Update(bodies, joints) && m.Builds == 1 && m.Shape is not null, "the first update did not build the puppet once");
+        Check(m.Update(bodies, joints) && m.Shape is not null, "the first update did not build the puppet");
+        var first = m.Shape;
         var (again, againJoints) = Chain();
-        Check(!m.Update(again, againJoints) && m.Builds == 1, "an unchanged signature rebuilt the puppet");
+        Check(!m.Update(again, againJoints) && ReferenceEquals(m.Shape, first), "an unchanged signature rebuilt the puppet");
 
         // Poses and joint origins alone are not topology: the bind is the first sight.
         var moved = Chain();
         for (int i = 0; i < moved.Bodies.Count; i++) moved.Bodies[i] = moved.Bodies[i] with { Bind = Rigid.FromQuaternion(0, 0, 0, 1, new float3(0.5f, 2f + i, 0)) };
         moved.Joints[0] = moved.Joints[0] with { Origin = new float3(9, 9, 9) };
-        var before = m.Shape;
-        Check(!m.Update(moved.Bodies, moved.Joints) && m.Builds == 1 && ReferenceEquals(m.Shape, before), "bodies that only moved rebuilt the puppet");
+        Check(!m.Update(moved.Bodies, moved.Joints) && ReferenceEquals(m.Shape, first), "bodies that only moved rebuilt the puppet");
 
         // Each change of topology rebuilds exactly once, and then holds.
         void Changes(string what, Action<List<PuppetBody>, List<PuppetJointLane>> edit)
@@ -56,9 +56,11 @@ public static class PuppetChecks
             var model = Fresh();
             var (b, j) = Chain();
             model.Update(b, j);
+            var built = model.Shape;
             edit(b, j);
-            Check(model.Update(b, j) && model.Builds == 2, $"{what}: the signature changed and the puppet was not rebuilt once");
-            Check(!model.Update(b, j) && model.Builds == 2, $"{what}: the new signature rebuilt again");
+            Check(model.Update(b, j) && !ReferenceEquals(model.Shape, built), $"{what}: the signature changed and the puppet was not rebuilt");
+            var rebuilt = model.Shape;
+            Check(!model.Update(b, j) && ReferenceEquals(model.Shape, rebuilt), $"{what}: the new signature rebuilt again");
         }
         Changes("a joint removed", (b, j) => j.RemoveAt(1));
         Changes("a body added", (b, j) => b.Add(Body(13, Box3DSoaKind.Sphere, 0.05f, 0f, 1.3f)));
@@ -71,7 +73,7 @@ public static class PuppetChecks
         // Past the skin's bone count nothing is drawn, once, and the signature still decides.
         var many = Fresh();
         var crowd = Enumerable.Range(0, PuppetModel.MaxBones + 1).Select(i => Body((ulong)(100 + i), Box3DSoaKind.Sphere, 0.05f, 0f, i * 0.2f)).ToList();
-        Check(many.Update(crowd, new List<PuppetJointLane>()) && many.Shape is null && many.Builds == 0, "more shape bodies than bones was drawn");
+        Check(many.Update(crowd, new List<PuppetJointLane>()) && many.Shape is null, "more shape bodies than bones was drawn");
         Check(!many.Update(crowd, new List<PuppetJointLane>()), "an over-full puppet reported a change with none");
         crowd.RemoveAt(0);
         Check(many.Update(crowd, new List<PuppetJointLane>()) && many.Shape is not null, "the puppet did not come back once it fit the skin");

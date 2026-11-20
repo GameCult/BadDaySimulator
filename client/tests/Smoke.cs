@@ -75,7 +75,7 @@ public partial class Smoke : Node
         // A Reset is not a topology change: the mesh stays the one built at startup. Checked after three resets so a rebuild per
         // Reset fails here, not after hundreds.
         for (ulong seed = 1; seed <= 3; seed++) { PressReset(seed); await Frame(); }
-        Check(_main.Bodies.PuppetShape?.Builds == 1, $"the puppet mesh was built {_main.Bodies.PuppetShape?.Builds} times by the third Reset; the signature never changed, so once");
+        Check(_main.Bodies.PuppetMeshBuilds == 1, $"the puppet mesh was built {_main.Bodies.PuppetMeshBuilds} times by the third Reset; the signature never changed, so once");
         if (_failures.Count > 0) return;
 
         // Seed 1 at the default intensity against the headless run: events, and the hand at ticks 240 and 1500.
@@ -130,7 +130,7 @@ public partial class Smoke : Node
             await Frame();
         }
         Check(_main.Seed == 1399, $"after 400 resets the seed is {_main.Seed}");
-        Check(_main.Bodies.PuppetShape?.Builds == 1, $"the puppet mesh was built {_main.Bodies.PuppetShape?.Builds} times; the signature never changed, so once");
+        Check(_main.Bodies.PuppetMeshBuilds == 1, $"the puppet mesh was built {_main.Bodies.PuppetMeshBuilds} times; the signature never changed, so once");
 
         // Box off, through the HUD button, at tick 600: the run ends with the will intact and the screen shows the box off.
         PressReset(Seed);

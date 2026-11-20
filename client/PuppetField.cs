@@ -66,9 +66,6 @@ public sealed class PuppetShape
     /// <summary>How far a skinned vertex can lie from its bone's origin.</summary>
     public required float Reach { get; init; }
 
-    /// <summary>How many times the mesh has been built; Puppet counts.</summary>
-    public int Builds { get; internal set; }
-
     public int Triangles => Positions.Length / 3;
 }
 
