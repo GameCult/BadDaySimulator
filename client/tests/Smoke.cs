@@ -157,7 +157,7 @@ public partial class Smoke : Node
         Check(_main.Seed == Seed, "Main did not start from the smoke's seed");
 
         // The look: white on dark grey, flat.
-        var puppet = _main.Bodies.PuppetMaterial.AlbedoColor;
+        var puppet = _main.Bodies.PuppetColor;
         Check(puppet.Luminance > 0.7f && puppet.S < 0.1f, $"the puppet is {puppet}, not white");
         Check(_main.Bodies.SceneryMaterial.AlbedoColor.Luminance < 0.3f, "the floor is not dark");
         var glow = _main.Chamber.Material.AlbedoColor;

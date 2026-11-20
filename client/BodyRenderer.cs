@@ -17,7 +17,8 @@ public partial class BodyRenderer : Node3D
     /// <summary>Bodies drawn, static and dynamic.</summary>
     public int BodyCount => _puppet.BodyCount + _scenery.Count;
 
-    public BaseMaterial3D PuppetMaterial => _puppet.Material;
+    /// <summary>The colour the puppet is drawn in.</summary>
+    public Color PuppetColor => _puppet.Color;
     public BaseMaterial3D SceneryMaterial => _material;
 
     /// <summary>Where body <paramref name="stableId"/> is drawn now, or null if it is not drawn.</summary>

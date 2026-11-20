@@ -5,20 +5,18 @@ using Ymir.Box3D;
 namespace BadDay.Client;
 
 /// <summary>
-/// The puppet's mesh: made from the shape lanes (Kind and Size) and the body transforms (the pose lanes) of every
-/// dynamic body, one MeshInstance3D per StableId with flat-shaded low-poly limbs. This class is the only owner of
-/// "the puppet's mesh from the lanes"; a different model (the SDF isosurface) replaces it and nothing else.
+/// The puppet: one pose carrier per dynamic body, posed from the lanes, so physics interpolation has a node to
+/// interpolate. This commit draws nothing; the next gives it the one skinned SDF mesh.
 /// </summary>
 public partial class Puppet : Node3D
 {
-    private readonly Dictionary<ulong, MeshInstance3D> _nodes = new();
+    private readonly Dictionary<ulong, Node3D> _nodes = new();
     private readonly HashSet<ulong> _seen = new();
-    private readonly StandardMaterial3D _dynamic = Look.Matte(Look.Figure);
 
     public int BodyCount => _nodes.Count;
 
-    /// <summary>The material the puppet is drawn in.</summary>
-    public BaseMaterial3D Material => _dynamic;
+    /// <summary>The colour the puppet is drawn in.</summary>
+    public Color Color => Look.Figure;
 
     /// <summary>Where the puppet draws body <paramref name="stableId"/> now (world), or null if it draws no such body.</summary>
     public Transform3D? PoseOf(ulong stableId) => _nodes.TryGetValue(stableId, out var n) ? n.Transform : null;
@@ -26,7 +24,7 @@ public partial class Puppet : Node3D
     /// <summary>The same pose as it is rendered this frame, between the last two ticks.</summary>
     public Transform3D? InterpolatedPoseOf(ulong stableId) => _nodes.TryGetValue(stableId, out var n) ? n.GetGlobalTransformInterpolated() : null;
 
-    /// <summary>Makes the nodes match the lanes: creates the missing, frees the gone, then poses every node. <paramref name="teleport"/> skips the interpolation from the previous pose.</summary>
+    /// <summary>Makes the carriers match the lanes: creates the missing, frees the gone, then poses every one. <paramref name="teleport"/> skips the interpolation from the previous pose.</summary>
     public void Sync(in Box3DSoaView view, bool teleport = false)
     {
         var ids = view.StableId;
@@ -44,8 +42,7 @@ public partial class Puppet : Node3D
             for (int i = 0; i < ids.Length; i++)
             {
                 if (!IsPuppet(kind[i]) || _nodes.ContainsKey(ids[i])) continue;
-                var node = new MeshInstance3D { Name = $"Body{ids[i]}", Mesh = MeshFor((Box3DSoaKind)kind[i], view.Size0[i], view.Size1[i], view.Size2[i]) };
-                node.MaterialOverride = _dynamic;
+                var node = new Node3D { Name = $"Body{ids[i]}" };
                 AddChild(node);
                 _nodes[ids[i]] = node;
                 teleport = true;
@@ -77,27 +74,4 @@ public partial class Puppet : Node3D
         for (int i = 0; i < ids.Length; i++) if (IsPuppet(kind[i]) && !_nodes.ContainsKey(ids[i])) return false;
         return true;
     }
-
-    /// <summary>The mesh for a body: sphere radius Size0; capsule radius Size0 and half-length Size1 along Y (Godot's height counts the caps); box half-extents Size0..2.</summary>
-    public static Mesh MeshFor(Box3DSoaKind kind, float size0, float size1, float size2) => kind switch
-    {
-        Box3DSoaKind.Sphere => FlatShaded(new SphereMesh { Radius = size0, Height = 2f * size0, RadialSegments = 8, Rings = 5 }),
-        Box3DSoaKind.Capsule => FlatShaded(new CapsuleMesh { Radius = size0, Height = 2f * (size1 + size0), RadialSegments = 8, Rings = 2 }),
-        _ => FlatShaded(new BoxMesh { Size = new Vector3(2f * size0, 2f * size1, 2f * size2) }),
-    };
-
-    /// <summary>The same triangles with one normal per face.</summary>
-    private static ArrayMesh FlatShaded(PrimitiveMesh source)
-    {
-        var arrays = source.GetMeshArrays();
-        var vertices = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
-        var indices = arrays[(int)Mesh.ArrayType.Index].AsInt32Array();
-        var st = new SurfaceTool();
-        st.Begin(Mesh.PrimitiveType.Triangles);
-        st.SetSmoothGroup(uint.MaxValue);
-        foreach (int i in indices) st.AddVertex(vertices[i]);
-        st.GenerateNormals();
-        return st.Commit();
-    }
-
 }
