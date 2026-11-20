@@ -37,7 +37,7 @@ public static class Program
 
     private const string Title = "Synaptic Induction Chamber (the pain box)";
 
-    private static readonly string OfficeTitle = $"Bad day at the office, rung 4 (stress = 1 - resolve, \"{StressResult.StressBarLabel}\")";
+    private static readonly string OfficeTitle = $"Bad day at the office, rung 4 (stress = arousal, \"{StressResult.StressBarLabel}\")";
 
     public static int Main(string[] args)
     {

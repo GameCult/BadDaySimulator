@@ -24,7 +24,9 @@ public sealed record OfficePoses(Quat[] Composed, Quat[] Flinch, Quat[][] RageKe
 /// breaks, then rage (a geyser: no pull, nothing held down, the rage keys in a loop; it refills his will on entry, is
 /// involuntary for its first <see cref="StressParameters.RageOnsetSeconds"/> and then costs will at
 /// <see cref="StressParameters.RageEffort"/> a second), until that will runs dry and breaks a second time, and then calm:
-/// his composed pose at normal strength, for good (ruling lodur:ruling:fella-calm-after-rage). Calm is terminal as
+/// his composed pose at normal strength, for good (ruling lodur:ruling:fella-calm-after-rage); entering it fades his arousal and his senses' gain to nothing over
+/// <see cref="StressParameters.CalmFadeSeconds"/> (rulings lodur:ruling:stress-bar-shows-arousal-calm-silences and lodur:ruling:flinch-tail-after-stimulus), so the stress bar
+/// empties while the office keeps sounding. Calm is terminal as
 /// data: it gates on Breaks, which never falls, and nothing outranks it. Authored as data; the Actor commits the
 /// switches, so the timeline's goal column is read back from <see cref="Actor.GoalIndex"/>.
 /// </summary>
@@ -76,6 +78,9 @@ public static class OfficeBrain
                 Priority = 2.0,
                 When = new[] { new Condition(DriveQuantity.Breaks, ConditionOp.AtLeast, 2.0) },
                 InvoluntarySeconds = double.PositiveInfinity,
+                EntryArousal = 0.0,
+                SensoryGain = 0.0,
+                EntrySeconds = p.CalmFadeSeconds,
                 Behaviour = new PoseBehaviour { Keys = new[] { poses.Composed }, FlinchPose = poses.Flinch, Hold = p.Hold },
             },
         },
