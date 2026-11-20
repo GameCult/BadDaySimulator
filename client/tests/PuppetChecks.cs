@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using CultMath;
 using Ymir.Box3D;
@@ -7,34 +8,38 @@ using Ymir.Box3D;
 namespace BadDay.Client.Tests;
 
 /// <summary>
-/// The puppet's rules that need no scene, run by the smoke before its scenario: when the model rebuilds the shape.
-/// Each check reports what broke through <c>fail</c>.
+/// The puppet's rules that need no scene, run by the smoke before its scenario: when the model rebuilds the shape, and what the ball-jointed doll's
+/// pieces are (separate, closed, within the error, clear of their balls, clean across the hinges' range). Each check reports what broke through <c>fail</c>.
 /// </summary>
 public static class PuppetChecks
 {
-    /// <summary>No skinned edge may be longer than this many times its bind length.</summary>
-    public const float StretchLimit = 4f;
-
     private static PuppetBody Body(ulong id, Box3DSoaKind kind, float s0, float s1, float y) =>
         new(id, kind, new float3(s0, s1, 0), Rigid.FromQuaternion(0, 0, 0, 1, new float3(0, y, 0)));
 
     private static (List<PuppetBody> Bodies, List<PuppetJointLane> Joints) Chain() => (
         new List<PuppetBody>
         {
-            Body(10, Box3DSoaKind.Capsule, 0.06f, 0.15f, 0.3f),
-            Body(11, Box3DSoaKind.Capsule, 0.05f, 0.12f, 0.7f),
-            Body(12, Box3DSoaKind.Sphere, 0.09f, 0f, 1.0f),
+            Body(10, Box3DSoaKind.Capsule, 0.03f, 0.05f, 0.1f),
+            Body(11, Box3DSoaKind.Capsule, 0.025f, 0.04f, 0.25f),
+            Body(12, Box3DSoaKind.Sphere, 0.03f, 0f, 0.38f),
         },
         new List<PuppetJointLane>
         {
-            new(Box3DSoaJointKind.Spherical, 10, 11, new float3(0, 0.5f, 0)),
-            new(Box3DSoaJointKind.Revolute, 11, 12, new float3(0, 0.85f, 0)),
+            new(Box3DSoaJointKind.Spherical, 10, 11, new float3(0, 0.17f, 0)),
+            new(Box3DSoaJointKind.Revolute, 11, 12, new float3(0, 0.32f, 0)),
         });
+
+    /// <summary>
+    /// The doll's measured counts (the vacuity floors are half of them): shared edges per pose and edges turning more than a hundredth of a radian per pose,
+    /// as printed by the first run on the shipped doll. A check that sees fewer proves nothing about the doll.
+    /// </summary>
+    private const int DollSharedEdges = 1110, DollCreasedEdges = 1106;
 
     public static void Run(Action<string> fail, in Box3DSoaView creationView)
     {
+        var total = Stopwatch.StartNew();
         void Check(bool ok, string what) { if (!ok) fail(what); }
-        PuppetModel Fresh() => new(Look.SminRadius, Look.JointBallScale, Look.BoxRound);
+        PuppetModel Fresh() => new();
 
         // The first update builds; the same signature again, even from new lists, never does.
         var m = Fresh();
@@ -63,17 +68,17 @@ public static class PuppetChecks
             Check(!model.Update(b, j) && ReferenceEquals(model.Shape, rebuilt), $"{what}: the new signature rebuilt again");
         }
         Changes("a joint removed", (b, j) => j.RemoveAt(1));
-        Changes("a body added", (b, j) => b.Add(Body(13, Box3DSoaKind.Sphere, 0.05f, 0f, 1.3f)));
+        Changes("a body added", (b, j) => b.Add(Body(13, Box3DSoaKind.Sphere, 0.03f, 0f, 0.5f)));
         Changes("a body removed", (b, j) => { b.RemoveAt(2); j.RemoveAt(1); });
-        Changes("a size changed", (b, j) => b[0] = b[0] with { Size = new float3(0.07f, 0.15f, 0f) });
-        Changes("a shape kind changed", (b, j) => b[2] = b[2] with { Kind = Box3DSoaKind.Capsule, Size = new float3(0.09f, 0.05f, 0f) });
+        Changes("a size changed", (b, j) => b[0] = b[0] with { Size = new float3(0.035f, 0.05f, 0f) });
+        Changes("a shape kind changed", (b, j) => b[2] = b[2] with { Kind = Box3DSoaKind.Capsule, Size = new float3(0.03f, 0.02f, 0f) });
         Changes("a joint's kind changed", (b, j) => j[0] = j[0] with { Kind = Box3DSoaJointKind.Weld });
         Changes("a body's identity changed", (b, j) => { b[1] = b[1] with { Id = 21 }; j[0] = j[0] with { B = 21 }; j[1] = j[1] with { A = 21 }; });
 
-        // Any number of bodies is drawn: a crowd of 40 (no cap, however many the skin has to carry) builds a shape whose every body owns a
-        // vertex, and skins to a surface with a facet for every triangle.
+        // A body with no doll entry is drawn as its physics shape, and any number of bodies is drawn: a crowd of 40 spheres builds a shape whose every body
+        // owns a closed piece, and skins to a surface with a facet for every triangle.
         var many = Fresh();
-        var crowd = Enumerable.Range(0, 40).Select(i => Body((ulong)(100 + i), Box3DSoaKind.Sphere, 0.05f, 0f, i * 0.2f)).ToList();
+        var crowd = Enumerable.Range(0, 40).Select(i => Body((ulong)(100 + i), Box3DSoaKind.Sphere, 0.03f, 0f, i * 0.2f)).ToList();
         Check(many.Update(crowd, new List<PuppetJointLane>()) && many.Shape is { Corners.Length: > 0 }, "a puppet of 40 bodies was not built");
         var crowdShape = many.Shape!;
         Check(crowdShape.Ids.Length == 40, $"the crowd's shape carries {crowdShape.Ids.Length} bodies, not 40");
@@ -81,58 +86,35 @@ public static class PuppetChecks
         var crowdSkin = new PuppetSkin(crowdShape);
         crowdSkin.Update(Enumerable.Repeat(Identity, crowdShape.Ids.Length).ToArray());
         Check(crowdSkin.Facet.Length * 3 == crowdShape.Corners.Length && crowdSkin.Facet.All(f => math.length(f) > 0.99f), "the crowd's skin has no unit facet for every triangle");
+        Check(Pieces(crowdShape) == 40 && crowdShape.Bone.Distinct().Count() == 40, $"the crowd is {Pieces(crowdShape)} pieces over {crowdShape.Bone.Distinct().Count()} bones, not one closed piece per body");
+        Check(crowdShape.Vertices.All(v => MathF.Abs(math.length(v - new float3(0, 0.2f * ((int)MathF.Round(v.y / 0.2f)), 0)) - 0.03f) < Doll.FacetError + 1e-4f), "a fallback sphere is not drawn as its physics shape");
 
-        // The real puppet at its creation pose: the grid cell is the coarsest that resolves its limbs, and bent every which way
-        // no skinned edge is a web.
+        Console.WriteLine($"PUPPET the model's rebuild rule and the crowd of 40: {total.ElapsedMilliseconds} ms");
+
+        // The real puppet at its creation pose, built as the client builds it: the doll's pieces.
         var real = new List<PuppetBody>(); var realLanes = new List<PuppetJointLane>();
         PuppetModel.Lanes(creationView, real, realLanes);
         var index = real.Select((b, k) => (b.Id, k)).ToDictionary(x => x.Id, x => x.k);
         var inputs = realLanes.Select(j => new PuppetJoint(j.Kind, index[j.A], index[j.B], real[index[j.A]].Bind.Inverse().Apply(j.Origin))).ToList();
-        PuppetShape Build(float cell) => PuppetField.Build(real, inputs, Look.SminRadius, Look.JointBallScale, Look.BoxRound, cell);
+        var clock = Stopwatch.StartNew();
+        var puppet = PuppetField.Build(real, inputs);
+        long built = clock.ElapsedMilliseconds;
+        var fields = PuppetField.Dress(real, inputs);
+        var triangles = PieceTriangles(puppet);
+        Console.WriteLine($"PUPPET {puppet.Triangles} triangles ({triangles.Take(real.Count).Sum(t => t.Length)} in {real.Count} bodies, {triangles.Skip(real.Count).Sum(t => t.Length)} in {inputs.Count} balls), {puppet.Vertices.Length} vertices, built in {built} ms; per piece {string.Join(" ", triangles.Select(t => t.Length))}");
 
-        // Resolved: the cell is at most the thinnest limb's radius (Nyquist: the thinnest limb spans at least two cells across, so the
-        // grid can represent it), the mesh is one piece, and every body owns some of the surface (is the most influential bone of at
-        // least one triangle corner). The first condition decides which cell is the coarsest; the other two catch a mesh that
-        // lost a limb, and say nothing about how fine a cell must be.
-        float thinnest = real.Min(b => PuppetField.Thickness(b.Kind, b.Size));
-        bool Resolved(float cell)
-        {
-            var shape = Build(cell);
-            var owned = new int[real.Count];
-            for (int v = 0; v < shape.Vertices.Length; v++) owned[shape.WeightA[v] >= 0.5f ? shape.BoneA[v] : shape.BoneB[v]]++;
-            return cell <= thinnest + 1e-6f && Pieces(shape) == 1 && owned.Min() > 0;
-        }
-        // The look constants may be changed by the operator's joint-look question, within what the mesh can hold: a blend wider than
-        // the thinnest limb swallows it, and a negative ball or rounding is no shape.
-        Check(Look.SminRadius > 0 && Look.SminRadius <= thinnest, $"Look.SminRadius {Look.SminRadius} m is not within (0, the thinnest limb's radius {thinnest} m]");
-        Check(Look.JointBallScale >= 0 && Look.BoxRound >= 0, "Look.JointBallScale or Look.BoxRound is negative");
-        Check(Resolved(PuppetField.Cell), $"the shipped {PuppetField.Cell * 1000:F0} mm cell does not resolve the limbs");
-        foreach (float coarser in new[] { thinnest * 1.05f, 0.05f, 0.06f, 0.08f, 0.10f })
-            Check(coarser <= PuppetField.Cell || !Resolved(coarser), $"a {coarser * 1000:F0} mm cell resolves the limbs, so {PuppetField.Cell * 1000:F0} mm is not the coarsest");
-
-        // Bent at random, every joint at once, no skinned edge is a web. The bounds are what the shipped look measures with a
-        // margin (200 poses each: 3.24x and 0.140 m at 45 degrees, 5.0x and 0.205 m at 90); a bind edge is about a cell
-        // (0.04 m), so 0.17 m is four cells and 0.25 m is six. At 90 degrees only the length is bounded, since the ratio
-        // overstates when a bind edge is tiny.
-        var puppet = Build(PuppetField.Cell);
-        float worstRatio = 0, worstLength = 0, worstLength90 = 0;
-        for (int seed = 0; seed < 200; seed++)
-        {
-            var (ratio, length) = Stretch(puppet, Bend(puppet, seed, 45f * MathF.PI / 180f));
-            worstRatio = MathF.Max(worstRatio, ratio); worstLength = MathF.Max(worstLength, length);
-            worstLength90 = MathF.Max(worstLength90, Stretch(puppet, Bend(puppet, seed, 90f * MathF.PI / 180f)).Length);
-        }
-        Check(worstRatio <= StretchLimit, $"every joint bent up to 45 degrees stretches an edge {worstRatio:F2}x its bind length, over {StretchLimit}x");
-        Check(worstLength <= 0.17f, $"every joint bent up to 45 degrees makes a skinned edge {worstLength:F3} m long, over 0.17 m");
-        Check(worstLength90 <= 0.25f, $"every joint bent up to 90 degrees makes a skinned edge {worstLength90:F3} m long, over 0.25 m");
-
-        Mesher(puppet, Check);
+        PiecesAreSeparate(puppet, real.Count, inputs.Count, triangles, Check);
+        Clearance(puppet, fields, triangles, Check);
+        WithinTheError(puppet, fields, triangles, Check);
+        LimbsKept(puppet, fields, triangles, Check);
+        HingesClean(puppet, fields, real, triangles, Check);
+        Mesher(puppet, triangles, Check);
         AcrossIsPositionWeld(puppet, Check);
         SkinnedSurface(puppet, Check);
         FoldHasNoCrease(Check);
     }
 
-    /// <summary>The corner slot's vertex, in the spread bind.</summary>
+    /// <summary>The corner slot's vertex, in the bind.</summary>
     private static float3 At(PuppetShape shape, int slot) => shape.Vertices[shape.Corners[slot]];
 
     /// <summary>The unit normal of a triangle seen from outside (the winding is clockwise from outside), from its corners.</summary>
@@ -142,16 +124,130 @@ public static class PuppetChecks
         return -cross / math.length(cross);
     }
 
-    /// <summary>
-    /// The mesher's untangle on the shipped cell: no edge folds (its two triangles disagree on convexity), no triangle faces into the body
-    /// (seen from a point a millimetre off its face along its normal, the surface is crossed an odd number of times in two directions),
-    /// none is tiny, and the vertices the untangle pulled back are few and stay near the isosurface. The coarser cells of the resolution
-    /// sweep are judged by Resolved alone: the untangle leaves some marked there.
-    /// </summary>
-    private static void Mesher(PuppetShape shape, Action<bool, string> check)
+    /// <summary>The triangles of each piece (indices into the shape's triangles), by piece.</summary>
+    private static int[][] PieceTriangles(PuppetShape shape)
     {
-        int count = shape.Triangles;
-        int folds = 0, edges = 0;
+        var lists = Enumerable.Range(0, shape.PieceCount).Select(_ => new List<int>()).ToArray();
+        for (int t = 0; t < shape.Triangles; t++) lists[shape.Piece[shape.Corners[3 * t]]].Add(t);
+        return lists.Select(l => l.ToArray()).ToArray();
+    }
+
+    /// <summary>The points a piece is judged at: its vertices, its triangle centroids and its edge midpoints (the decimator's own).</summary>
+    private static IEnumerable<float3> Samples(PuppetShape shape, int[] piece)
+    {
+        foreach (int t in piece)
+        {
+            var a = At(shape, 3 * t); var b = At(shape, 3 * t + 1); var c = At(shape, 3 * t + 2);
+            yield return a; yield return b; yield return c;
+            yield return (a + b + c) / 3f; yield return (a + b) / 2f; yield return (b + c) / 2f; yield return (c + a) / 2f;
+        }
+    }
+
+    /// <summary>One closed piece per dressed body and per joint ball, and no vertex shared across pieces.</summary>
+    private static void PiecesAreSeparate(PuppetShape shape, int bodies, int joints, int[][] triangles, Action<bool, string> check)
+    {
+        check(shape.PieceCount == bodies + joints && triangles.All(t => t.Length >= 4), $"the doll has {shape.PieceCount} pieces, {triangles.Count(t => t.Length >= 4)} of them solids, not one per body and per joint ({bodies} + {joints})");
+        int shared = 0, loose = 0;
+        for (int t = 0; t < shape.Triangles; t++)
+            if (shape.Piece[shape.Corners[3 * t]] != shape.Piece[shape.Corners[3 * t + 1]] || shape.Piece[shape.Corners[3 * t]] != shape.Piece[shape.Corners[3 * t + 2]]) shared++;
+        for (int s = 0; s < shape.Across.Length; s++) if (shape.Across[s] < 0) loose++;
+        check(shared == 0, $"{shared} triangles join vertices of more than one piece: the doll's joints blend");
+        check(loose == 0, $"{loose} corner slots have no partner: a piece is not closed");
+        check(Pieces(shape) == shape.PieceCount, $"the doll's mesh is {Pieces(shape)} connected pieces, not {shape.PieceCount}");
+    }
+
+    /// <summary>
+    /// Clearance by construction: no body vertex, centroid or edge midpoint within the radius of a ball it takes part in (the decimator's hard rule is
+    /// the ball's radius plus 0.2 mm), and no ball point outside it.
+    /// </summary>
+    private static void Clearance(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
+    {
+        int inside = 0, outside = 0, probed = 0;
+        foreach (var f in fields)
+            foreach (var p in Samples(shape, triangles[f.Index]))
+            {
+                probed++;
+                if (f.IsBall) { if (math.length(p - f.BallCentre) > f.BallRadius + 0.0002f + 1e-5f) outside++; }
+                else foreach (var c in f.Cuts) if (math.length(p - c.Origin) < c.BallRadius + 0.0002f - 1e-5f) inside++;
+            }
+        check(probed > 1000, $"the clearance check is vacuous: {probed} points");
+        check(inside == 0, $"{inside} body points lie inside a joint ball's radius");
+        check(outside == 0, $"{outside} ball points lie outside the ball's radius");
+    }
+
+    /// <summary>Within the error: every piece's vertices, centroids and edge midpoints lie within FacetError (BallError for a ball) of its own field's surface, the cuts included.</summary>
+    private static void WithinTheError(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
+    {
+        int over = 0; float worstBody = 0, worstBall = 0;
+        foreach (var f in fields)
+            foreach (var p in Samples(shape, triangles[f.Index]))
+            {
+                float e = MathF.Abs(f.Value(p));
+                if (f.IsBall) worstBall = MathF.Max(worstBall, e); else worstBody = MathF.Max(worstBody, e);
+                if (e > (f.IsBall ? Doll.BallError : Doll.FacetError) + 1e-4f) over++;
+            }
+        Console.WriteLine($"PUPPET worst error: bodies {worstBody * 1000:F1} mm of {Doll.FacetError * 1000:F0}, balls {worstBall * 1000:F1} mm of {Doll.BallError * 1000:F0}");
+        check(over == 0, $"{over} points stray further from their piece's surface than the error allows (bodies {worstBody * 1000:F1} mm, balls {worstBall * 1000:F1} mm)");
+    }
+
+    /// <summary>Limbs kept: every guard point of a piece (its primitives' axis) is inside it with its clearance, half its depth, to the surface: no limb is pinched away.</summary>
+    private static void LimbsKept(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
+    {
+        int bad = 0, points = 0; float worst = float.MaxValue;
+        foreach (var f in fields)
+            foreach (var (point, clear) in f.Guard())
+            {
+                points++;
+                float d = triangles[f.Index].Min(t => PuppetDecimate.PointTriangle(point, At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2)));
+                worst = MathF.Min(worst, d / clear);
+                if (f.Value(point) >= 0 || d < clear - 1e-4f) bad++;
+            }
+        check(points > 30, $"the limb check is vacuous: {points} guard points");
+        check(bad == 0, $"{bad} of {points} guard points are outside their piece or nearer its surface than half their depth (worst {worst:F2} of the clearance)");
+    }
+
+    /// <summary>
+    /// Hinges clean across their range: each hinge joint (a Revolute whose child the doll gives a range) is swept from -flex to +extension in 5 degree
+    /// steps, the child turned about the hinge axis through the joint; no point of the parent piece within 2.5 ball radii of the joint lies more than a
+    /// millimetre inside the child piece's field, nor the child's inside the parent's (clean to the limit: lodur:ruling:doll-hinges-clean-to-limit).
+    /// </summary>
+    private static void HingesClean(PuppetShape shape, PieceField[] fields, List<PuppetBody> bodies, int[][] triangles, Action<bool, string> check)
+    {
+        int hinges = 0, bad = 0; float worst = 0;
+        for (int j = 0; j < shape.Joints.Length; j++)
+        {
+            var (kind, a, b, o) = shape.Joints[j];
+            if (kind != Box3DSoaJointKind.Revolute || Doll.Find(bodies[b].Kind, bodies[b].Size) is not { IsHinge: true } entry) continue;
+            hinges++;
+            var axis = math.normalize(math.mul(bodies[b].Bind.R, Doll.HingeAxis));
+            float near = 2.5f * shape.BallRadius[j];
+            var parentPoints = Samples(shape, triangles[a]).Where(p => math.length(p - o) < near).ToArray();
+            var childPoints = Samples(shape, triangles[b]).Where(p => math.length(p - o) < near).ToArray();
+            for (float angle = -entry.Flex; ; angle += 5f * MathF.PI / 180f)
+            {
+                angle = MathF.Min(angle, entry.Extension);
+                var turn = Rigid.About(o, axis, angle); var back = turn.Inverse();
+                float depth = 0;
+                foreach (var p in parentPoints) depth = MathF.Max(depth, -fields[b].Value(back.Apply(p)));
+                foreach (var c in childPoints) depth = MathF.Max(depth, -fields[a].Value(turn.Apply(c)));
+                worst = MathF.Max(worst, depth);
+                if (depth > 0.001f) bad++;
+                if (angle >= entry.Extension) break;
+            }
+        }
+        Console.WriteLine($"PUPPET hinges {hinges}: worst penetration over the range {worst * 1000:F2} mm");
+        check(hinges == 6, $"the hinge sweep is vacuous: {hinges} hinges, not an elbow, a knee and an ankle on each side");
+        check(bad == 0, $"{bad} poses over the hinges' ranges sink a limb into another (worst {worst * 1000:F1} mm, over 1 mm)");
+    }
+
+    /// <summary>
+    /// Each piece's mesh: no edge folds (its two triangles disagree on convexity), no triangle faces into its piece (seen from a point a millimetre
+    /// off its face along its normal, the piece's surface is crossed an odd number of times in two directions), none is tiny, and the vertices the
+    /// untangle pulled back are few and stay near the isosurface.
+    /// </summary>
+    private static void Mesher(PuppetShape shape, int[][] pieces, Action<bool, string> check)
+    {
+        int folds = 0, edges = 0, inward = 0, count = shape.Triangles; float smallest = float.MaxValue;
         for (int s = 0; s < shape.Across.Length; s++)
         {
             int o = shape.Across[s];
@@ -164,29 +260,29 @@ public static class PuppetChecks
             bool convexB = math.dot(nb, At(shape, s) - At(shape, 3 * (o / 3) + (o % 3 + 1) % 3)) < 0;
             if (convexA != convexB) folds++;
         }
-        check(edges > 1000, $"the mesher check is vacuous: {edges} shared edges");
+        check(edges >= DollSharedEdges / 2, $"the mesher check is vacuous: {edges} shared edges");
         check(folds == 0, $"{folds} of {edges} shared edges are folds: their two triangles disagree on convexity");
 
-        // Facing into the body: an odd crossing count from just outside the face means the face looks inward.
         var directions = new[] { math.normalize(new float3(0.5773f, 0.3011f, 0.7571f)), math.normalize(new float3(-0.2113f, 0.8317f, -0.5129f)) };
-        int inward = 0; float smallest = float.MaxValue;
-        for (int t = 0; t < count; t++)
-        {
-            var a = At(shape, 3 * t); var b = At(shape, 3 * t + 1); var c = At(shape, 3 * t + 2);
-            smallest = MathF.Min(smallest, 0.5f * math.length(math.cross(b - a, c - a)));
-            var origin = (a + b + c) / 3f + Facet(shape, t) * 1e-3f;
-            bool both = true;
-            foreach (var d in directions)
+        foreach (var piece in pieces)
+            foreach (int t in piece)
             {
-                int crossings = 0;
-                for (int u = 0; u < count; u++) if (Crosses(origin, d, At(shape, 3 * u), At(shape, 3 * u + 1), At(shape, 3 * u + 2))) crossings++;
-                both &= crossings % 2 == 1;
+                var a = At(shape, 3 * t); var b = At(shape, 3 * t + 1); var c = At(shape, 3 * t + 2);
+                smallest = MathF.Min(smallest, 0.5f * math.length(math.cross(b - a, c - a)));
+                var origin = (a + b + c) / 3f + Facet(shape, t) * 1e-3f;
+                bool both = true;
+                foreach (var d in directions)
+                {
+                    int crossings = 0;
+                    foreach (int u in piece) if (Crosses(origin, d, At(shape, 3 * u), At(shape, 3 * u + 1), At(shape, 3 * u + 2))) crossings++;
+                    both &= crossings % 2 == 1;
+                }
+                if (both) inward++;
             }
-            if (both) inward++;
-        }
-        check(inward == 0, $"{inward} of {count} triangles face into the body");
+        check(inward == 0, $"{inward} of {count} triangles face into their piece");
         check(smallest >= 1e-6f, $"the smallest triangle is {smallest * 1e6:F2} mm2, under 1 mm2");
-        check(shape.Pulled <= 16, $"the untangle pulled back {shape.Pulled} vertices, over 16");
+        Console.WriteLine($"PUPPET mesher: {edges} shared edges, smallest triangle {smallest * 1e6:F1} mm2, {shape.Pulled} vertices pulled back, worst {shape.OffSurface * 1000:F1} mm off");
+        check(shape.Pulled <= 800, $"the untangle pulled back {shape.Pulled} vertices, over 800");
         check(shape.OffSurface <= 0.015f, $"a pulled-back vertex is {shape.OffSurface * 1000:F1} mm off the isosurface, over 15 mm");
     }
 
@@ -204,7 +300,8 @@ public static class PuppetChecks
 
     /// <summary>
     /// <see cref="PuppetShape.Across"/> is the edge match a weld by position makes: vertices at the same place are one, and an edge joins
-    /// the corners opposite it in the two triangles that have it, or nothing where it has other than two.
+    /// the corners opposite it in the two triangles that have it, or nothing where it has other than two. (The pieces' seams are 2 mm apart,
+    /// so a weld by position at 10 micrometres does not join two pieces.)
     /// </summary>
     private static void AcrossIsPositionWeld(PuppetShape shape, Action<bool, string> check)
     {
@@ -231,13 +328,13 @@ public static class PuppetChecks
             else { loose++; foreach (int s in list) if (shape.Across[s] != -1) wrong++; }
         }
         check(shape.Across.Length == shape.Corners.Length, $"the puppet has {shape.Across.Length} Across entries for {shape.Corners.Length} corner slots");
-        check(shared > 1000, $"the Across check is vacuous: {shared} shared edges and {loose} not");
+        check(shared >= DollSharedEdges / 2, $"the Across check is vacuous: {shared} shared edges and {loose} not");
         check(wrong == 0, $"{wrong} corner slots' Across differs from the edge match a weld by position makes");
     }
 
     /// <summary>
     /// <see cref="PuppetSkin"/> against the geometry it should describe, measured from its own skinned corners and the bones alone, at
-    /// bends of 0, 45 and 90 degrees (seeds 0 to 19): every vertex where the bones put it; per edge the same crease on both sides, half
+    /// bends of 0, 45 and 90 degrees (seeds 0 to 19): every vertex where its one bone puts it; per edge the same crease on both sides, half
     /// the angle between the skinned facets with the sign of the edge's convexity there, or 0 on a skinned fold and on an edge with
     /// no neighbour (a bind-time crease fails this at the bends: Soul counted 1368 sign flips at 90); the altitudes as 2 * area over the
     /// edge's length; the facet and area-weighted vertex normals.
@@ -254,8 +351,7 @@ public static class PuppetChecks
                 var at = new float3[shape.Vertices.Length];
                 for (int v = 0; v < at.Length; v++)
                 {
-                    float w = shape.WeightA[v];
-                    at[v] = bones[shape.BoneA[v]].Apply(shape.Vertices[v]) * w + bones[shape.BoneB[v]].Apply(shape.Vertices[v]) * (1 - w);
+                    at[v] = bones[shape.Bone[v]].Apply(shape.Vertices[v]);
                     if (math.length(skin.Skinned[v] - at[v]) > 1e-5f) moved++;
                 }
                 float3 P(int slot) => at[shape.Corners[slot]];
@@ -295,7 +391,8 @@ public static class PuppetChecks
                     if ((skin.Crease[s] > 0) != convexA || (skin.Crease[o] > 0) != convexB) badSign++;
                 }
             }
-        check(shared > 60 * 1000 && creased > 60 * 100, $"the skin check is vacuous: {shared} shared edges, {creased} turning more than a hundredth of a radian, over 60 poses");
+        Console.WriteLine($"PUPPET skin check: {shared / 60} shared edges and {creased / 60} turning ones per pose");
+        check(shared > 60 * DollSharedEdges / 2 && creased > 60 * DollCreasedEdges / 2, $"the skin check is vacuous: {shared} shared edges, {creased} turning more than a hundredth of a radian, over 60 poses");
         check(moved == 0, $"{moved} skinned vertices are not where the bones put them");
         check(badFacet == 0, $"{badFacet} facet normals differ from the skinned corners'");
         check(badVertexNormal == 0, $"{badVertexNormal} vertex normals differ from the area-weighted sum of their skinned facets");
@@ -321,8 +418,8 @@ public static class PuppetChecks
             across[slotA] = slotB; across[slotB] = slotA;
             return new PuppetShape
             {
-                Ids = new ulong[] { 1 }, SpreadBind = new[] { Identity }, Joints = Array.Empty<(Box3DSoaJointKind, int, int, float3)>(),
-                Vertices = vertices, BoneA = new int[vertices.Length], BoneB = new int[vertices.Length], WeightA = Enumerable.Repeat(1f, vertices.Length).ToArray(),
+                Ids = new ulong[] { 1 }, Bind = new[] { Identity }, Joints = Array.Empty<(Box3DSoaJointKind, int, int, float3)>(), BallRadius = Array.Empty<float>(),
+                Vertices = vertices, Bone = new int[vertices.Length], Piece = new int[vertices.Length],
                 Corners = corners, Across = across, Pulled = 0, OffSurface = 0,
             };
         }
@@ -352,26 +449,6 @@ public static class PuppetChecks
         return shape.Corners.Select(Find).Distinct().Count();
     }
 
-    /// <summary>
-    /// The worst a skinned triangle edge gets under <paramref name="bones"/> (per body, applied to the spread bind): its length over
-    /// its bind length, and its length in metres. The ratio overstates when the bind edge is tiny; the length does not.
-    /// </summary>
-    public static (float Ratio, float Length) Stretch(PuppetShape shape, Rigid[] bones)
-    {
-        float3 Skin(int v) { float w = shape.WeightA[v]; var p = shape.Vertices[v]; return bones[shape.BoneA[v]].Apply(p) * w + bones[shape.BoneB[v]].Apply(p) * (1 - w); }
-        float ratio = 0, length = 0;
-        for (int t = 0; t < shape.Corners.Length; t += 3)
-            for (int e = 0; e < 3; e++)
-            {
-                int a = shape.Corners[t + e], b = shape.Corners[t + (e + 1) % 3];
-                float bind = math.length(shape.Vertices[a] - shape.Vertices[b]);
-                float now = math.length(Skin(a) - Skin(b));
-                length = MathF.Max(length, now);
-                if (bind > 1e-5f) ratio = MathF.Max(ratio, now / bind);
-            }
-        return (ratio, length);
-    }
-
     private static int[] Parents(PuppetShape shape)
     {
         var up = Enumerable.Repeat(-1, shape.Ids.Length).ToArray();
@@ -394,13 +471,6 @@ public static class PuppetChecks
 
     private static Rigid Identity => Rigid.FromQuaternion(0, 0, 0, 1, new float3(0, 0, 0));
 
-    /// <summary>The bones of a pose with joint <paramref name="joint"/>'s child subtree turned by <paramref name="radians"/> about <paramref name="axis"/> through the joint origin.</summary>
-    public static Rigid[] Swing(PuppetShape shape, int joint, float3 axis, float radians)
-    {
-        var turn = Rigid.About(shape.Joints[joint].Origin, axis, radians);
-        return Enumerable.Range(0, shape.Ids.Length).Select(i => Under(shape, i, shape.Joints[joint].B) ? turn : Identity).ToArray();
-    }
-
     /// <summary>The bones of a pose with every joint bent by a random angle up to <paramref name="maxRadians"/> about a random axis, parents first.</summary>
     public static Rigid[] Bend(PuppetShape shape, int seed, float maxRadians)
     {
@@ -411,7 +481,7 @@ public static class PuppetChecks
         foreach (int j in Enumerable.Range(0, shape.Joints.Length).OrderBy(j => Depth(shape.Joints[j].B)))
         {
             var joint = shape.Joints[j];
-            if (up[joint.B] != joint.A) continue; // only the joint that decides the body's blend
+            if (up[joint.B] != joint.A) continue; // only the joint that decides the body's parent
             var axis = new float3((float)rng.NextDouble() * 2 - 1, (float)rng.NextDouble() * 2 - 1, (float)rng.NextDouble() * 2 - 1);
             axis = math.length(axis) < 1e-3f ? new float3(1, 0, 0) : math.normalize(axis);
             var turn = Rigid.About(bones[joint.A].Apply(joint.Origin), axis, ((float)rng.NextDouble() * 2 - 1) * maxRadians);

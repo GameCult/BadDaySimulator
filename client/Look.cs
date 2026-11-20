@@ -18,15 +18,6 @@ public static class Look
     /// <summary>The chamber light at full glow. At 3 it washed the whole dummy out to white (56% of its pixels clipped at near full glow); at 0.1 under 1% clip. RenderCheck bounds the clipped share and the facet contrast.</summary>
     public const float GlowLightEnergy = 0.1f;
 
-    /// <summary>The puppet's blend radius (m): how far limbs flow into the body they hang from.</summary>
-    public const float SminRadius = 0.025f;
-
-    /// <summary>The joint ball's radius beyond what touches both limbs, in units of the thinner limb's thickness.</summary>
-    public const float JointBallScale = 0.5f;
-
-    /// <summary>The radius (m) the puppet's boxes are rounded by, so the isosurface has no sawtooth bands on their edges.</summary>
-    public const float BoxRound = 0.03f;
-
     /// <summary>
     /// The bevel's width each side of a puppet edge, as a fraction of the viewport's height: 2 px of a 720-line screen. The recommended
     /// option (screen-2px) of the open question lodur:question:bds-puppet-bevel-look-width: at the play camera a pixel is about 3.5 mm

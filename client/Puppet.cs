@@ -11,7 +11,7 @@ namespace BadDay.Client;
 /// The puppet: its drawn surface is one SDF isosurface mesh (<see cref="PuppetField"/>) over the dynamic bodies, flat-shaded
 /// with a soft bevel, built once and rebuilt only when the topology signature (the shape bodies and the joints that blend them)
 /// changes. Per-StableId Node3D carriers hold the pose lanes so physics interpolation has something to interpolate, and every
-/// frame <see cref="PuppetSkin"/> skins the surface on the CPU by those carriers' interpolated transforms relative to the spread
+/// frame <see cref="PuppetSkin"/> skins the surface on the CPU by those carriers' interpolated transforms relative to the
 /// bind pose and derives its facets, creases and vertex normals; this class uploads the result into the mesh's two streams in place.
 /// </summary>
 public partial class Puppet : Node3D
@@ -23,7 +23,7 @@ public partial class Puppet : Node3D
     private readonly HashSet<ulong> _seen = new();
     private readonly ShaderMaterial _material = new() { Shader = GD.Load<Shader>("res://puppet.gdshader") };
     private readonly MeshInstance3D _skin = new MeshInstance3D { Name = "Skin" };
-    private readonly PuppetModel _model = new(Look.SminRadius, Look.JointBallScale, Look.BoxRound);
+    private readonly PuppetModel _model = new();
     private ArrayMesh? _mesh;
     private Node3D[] _boneNodes = Array.Empty<Node3D>();
     private Transform3D[] _inverseBind = Array.Empty<Transform3D>();
@@ -119,7 +119,7 @@ public partial class Puppet : Node3D
     public override void _Process(double delta)
     {
         if (_surface is null || _mesh is null) return;
-        // The bones take a body from the spread bind to its pose in the skin's model space, which Godot then carries to the world with
+        // The bones take a body from the bind to its pose in the skin's model space, which Godot then carries to the world with
         // the skin's own transform: the puppet is right under any parent, not only at the origin.
         var toModel = _skin.GetGlobalTransformInterpolated().AffineInverse();
         for (int i = 0; i < _boneNodes.Length; i++) _bones[i] = ToRigid(toModel * _boneNodes[i].GetGlobalTransformInterpolated() * _inverseBind[i]);
@@ -152,7 +152,7 @@ public partial class Puppet : Node3D
     {
         var shape = _model.Shape!;
         _boneNodes = new Node3D[shape.Ids.Length]; _inverseBind = new Transform3D[shape.Ids.Length]; _bones = new Rigid[shape.Ids.Length];
-        for (int i = 0; i < shape.Ids.Length; i++) { _boneNodes[i] = _nodes[shape.Ids[i]]; _inverseBind[i] = ToTransform(shape.SpreadBind[i].Inverse()); }
+        for (int i = 0; i < shape.Ids.Length; i++) { _boneNodes[i] = _nodes[shape.Ids[i]]; _inverseBind[i] = ToTransform(shape.Bind[i].Inverse()); }
         _surface = new PuppetSkin(shape);
         _vertexStream = new byte[VertexBytes * shape.Corners.Length]; _attributeStream = new byte[AttributeBytes * shape.Corners.Length];
         _mesh = LayoutOf(shape.Corners.Length);

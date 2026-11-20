@@ -18,6 +18,9 @@ public partial class Smoke : Node
     private const ulong Seed = 1;
     private const double WatchdogSeconds = 150;
 
+    /// <summary>The puppet mesh's triangle range: about 0.6x to 1.6x the doll's measured count, which FacetError and BallError decide.</summary>
+    private const int MinTriangles = 440, MaxTriangles = 1180;
+
     private readonly List<string> _failures = new();
     private Main _main = null!;
     private BodyPainBoxSession? _lastSession;
@@ -201,26 +204,16 @@ public partial class Smoke : Node
         Check(environment.Sky is null && environment.TonemapMode == Godot.Environment.ToneMapper.Linear && !environment.GlowEnabled, "the environment is not a linear colour environment with no sky and no glow");
     }
 
-    /// <summary>The puppet's one mesh as it is drawn: size, one piece, and not stretched into a web by the pose it is in or by a joint swung 90 degrees.</summary>
+    /// <summary>
+    /// The puppet's mesh as it is drawn: the ball-jointed doll's pieces, at about the triangle count FacetError and BallError leave (the doll measured
+    /// 798 at the probe; PuppetChecks prints the count per piece), one connected piece for every body and every joint ball.
+    /// </summary>
     private void CheckPuppetMesh(string when)
     {
         if (_main.Bodies.PuppetShape is not { } shape) { Check(false, $"{when}: the puppet has no mesh"); return; }
-        Check(shape.Triangles is >= 2000 and <= 6000, $"{when}: the puppet mesh has {shape.Triangles} triangles, not 2000 to 6000");
+        Check(shape.Triangles is >= MinTriangles and <= MaxTriangles, $"{when}: the puppet mesh has {shape.Triangles} triangles, not {MinTriangles} to {MaxTriangles}");
         int pieces = PuppetChecks.Pieces(shape);
-        Check(pieces == 1, $"{when}: the puppet mesh is {pieces} pieces, not one");
-
-        var posed = new Rigid[shape.Ids.Length];
-        for (int i = 0; i < posed.Length; i++)
-            posed[i] = Puppet.ToRigid((_main.Bodies.PoseOf(shape.Ids[i]) ?? Transform3D.Identity) * Puppet.ToTransform(shape.SpreadBind[i].Inverse()));
-        float stretch = PuppetChecks.Stretch(shape, posed).Ratio;
-        Check(stretch <= PuppetChecks.StretchLimit, $"{when}: a skinned edge is {stretch:F1}x its bind length, over {PuppetChecks.StretchLimit}x");
-
-        for (int j = 0; j < shape.Joints.Length; j++)
-        {
-            if (shape.Joints[j].Kind != global::Ymir.Box3D.Box3DSoaJointKind.Spherical) continue;
-            stretch = PuppetChecks.Stretch(shape, PuppetChecks.Swing(shape, j, new CultMath.float3(1, 0, 0), MathF.PI / 2)).Ratio;
-            Check(stretch <= PuppetChecks.StretchLimit, $"{when}: with body {shape.Ids[shape.Joints[j].B]} swung 90 degrees a skinned edge is {stretch:F1}x its bind length, over {PuppetChecks.StretchLimit}x");
-        }
+        Check(pieces == shape.PieceCount, $"{when}: the puppet mesh is {pieces} pieces, not one for each of its {shape.Ids.Length} bodies and {shape.Joints.Length} joints");
     }
 
     private void CheckPoses(string when)

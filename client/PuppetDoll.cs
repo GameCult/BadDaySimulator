@@ -1,0 +1,166 @@
+using System;
+using CultMath;
+using Ymir.Box3D;
+
+namespace BadDay.Client;
+
+/// <summary>The four signed-distance primitives the doll is dressed in (iq's, exact except the ellipsoid, which is his bound), in a body's local frame.</summary>
+public enum DollShape { Sphere, Ellipsoid, RoundCone, RoundBox }
+
+/// <summary>One primitive of a dressed body: a sphere (A, Ra), an ellipsoid (A, Half), a round cone from A to B (Ra, Rb) or a round box (A, Half, Round).</summary>
+public sealed record DollPrim(DollShape Shape, float3 A, float3 B, float Ra, float Rb, float3 Half, float Round)
+{
+    public static DollPrim Sphere(float3 c, float r) => new(DollShape.Sphere, c, c, r, r, default, 0);
+    public static DollPrim Ellipsoid(float3 c, float3 radii) => new(DollShape.Ellipsoid, c, c, 0, 0, radii, 0);
+    public static DollPrim Cone(float3 a, float ra, float3 b, float rb) => new(DollShape.RoundCone, a, b, ra, rb, default, 0);
+    public static DollPrim Box(float3 c, float3 half, float round) => new(DollShape.RoundBox, c, c, 0, 0, half, round);
+
+    /// <summary>The signed distance (an exact one but for the ellipsoid) at <paramref name="q"/>, in the body's frame.</summary>
+    public float Dist(float3 q)
+    {
+        switch (Shape)
+        {
+            case DollShape.Sphere: return math.length(q - A) - Ra;
+            case DollShape.Ellipsoid:
+            {
+                var p = q - A;
+                float k0 = math.length(p / Half), k1 = math.length(p / (Half * Half));
+                return k1 > 1e-9f ? k0 * (k0 - 1) / k1 : -math.min(Half.x, math.min(Half.y, Half.z));
+            }
+            case DollShape.RoundCone: return RoundCone(q, A, B, Ra, Rb);
+            default:
+            {
+                var p = math.abs(q - A) - (Half - Round);
+                return math.length(math.max(p, 0f)) + math.min(math.max(p.x, math.max(p.y, p.z)), 0f) - Round;
+            }
+        }
+    }
+
+    private static float RoundCone(float3 p, float3 a, float3 b, float r1, float r2)
+    {
+        var ba = b - a; float l2 = math.dot(ba, ba), rr = r1 - r2, a2 = l2 - rr * rr, il2 = 1f / l2;
+        var pa = p - a; float y = math.dot(pa, ba), z = y - l2;
+        var xv = pa * l2 - ba * y; float x2 = math.dot(xv, xv), y2 = y * y * l2, z2 = z * z * l2;
+        float k = MathF.Sign(rr) * rr * rr * x2;
+        if (MathF.Sign(z) * a2 * z2 > k) return MathF.Sqrt(x2 + z2) * il2 - r2;
+        if (MathF.Sign(y) * a2 * y2 < k) return MathF.Sqrt(x2 + y2) * il2 - r1;
+        return (MathF.Sqrt(x2 * a2 * il2) + y * rr) * il2 - r1;
+    }
+
+    /// <summary>A bounding sphere, in the body's frame.</summary>
+    public (float3 Centre, float Radius) Bound() => Shape switch
+    {
+        DollShape.Sphere => (A, Ra),
+        DollShape.Ellipsoid => (A, math.max(Half.x, math.max(Half.y, Half.z))),
+        DollShape.RoundCone => ((A + B) * 0.5f, 0.5f * math.length(B - A) + MathF.Max(Ra, Rb)),
+        _ => (A, math.length(Half)),
+    };
+
+    /// <summary>The primitive's smallest radius: how thin a part it draws.</summary>
+    public float Thickness => Shape switch
+    {
+        DollShape.Sphere => Ra,
+        DollShape.Ellipsoid => math.min(Half.x, math.min(Half.y, Half.z)),
+        DollShape.RoundCone => MathF.Min(Ra, Rb),
+        _ => math.min(Half.x, math.min(Half.y, Half.z)),
+    };
+}
+
+/// <summary>
+/// One body of the doll: the physics shape it dresses (the key), the primitives it is made of, and the joint to its parent: the ball's radius,
+/// and either the swing cone of a Spherical joint or the range of a hinge. The ranges are transcribed from HumanoidRagdoll.Build (Lodur f9e302e):
+/// the lanes carry no joint limits, so carrying them there is part of follow-up lodur-joint-ranges-anatomical.
+/// </summary>
+/// <param name="Kind">The physics shape's kind.</param>
+/// <param name="Size">The physics shape's Size0..2 (matched within 1e-4).</param>
+/// <param name="Prims">The body's primitives in its own frame, smooth-min'd by <see cref="Doll.BodyBlend"/>.</param>
+/// <param name="BallRadius">The radius (m) of the ball at the joint to the parent, or 0 for a body with no joint to a parent of its own.</param>
+/// <param name="SwingCone">A Spherical joint's swing cone, the full angle in radians (HumanoidRagdoll's coneAngle), or 0.</param>
+/// <param name="Flex">A hinge's range turning the child about the hinge axis the negative way, in radians (HumanoidRagdoll's -lower limit), or 0.</param>
+/// <param name="Extension">A hinge's range turning the child about the hinge axis the positive way, in radians (HumanoidRagdoll's upper limit), or 0.</param>
+public sealed record DollEntry(Box3DSoaKind Kind, float3 Size, DollPrim[] Prims, float BallRadius = 0, float SwingCone = 0, float Flex = 0, float Extension = 0)
+{
+    public bool IsHinge => Flex > 0 || Extension > 0;
+
+    public bool Matches(Box3DSoaKind kind, float3 size) => kind == Kind && math.length(size - Size) <= 1e-4f;
+}
+
+/// <summary>
+/// The ball-jointed art doll (lodur:ruling:puppet-joints-ball-jointed-doll, puppet-look-artdoll-alpha-half) as data, engine-free: the constants that
+/// decide the pieces and the entries that dress the humanoid ragdoll's bodies, keyed by physics shape and not by limb name. The limb primitives are
+/// x-symmetric, so one entry dresses both sides.
+/// </summary>
+public static class Doll
+{
+    /// <summary>The smooth-min radius (m) between the primitives of one body.</summary>
+    public const float BodyBlend = 0.012f;
+
+    /// <summary>The gap (m) a socket leaves around its ball: the visible seam.</summary>
+    public const float Seam = 0.002f;
+
+    /// <summary>The decimator's alpha: 0 is plane distance alone, 1 normal deviation alone (ruling puppet-look-artdoll-alpha-half: 0.5).</summary>
+    public const float FacetAlpha = 0.5f;
+
+    /// <summary>How far (m) a body piece's surface may stray from its own field when the decimator collapses an edge.</summary>
+    public const float FacetError = 0.02f;
+
+    /// <summary>The same for a ball: the sphere is simple, so it keeps nearer (20 mm leaves 228 triangles across the doll's twelve balls, 10 mm 500).</summary>
+    public const float BallError = 0.010f;
+
+    /// <summary>The margin (radians) a hinge's wedge leaves inside its range, so the decimated notch face (up to 5 mm off at the limit) never reaches the other limb.</summary>
+    public const float HingeMargin = 5f * MathF.PI / 180f;
+
+    /// <summary>
+    /// How far (radians) a hinge is cut clean: the hinge's wedge is sized from min(its range, this). At or over the range, a limb never sinks into
+    /// the other anywhere in its range (ruling doll-hinges-clean-to-limit); a smaller angle shortens the notch a straight limb shows and lets the limbs sink past it.
+    /// </summary>
+    public const float HingeClean = MathF.PI;
+
+    /// <summary>The radius (m) a fallback box is rounded by (a body with no entry is drawn as its physics shape).</summary>
+    public const float FallbackRound = 0.03f;
+
+    /// <summary>The fine grid (m) a body is extracted on before decimation, and a ball: at the probe's 12 and 6 mm the decimator reaches the error with the doll's thinnest parts (30 mm) resolved.</summary>
+    public const float BodyCell = 0.012f, BallCell = 0.006f;
+
+    /// <summary>The decimator's normal-deviation weight k (m^2): the plane distance is in m^4 and the deviation in m^2, so k = (16 mm)^2 sets them on one scale.</summary>
+    public const float FacetScale = 0.016f * 0.016f;
+
+    private static float3 V(float x, float y, float z) => new(x, y, z);
+
+    private static readonly float Hinge = 2.4f, Ankle = 0.6f; // HumanoidRagdoll.Build: elbow [-2.4, 0], knee [0, 2.4], ankle [-0.6, 0.6]
+
+    /// <summary>The art doll's bodies. Torso: the shoulder bar runs along the shoulder joints (y 0.14) to inside the shoulder balls (x = +-0.205: its end then lies within the socket, where at y 0.15 and x 0.20 it left a crescent a few millimetres thick outside it), the neck cone stops at the neck ball (y 0.17 to 0.20) and the waist cone at the spine ball (to y -0.15, not -0.19: there it left a lip 1 to 4 mm thick outside the socket, below the grid, that no mesher keeps manifold).</summary>
+    public static readonly DollEntry[] Entries =
+    {
+        new(Box3DSoaKind.Box, V(.15f, .08f, .09f), new[] { DollPrim.Ellipsoid(V(0, -.005f, 0), V(.14f, .085f, .095f)), DollPrim.Cone(V(0, .02f, 0), .085f, V(0, .09f, 0), .07f) }),
+        new(Box3DSoaKind.Box, V(.15f, .22f, .09f), new[]
+        {
+            DollPrim.Ellipsoid(V(0, .07f, .005f), V(.145f, .15f, .095f)), DollPrim.Cone(V(0, -.06f, 0), .08f, V(0, -.15f, 0), .072f),
+            DollPrim.Cone(V(-.205f, .14f, 0), .045f, V(.205f, .14f, 0), .045f), DollPrim.Cone(V(0, .17f, 0), .042f, V(0, .20f, 0), .038f),
+        }, 0.072f, SwingCone: 0.5f),
+        new(Box3DSoaKind.Sphere, V(.11f, 0, 0), new[] { DollPrim.Ellipsoid(V(0, .015f, -.005f), V(.085f, .108f, .095f)), DollPrim.Cone(V(0, -.02f, .015f), .06f, V(0, -.075f, .045f), .033f) }, 0.036f, SwingCone: 0.6f),
+        new(Box3DSoaKind.Capsule, V(.045f, .11f, 0), new[] { DollPrim.Cone(V(0, .125f, 0), .05f, V(0, -.12f, 0), .037f) }, 0.05f, SwingCone: 1.5f),
+        new(Box3DSoaKind.Capsule, V(.04f, .10f, 0), new[] { DollPrim.Cone(V(0, .115f, 0), .036f, V(0, -.09f, 0), .03f), DollPrim.Ellipsoid(V(0, -.155f, .005f), V(.03f, .058f, .042f)) }, 0.038f, Flex: Hinge),
+        new(Box3DSoaKind.Capsule, V(.07f, .18f, 0), new[] { DollPrim.Cone(V(0, .2f, 0), .078f, V(0, -.22f, 0), .05f) }, 0.07f, SwingCone: 1.2f),
+        new(Box3DSoaKind.Capsule, V(.06f, .17f, 0), new[] { DollPrim.Cone(V(0, .2f, 0), .05f, V(0, -.2f, 0), .035f), DollPrim.Ellipsoid(V(0, .08f, -.012f), V(.05f, .1f, .055f)) }, 0.05f, Extension: Hinge),
+        new(Box3DSoaKind.Box, V(.05f, .04f, .12f), new[] { DollPrim.Ellipsoid(V(0, 0, -.005f), V(.045f, .038f, .105f)), DollPrim.Cone(V(0, .01f, -.08f), .036f, V(0, -.015f, .1f), .02f) }, 0.034f, Flex: Ankle, Extension: Ankle),
+    };
+
+    /// <summary>The hinge axis in the child's bind frame (HumanoidRagdoll's hinges turn about +x).</summary>
+    public static readonly float3 HingeAxis = new(1, 0, 0);
+
+    /// <summary>The entry that dresses a body of this physics shape, or null.</summary>
+    public static DollEntry? Find(Box3DSoaKind kind, float3 size)
+    {
+        foreach (var e in Entries) if (e.Matches(kind, size)) return e;
+        return null;
+    }
+
+    /// <summary>A body with no entry, as its physics shape: a sphere, a capsule (a round cone of one radius) or a box rounded by <see cref="FallbackRound"/>.</summary>
+    public static DollPrim[] Fallback(Box3DSoaKind kind, float3 size) => kind switch
+    {
+        Box3DSoaKind.Sphere => new[] { DollPrim.Sphere(default, size.x) },
+        Box3DSoaKind.Capsule => new[] { DollPrim.Cone(V(0, size.y, 0), size.x, V(0, -size.y, 0), size.x) },
+        _ => new[] { DollPrim.Box(default, size, MathF.Min(FallbackRound, math.min(size.x, math.min(size.y, size.z)))) },
+    };
+}

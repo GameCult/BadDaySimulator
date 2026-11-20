@@ -4,8 +4,8 @@ using CultMath;
 namespace BadDay.Client;
 
 /// <summary>
-/// The puppet's drawn surface, engine-free, owned for every frame: <see cref="Update"/> skins the welded vertices of a <see cref="PuppetShape"/>
-/// by the bodies' transforms and derives from the skinned corners the facet normals, the creases (half the turn between neighbouring
+/// The puppet's drawn surface, engine-free, owned for every frame: <see cref="Update"/> skins the vertices of a <see cref="PuppetShape"/>
+/// by the bodies' transforms, one bone each, and derives from the skinned corners the facet normals, the creases (half the turn between neighbouring
 /// facets, once per edge and the same on both sides), the area-weighted vertex normals and the altitudes that give the bevel its distances.
 /// A crease is a property of the deformed surface, so none of it is kept from the bind. Every array is allocated once, here, and refilled.
 /// </summary>
@@ -27,7 +27,7 @@ public sealed class PuppetSkin
         SmallestAltitude = new float[triangles];
     }
 
-    /// <summary>Every vertex skinned, in the space the bodies' transforms take the spread bind to.</summary>
+    /// <summary>Every vertex skinned, in the space the bodies' transforms take the bind to.</summary>
     public float3[] Skinned { get; }
 
     /// <summary>Per triangle: the unit normal seen from outside.</summary>
@@ -53,7 +53,7 @@ public sealed class PuppetSkin
     public float3 Lo { get; private set; }
     public float3 Hi { get; private set; }
 
-    /// <summary><paramref name="bones"/> take each body from the spread bind to where it is now, one per body of the shape.</summary>
+    /// <summary><paramref name="bones"/> take each body from the bind to where it is now, one per body of the shape.</summary>
     public void Update(ReadOnlySpan<Rigid> bones)
     {
         var s = _shape;
@@ -69,12 +69,12 @@ public sealed class PuppetSkin
         float3 lo = new(float.MaxValue, float.MaxValue, float.MaxValue), hi = new(float.MinValue, float.MinValue, float.MinValue);
         for (int v = 0; v < Skinned.Length; v++)
         {
-            var p = s.Vertices[v]; float w = s.WeightA[v];
-            int a = 12 * s.BoneA[v], b = 12 * s.BoneB[v];
+            var p = s.Vertices[v];
+            int a = 12 * s.Bone[v];
             var q = new float3(
-                w * (_bones[a] * p.x + _bones[a + 1] * p.y + _bones[a + 2] * p.z + _bones[a + 9]) + (1 - w) * (_bones[b] * p.x + _bones[b + 1] * p.y + _bones[b + 2] * p.z + _bones[b + 9]),
-                w * (_bones[a + 3] * p.x + _bones[a + 4] * p.y + _bones[a + 5] * p.z + _bones[a + 10]) + (1 - w) * (_bones[b + 3] * p.x + _bones[b + 4] * p.y + _bones[b + 5] * p.z + _bones[b + 10]),
-                w * (_bones[a + 6] * p.x + _bones[a + 7] * p.y + _bones[a + 8] * p.z + _bones[a + 11]) + (1 - w) * (_bones[b + 6] * p.x + _bones[b + 7] * p.y + _bones[b + 8] * p.z + _bones[b + 11]));
+                _bones[a] * p.x + _bones[a + 1] * p.y + _bones[a + 2] * p.z + _bones[a + 9],
+                _bones[a + 3] * p.x + _bones[a + 4] * p.y + _bones[a + 5] * p.z + _bones[a + 10],
+                _bones[a + 6] * p.x + _bones[a + 7] * p.y + _bones[a + 8] * p.z + _bones[a + 11]);
             Skinned[v] = q; VertexNormal[v] = new float3(0, 0, 0);
             lo = math.min(lo, q); hi = math.max(hi, q);
         }

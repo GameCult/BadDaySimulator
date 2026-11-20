@@ -12,7 +12,7 @@ namespace BadDay.Client.Tests;
 /// per-frame skin upload; this check does, in a window (Godot's gl_compatibility renderer, the client's own).
 /// It poses the carriers in a bent pose (every joint turned at random) under a moved and turned BodyRenderer, renders one frame of the
 /// puppet alone on black, and compares the rendered silhouette with the silhouette of the same mesh skinned on the CPU from the
-/// carriers and the spread bind (not from anything Puppet computed) and projected through the camera. Intersection over union must be
+/// carriers and the bind (not from anything Puppet computed) and projected through the camera. Intersection over union must be
 /// at least <see cref="MinIou"/>. It also looks at the light, with the chamber near full glow: the bisque's faces (the glaze off) must not clip to white and must differ from each other, and the chamber's light must lift the puppet over the same frame with that light off (so the glow is bounded from below as well).
 /// It then turns the glaze on at the close view, from the front and from behind (see <see cref="GlazeCheck"/>): it must show, and the studio the camera carries must light the puppet from both sides.
 /// It also reads the shading normal the shader draws (ShowNormals: the view-space normal as emission) on the torso in the <see cref="Views"/> (close, far,
@@ -328,14 +328,14 @@ public partial class RenderCheck : Node
                 drawn[y * w + x] = Mathf.Max(c.R, Mathf.Max(c.G, c.B)) > 0.12f;
             }
 
-        // What the same mesh covers skinned on the CPU: bones from the carriers' world poses and the spread bind, nothing from Puppet.
+        // What the same mesh covers skinned on the CPU: bones from the carriers' world poses and the bind, nothing from Puppet.
         var camera = GetViewport().GetCamera3D();
         var scale = new Vector2(w, h) / GetViewport().GetVisibleRect().Size;
         var skinned = new Vector3[shape.Vertices.Length];
         for (int v = 0; v < skinned.Length; v++)
         {
             var p = new Vector3(shape.Vertices[v].x, shape.Vertices[v].y, shape.Vertices[v].z);
-            skinned[v] = world[shape.BoneA[v]] * p * shape.WeightA[v] + world[shape.BoneB[v]] * p * (1f - shape.WeightA[v]);
+            skinned[v] = world[shape.Bone[v]] * p;
         }
         var covered = new bool[w * h];
         for (int t = 0; t < shape.Corners.Length; t += 3)
@@ -393,11 +393,11 @@ public partial class RenderCheck : Node
         var bones = PuppetChecks.Bend(shape, BendSeed, degrees * Mathf.Pi / 180f);
         for (int i = 0; i < carriers.Length; i++)
         {
-            carriers[i].Transform = Puppet.ToTransform(bones[i].After(shape.SpreadBind[i]));
+            carriers[i].Transform = Puppet.ToTransform(bones[i].After(shape.Bind[i]));
             carriers[i].ResetPhysicsInterpolation();
         }
         for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
-        return carriers.Select((c, i) => c.GlobalTransform * Puppet.ToTransform(shape.SpreadBind[i].Inverse())).ToArray();
+        return carriers.Select((c, i) => c.GlobalTransform * Puppet.ToTransform(shape.Bind[i].Inverse())).ToArray();
     }
 
     /// <summary>
@@ -742,7 +742,7 @@ public partial class RenderCheck : Node
         for (int v = 0; v < skinned.Length; v++)
         {
             var p = new Vector3(shape.Vertices[v].x, shape.Vertices[v].y, shape.Vertices[v].z);
-            skinned[v] = world[shape.BoneA[v]] * p * shape.WeightA[v] + world[shape.BoneB[v]] * p * (1f - shape.WeightA[v]);
+            skinned[v] = world[shape.Bone[v]] * p;
         }
         var P = new Vector3[n];
         for (int s = 0; s < n; s++) P[s] = skinned[shape.Corners[s]];

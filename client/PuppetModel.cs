@@ -16,7 +16,6 @@ public readonly record struct PuppetJointLane(Box3DSoaJointKind Kind, ulong A, u
 /// </summary>
 public sealed class PuppetModel
 {
-    private readonly float _smin, _ballScale, _boxRound;
     private readonly Dictionary<ulong, Rigid> _bind = new();
     private readonly Dictionary<(Box3DSoaJointKind, ulong, ulong), float3> _originLocal = new();
     private readonly List<BodySignature> _bodies = new();
@@ -27,8 +26,6 @@ public sealed class PuppetModel
 
     private readonly record struct BodySignature(ulong Id, Box3DSoaKind Kind, float S0, float S1, float S2);
     private readonly record struct JointSignature(Box3DSoaJointKind Kind, ulong A, ulong B);
-
-    public PuppetModel(float smin, float ballScale, float boxRound) { _smin = smin; _ballScale = ballScale; _boxRound = boxRound; }
 
     /// <summary>The shape built from the current signature, or null before the first update.</summary>
     public PuppetShape? Shape { get; private set; }
@@ -88,7 +85,7 @@ public sealed class PuppetModel
         }
         _signed = true;
 
-        Shape = PuppetField.Build(bound, built, _smin, _ballScale, _boxRound);
+        Shape = PuppetField.Build(bound, built);
         return true;
     }
 
