@@ -30,18 +30,20 @@ recorder. It needs sibling checkouts of Lodur and Ymir (`LODUR_ROOT`, else
 `..\Lodur`; Lodur finds `..\Ymir`, or `YMIR_ROOT`). Entry points:
 
 - `src/BadDay.Core/PainBoxSimulation.cs`: the headless run over Lodur's Actor.
+- `src/BadDay.Core/ChamberBrain.cs`: the volunteer's Brain, authored as data: his goals, and the payment's pull.
 - `src/BadDay.Core/PainBoxSession.cs`: the run's seed, traits, box and recorder; both runs drive it.
 - `src/BadDay.Core/PainBox.cs`: the box schedule (ramp, jitter, disable time).
 - `src/BadDay.Core/PainBoxParameters.cs`: the box and clock tunables, plus Lodur's parameter records as members.
 - `src/BadDay.Core/Sweep.cs`: consecutive seeds, break-time min/median/max.
 - `src/BadDay.Ymir/BodyPainBox.cs`: the same run on the Ymir ragdoll, with the hand-out time.
+- `src/BadDay.Ymir/SeatedPuppet.cs`: the stool, ground and ragdoll every body run is built on.
 - `src/BadDay.Cli`: `baddaysim`.
 - `tests/BadDay.Tests`: determinism, break-time, monotonicity and body tests.
 - `tools/PainSweep`: the intensity x suppression table.
 
 ```
 dotnet run --project src/BadDay.Cli -- run   --seed 1
-dotnet run --project src/BadDay.Cli -- sweep --seed 1 --count 50 --pull 0.3
+dotnet run --project src/BadDay.Cli -- sweep --seed 1 --count 50 --pay 40
 dotnet run --project src/BadDay.Cli -- run   --seed 1 --disable-at 5
 dotnet run --project src/BadDay.Cli -- run   --seed 1 --body
 dotnet run --project tools/PainSweep
@@ -49,7 +51,7 @@ dotnet run --project tests/BadDay.Tests          # exits non-zero on failure
 ```
 
 `run` prints a timeline (samples every second, plus flinch, break and
-withdrawal events) and a one-line summary. Options: `--intensity`, `--pull`,
+withdrawal events) and a one-line summary. Options: `--intensity`, `--pay` (what the volunteer is paid, dollars; default 100),
 `--disable-at`, `--max`, `--every`. `--body` runs it on the ragdoll (1/120 s
 steps; the native Ymir library builds with cmake and a C compiler on first
 build) and adds a line with the time the hand left the box. The body run is also a stepping
@@ -91,11 +93,15 @@ Actor's state at the end of its tick:
   down accumulates strain (suppression is never free, per
   `reflex-gain-from-drive`).
 - **Drive:** pain rises with the signal and decays; resolve drains with pain
-  and strain, scaled by `(1 - ObjectivePull)`, and recovers only when pain is low.
+  and strain, scaled by `(1 - pull)` of the goal in force, and recovers only when pain is low.
   Two seeded traits (nociceptor gain, resolve drain) make each seed a different person.
-- **Goals:** `HoldHand` (the objective, with its pull) and `Withdraw`. When
-  resolve reaches zero the goal flips and the hand is out after the withdrawal
-  latency (100 ms).
+- **Goals:** the volunteer is paid to keep his hand in, and his Brain is data
+  (`ChamberBrain`): `HoldHand` pulls with `Payment / (Payment + DollarsAtHalfPull)` (both
+  100 by default, so $100 pulls 0.5; $0 pulls nothing and $400 pulls 0.8), and `Withdraw`
+  is eligible once resolve has reached zero and outranks it. Lodur's Actor commits the
+  switch after its deliberate latency (100 ms), so the break row still reads `HoldHand`;
+  the hand is out when `Withdraw` takes over. The sessions never decide a goal: the
+  goal column is read back from the Actor.
 - **Measure:** `TimeToBreakMs` (resolve hits zero) and the outcome:
   `WillBroke`, `BoxDisabled` (disabled while the will held), or `Endured`.
 
@@ -116,8 +122,8 @@ and Linux x64 agreed on seeds 1-5, the sweep and `run --body` when compared).
 
 The timeline of a run differs from the pre-Lodur slice only in that each row is the
 Actor's state at the end of its tick: a Flinch row shows strain and resolve after the
-tick's update, and when a Flinch and the will's break fall on the same tick the Flinch
-row's goal column reads Withdraw.
+tick's update. The goal column is the goal in force, so rows from the break to the
+withdrawal 100 ms later (the break row, and any sample falling in between) read `HoldHand`.
 
 Persistent content (puppet definitions, drive parameters, saved levels) will
 be CultCache per Lodur's `content-is-cultcache`; this slice has none, so it
@@ -132,33 +138,41 @@ references it: the CLI and the tests) builds Ymir's native library, which needs 
 (on Windows MinGW: `CMAKE_GENERATOR="Ninja Multi-Config" CC=gcc`). The projects were built and the tests
 run on Windows and on Linux.
 
-## The office stress scenario (rung 3)
+## The office stress scenario (rungs 3 and 4)
 
-Sensory load alone: the office's stressors fill the stress bar until the will breaks, headless, one tick at a
-time. The scenario is data in two parts. The **setting** names the emitters (printer, ceiling light, desk
+The office's stressors fill the stress bar until the will breaks, and then Office Fella goes into a rage:
+headless, one tick at a time, or on the seated puppet. The scenario is data in two parts. The **setting** names the emitters (printer, ceiling light, desk
 phone, desktop notifications) and where they sit. The **cause** holds the stressors that drive them (each with
-an onset, ramp, period, duration, intensity and jitter), the objective's pull (0.6) and the sense nerve the
+an onset, ramp, period, duration, intensity and jitter), the job's pull (0.6, the keep-composure goal's) and the sense nerve the
 character hears and sees with. Lodur owns what the stimulus does: sensing, load, arousal, and the arousal
 drain on resolve. `StressSession` only writes the emitters' intensities each tick and logs the Actor's state;
-the player's lever is `Silence(stressorId)`, from the current tick on. A run ends where the will breaks (rung 4
-continues past it) or at 180 s.
+the player's lever is `Silence(stressorId)`, from the current tick on. Office Fella's Brain is data too
+(`OfficeBrain`): `KeepComposure` pulls with the job's pull; `Rage` (eligible once the will has broken, outranks it,
+no pull) loops wind-up and strike with each arm at 0.25 s a key. The Actor commits the switch 100 ms after the break,
+the session logs a `GoalChanged` row, and the run goes on `ReleaseSeconds` (6 s) after it, or to 180 s if the will
+holds. Headless the rage moves nothing; `office --body` runs it on the puppet.
 
 The stress bar is `1 - resolve` and reads **lost composure**; the label is one constant
 (`StressResult.StressBarLabel`) pending `lodur:question:stress-bar-meaning`.
 
 - `src/BadDay.Core/Setting.cs`, `Cause.cs`: the office's defaults, in code, not persisted yet.
 - `src/BadDay.Core/StressSession.cs`: one run, driven per tick by the headless run, the sweep, the CLI and a client.
+- `src/BadDay.Core/OfficeBrain.cs`: Office Fella's goals, and the poses they write.
+- `src/BadDay.Ymir/OfficeBody.cs`: the office on the seated puppet: both hands, the pelvis and the strikes.
 - `src/BadDay.Core/StressSimulation.cs`: the headless run with scheduled silences, and the seed sweep.
 
 ```
 dotnet run --project src/BadDay.Cli -- office --seed 1
+dotnet run --project src/BadDay.Cli -- office --seed 1 --body
 dotnet run --project src/BadDay.Cli -- office --seed 1 --silence printer@20 --silence desk-phone@30
 dotnet run --project src/BadDay.Cli -- office-sweep --seed 1 --count 50 --scale 1.5
 ```
 
 Options: `--silence ID@S` (repeatable; `printer`, `ceiling-light`, `desk-phone`, `desktop-interrupt`), `--scale`
-(every stressor's intensity), `--pull`, `--max`, `--every`. The rows are `time_ms kind audio visual interrupt
-load arousal resolve stress goal`, with kinds Sample, Silenced, WillBroke and Endured. The sweep prints the
+(every stressor's intensity), `--pull`, `--max`, `--every`, and `--body` (run the puppet; the summary adds the rage's
+length and the strikes counted as forward hand-speed peaks). The rows are `time_ms kind audio visual interrupt
+load arousal resolve stress goal`, with kinds Sample, Silenced, WillBroke, GoalChanged and Endured and goals
+KeepComposure and Rage. The sweep prints the
 break-time min/median/max and the lowest resolve among runs that endured. The office breaks near 90 s at pull
 0.6 only with the office's own sense nerve (threshold 0.05, no sensitisation, no conduction delay); Lodur's
 `NerveParameters` defaults break it near 100 s. **Every number here is a placeholder.**

@@ -10,7 +10,7 @@ same table.
 
 Each cell is the median time-to-break in seconds over 9 consecutive seeds (1..9;
 seeds vary nociceptor gain, resolve drain and stimulus jitter). Everything else
-is at its default, including objective pull 0.5 and a 120 s limit.
+is at its default, including the volunteer's $100 payment (pull 0.5) and a 120 s limit.
 
 - `never`: no seed's will broke within 120 s. This is a result, not an error.
 - `95.4(8/9)`: only 8 of 9 seeds broke; the median is over those 8, so it
