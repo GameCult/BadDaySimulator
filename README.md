@@ -161,7 +161,7 @@ waits for Brains as content. Headless the rage moves nothing; `office --body` ru
 The stress bar is his arousal, how wound up he is right now, and reads **stress (arousal)** (`StressResult.StressBarLabel`; ruling `lodur:ruling:stress-bar-shows-arousal-calm-silences`).
 It rises with each stressor and falls in quiet; will is not on it. Entering calm fades his arousal and his senses' gain to nothing over `CalmFadeSeconds` (3 s, the aftershock tail of
 `lodur:ruling:flinch-tail-after-stimulus`; the calm goal's `EntryArousal`, `SensoryGain` and `EntrySeconds`), so the bar drains and stays empty for the rest of the run while the stressor columns
-keep sounding and the load column reads the gated load, 0.
+keep sounding. Arousal is exactly 0 from `CalmFadeSeconds` on; the load column tails off with the gain and reaches 0 one tick later (`Sense` reads the gain a tick after the Actor sets it).
 
 - `src/BadDay.Core/Setting.cs`, `Cause.cs`: the office's defaults, in code, not persisted yet.
 - `src/BadDay.Core/StressSession.cs`: one run, driven per tick by the headless run, the sweep, the CLI and a client.
