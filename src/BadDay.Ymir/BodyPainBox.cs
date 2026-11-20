@@ -194,6 +194,7 @@ public sealed class BodyPainBoxSession : IDisposable
         _hand = sample;
         if (!ticked) return;
 
+        // The first break is the only one this run sees: the withdraw pose is terminal (the goal gates on Breaks and is involuntary for good) and nothing moves the hand back into the box, so the will cannot be pushed to a second break here. PainBoxSession, which can be ticked through a mend, guards its own.
         if ((events & TickEvents.WillBroke) != 0) _breakTick = tick;
         bool inBox = sample.InBox;
 
