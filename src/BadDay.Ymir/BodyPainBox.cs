@@ -194,7 +194,7 @@ public sealed class BodyPainBoxSession : IDisposable
         _hand = sample;
         if (!ticked) return;
 
-        if ((events & TickEvents.WillBroke) != 0) _breakTick = tick;
+        if ((events & TickEvents.WillBroke) != 0 && _breakTick < 0) _breakTick = tick; // the snap: a later break after a mend is not the first
         bool inBox = sample.InBox;
 
         if (_breakTick < 0)

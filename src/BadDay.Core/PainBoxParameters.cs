@@ -34,5 +34,8 @@ public sealed record PainBoxParameters
     // Per-seed trait spread (fraction): nociceptor gain and resolve drain. The seed's draw multiplies Nerve.Gain and Drive.DrainTrait.
     public double TraitJitter { get; init; } = 0.2;
 
+    /// <summary>The id of the Brain goal whose takeover is the withdrawal: the session's Withdrew, its Withdrew row and its WillBroke outcome come from that goal's GoalChanged and no other. The session refuses an id the Brain lacks.</summary>
+    public string ReleaseGoalId { get; init; } = ChamberBrain.WithdrawId;
+
     public double SampleEverySeconds { get; init; } = 1.0;
 }

@@ -14,6 +14,9 @@ public static class ChamberBrain
     public const int HoldIndex = 0;
     public const int WithdrawIndex = 1;
 
+    /// <summary>The withdraw goal's id: what the pain box's release waits for (<see cref="PainBoxParameters.ReleaseGoalId"/>).</summary>
+    public const string WithdrawId = "withdraw";
+
     /// <summary>The objective's pull for the payment: 0 for nothing, 0.5 at <see cref="PainBoxParameters.DollarsAtHalfPull"/>, toward 1 for more.</summary>
     public static double Pull(PainBoxParameters p)
     {
@@ -27,8 +30,10 @@ public static class ChamberBrain
 
     /// <summary>
     /// hold-hand: always eligible, priority 0, the payment's pull, the hold pose with the reflex leak and strain shake
-    /// pulling toward the withdraw pose. withdraw: eligible once the will has broken, priority 1, no pull, the withdraw
-    /// pose with no leak or shake.
+    /// pulling toward the withdraw pose. withdraw: eligible once the will has broken (<see cref="DriveQuantity.Breaks"/>, which
+    /// never falls, so the goal is one-way: the will mending does not give the hand back), priority 1, no pull, involuntary
+    /// for good (the withdrawal is the body's, it costs no will and does not weaken as the will mends), the withdraw pose
+    /// with no leak or shake.
     /// </summary>
     public static Brain Build(PainBoxParameters p, ReadOnlySpan<Quat> hold, ReadOnlySpan<Quat> withdraw)
     {
@@ -48,10 +53,11 @@ public static class ChamberBrain
                 },
                 new GoalSpec
                 {
-                    Id = "withdraw",
+                    Id = WithdrawId,
                     Priority = 1.0,
                     Pull = 0.0,
-                    When = new[] { new Condition(DriveQuantity.WillBroken, ConditionOp.AtLeast, 1.0) },
+                    When = new[] { new Condition(DriveQuantity.Breaks, ConditionOp.AtLeast, 1.0) },
+                    InvoluntarySeconds = double.PositiveInfinity,
                     Behaviour = new PoseBehaviour
                     {
                         Keys = new[] { withdrawPose },

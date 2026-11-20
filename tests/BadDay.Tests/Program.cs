@@ -12,6 +12,8 @@ public static class Program
 {
     private static readonly PainBoxParameters Default = new();
     private static readonly PainBoxParameters OnBody = new() { TickSeconds = BodyPainBox.TickSeconds };
+    /// <summary>OnBody with a will that costs no strength (WillCurve toward 0 makes Will^WillCurve 1): the arm's strength is the same whatever the will, so a flinch-gain-0 control feeds nothing different back into the drive. The flinch test's premise.</summary>
+    private static readonly PainBoxParameters Steady = OnBody with { Drive = new Lodur.DriveParameters { WillCurve = 1e-9 } };
     private const int Hz = 120;
 
     private static readonly (string Name, Action Body)[] Tests =
@@ -210,8 +212,8 @@ public static class Program
         {
             for (ulong seed = 1; seed <= 3; seed++)
             {
-                var full = BodyPainBox.Run(OnBody, seed);
-                var control = BodyPainBox.Run(OnBody with { Hold = new Lodur.HoldParameters { FlinchGain = 0.0 } }, seed);
+                var full = BodyPainBox.Run(Steady, seed);
+                var control = BodyPainBox.Run(Steady with { Hold = new Lodur.HoldParameters { FlinchGain = 0.0 } }, seed);
                 Check(full.Run.Flinches == control.Run.Flinches, $"seed {seed}: the nervous state changed with the arm");
                 var flinches = full.Run.Timeline.Where(e => e.Kind == EntryKind.Flinch).Select(e => Tick(e.TimeMs)).ToList();
                 float Gap(int i) => MathF.Sqrt(MathF.Pow(full.Hand[i].X - control.Hand[i].X, 2) + MathF.Pow(full.Hand[i].Y - control.Hand[i].Y, 2) + MathF.Pow(full.Hand[i].Z - control.Hand[i].Z, 2));
@@ -220,6 +222,37 @@ public static class Program
                 Check(after > 0.023f, $"seed {seed}: the largest gap from the control after a flinch is {after:F4} m");
                 Check(before < after / 2, $"seed {seed}: the gap before the first flinch is {before:F4} m, after {after:F4} m");
             }
+        }),
+
+        ("chamber: the withdrawal is one-way: ticked 90 s past it with the box off and the will mended, the goal stays Withdraw, and a box going off does not end the run as if the will held", () =>
+        {
+            var pose = new[] { Lodur.Quat.Identity };
+            var session = new PainBoxSession(Default, 1, new Lodur.BoxStimulus(0f, 0f, 0f, 1f, 1f, 1f), 1, pose, pose);
+            var point = new float[1];
+            var strengths = new float[1];
+            var targets = new Quat[1];
+            while (!session.Withdrew) session.Tick(point, point, point, strengths, targets);
+            session.SwitchOff();
+            bool mended = false;
+            for (int i = 0; i < 9000; i++)
+            {
+                session.Tick(point, point, point, strengths, targets);
+                mended |= !session.Actor.Drive.WillBroken;
+                Check(session.Actor.GoalIndex == ChamberBrain.WithdrawIndex, $"the goal left Withdraw {i} ticks after the withdrawal");
+            }
+            Check(mended, "the will never mended: the test no longer exercises the rule");
+            Check(!session.Actor.Drive.WillBroken && session.Actor.Drive.Breaks > 0, "the will should be mended and the break still counted");
+            Check(!session.Disabled(), "a box going off ended the run of a will that had broken and mended");
+        }),
+
+        ("chamber release: the withdrawal is the Brain's release goal by id, not any goal change; an id the Brain lacks is refused", () =>
+        {
+            var r = PainBoxSimulation.Run(Default with { ReleaseGoalId = "hold-hand", MaxSeconds = 30.0 }, 1);
+            Check(r.Outcome == Outcome.Endured && r.Timeline.All(e => e.Kind != EntryKind.Withdrew) && r.TimeToBreakMs == 14730,
+                $"releasing on a goal the Brain never switches to: outcome {r.Outcome}, break {r.TimeToBreakMs}");
+            bool threw = false;
+            try { PainBoxSimulation.Run(Default with { ReleaseGoalId = "nowhere" }, 1); } catch (ArgumentException) { threw = true; }
+            Check(threw, "a release goal the Brain lacks was accepted");
         }),
 
         ("body: hand-out is the start of a sustained exit: under five non-default holds over 30 seeds a reported hand-out is never followed by re-entry and starts at the first step out", () =>

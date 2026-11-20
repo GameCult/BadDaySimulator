@@ -19,6 +19,7 @@ public sealed class PainBoxSession
     private readonly long _maxTick;
     private readonly long _sampleEvery;
     private readonly int _handRegion;
+    private readonly int _releaseGoal;
     private double _stimulus;
     private long _breakTick = -1;
     private int _flinches;
@@ -40,6 +41,9 @@ public sealed class PainBoxSession
         Seed = seed;
         Actor = new Actor(p.TickSeconds, regionCount, p.Nerve with { Gain = p.Nerve.Gain * gainTrait }, p.Reflex,
             p.Drive with { DrainTrait = p.Drive.DrainTrait * drainTrait }, ChamberBrain.Build(p, holdPose, withdrawPose));
+        _releaseGoal = -1;
+        for (int g = 0; g < Actor.Brain.Goals.Count; g++) if (Actor.Brain.Goals[g].Id == p.ReleaseGoalId) _releaseGoal = g;
+        if (_releaseGoal < 0) throw new ArgumentException($"the Brain has no goal '{p.ReleaseGoalId}' to release on");
         _box = new PainBox(p, rng);
         _sources = new[] { box };
         _maxTick = Ticks(p.MaxSeconds);
@@ -59,7 +63,7 @@ public sealed class PainBoxSession
     /// <summary>True once the run is over: the box was disabled, the time ran out, or the caller ended it.</summary>
     public bool Finished { get; private set; }
 
-    /// <summary>True from the tick the Brain's withdraw goal takes over, its deliberate latency after the will breaks.</summary>
+    /// <summary>True from the tick the Brain's release goal (<see cref="PainBoxParameters.ReleaseGoalId"/>, the withdraw goal) takes over, its deliberate latency after the will breaks.</summary>
     public bool Withdrew { get; private set; }
 
     /// <summary>
@@ -77,12 +81,12 @@ public sealed class PainBoxSession
 
     /// <summary>
     /// The disable check, before ticking: if the box switches off now while the will still holds, the run ends
-    /// with the will intact and this returns true. A will already broken is not given back by the box going off.
+    /// with the will intact and this returns true. A will that has broken is not given back by the box going off, even once it mends.
     /// </summary>
     public bool Disabled()
     {
         long tick = TickIndex;
-        if (tick != _box.DisableTick || Actor.Drive.WillBroken) return false;
+        if (tick != _box.DisableTick || Actor.Drive.Breaks > 0) return false;
         _stimulus = 0.0;
         _outcome = Outcome.BoxDisabled;
         _endTick = tick;
@@ -114,7 +118,7 @@ public sealed class PainBoxSession
             Log(tick, EntryKind.WillBroke);
         }
         if (tick % _sampleEvery == 0) Log(tick, EntryKind.Sample);
-        if ((events & TickEvents.GoalChanged) != 0)
+        if ((events & TickEvents.GoalChanged) != 0 && Actor.GoalIndex == _releaseGoal)
         {
             Withdrew = true;
             _outcome = Outcome.WillBroke;
