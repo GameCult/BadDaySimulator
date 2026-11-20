@@ -196,13 +196,23 @@ public sealed class PieceField
         return list.ToArray();
     }
 
-    /// <summary>The hard clearance: a body piece may not reach into one of its balls, and a ball may not reach outside its sphere.</summary>
-    public bool Forbidden(float3 p)
+    /// <summary>Whether <paramref name="p"/> lies in the seat band: within a socket's radius + <see cref="Doll.SeatBand"/> of a joint origin (a ball has none).</summary>
+    public bool Tight(float3 p)
     {
-        const float slack = 0.0002f;
-        if (IsBall) return math.length(p - _centre) > _radius + slack;
-        foreach (var c in _cuts) if (math.length(p - c.Origin) < c.BallRadius + slack) return true;
+        foreach (var c in _cuts) if (math.length(p - c.Origin) < c.SocketRadius + Doll.SeatBand) return true;
         return false;
+    }
+
+    /// <summary>
+    /// Where a decimated surface point may lie, the one owner of the error map: a ball within <see cref="Doll.BallError"/> of its sphere, either way; a body within
+    /// <see cref="Doll.SeatError"/> of its field under the tight rule and <see cref="Doll.FacetError"/> otherwise, and never within a ball's radius + 0.2 mm of its origin.
+    /// </summary>
+    public bool Allowed(float3 p, bool tight)
+    {
+        if (IsBall) return MathF.Abs(math.length(p - _centre) - _radius) <= Doll.BallError;
+        if (MathF.Abs(Value(p)) > (tight ? Doll.SeatError : Doll.FacetError)) return false;
+        foreach (var c in _cuts) if (math.length(p - c.Origin) < c.BallRadius + 0.0002f) return false;
+        return true;
     }
 }
 
@@ -261,7 +271,7 @@ public static class PuppetField
         {
             var f = pieces[i];
             var (v, tris) = Extract(f);
-            var rules = new DecimateRules(f.Value, f.IsBall ? Doll.BallError : Doll.FacetError, f.Guard(), f.Forbidden);
+            var rules = new DecimateRules(f.Allowed, f.Tight, f.Guard());
             meshes[i] = PuppetDecimate.Run(v, tris, Doll.FacetAlpha, Doll.FacetScale, rules);
         });
         var vertices = new List<float3>(); var bone = new List<int>(); var piece = new List<int>();

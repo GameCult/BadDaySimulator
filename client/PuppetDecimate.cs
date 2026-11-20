@@ -4,12 +4,11 @@ using CultMath;
 
 namespace BadDay.Client;
 
-/// <summary>What a collapse must not do, besides leave the mesh non-manifold.</summary>
-/// <param name="Error">The distance (m) of a point from the piece's surface: the error stop and the limb guard measure against the piece's own field.</param>
-/// <param name="MaxError">No new vertex, fan centroid or fan edge midpoint may lie further than this from the surface.</param>
+/// <summary>What a collapse must not do, besides leave the mesh non-manifold: the piece says where a point may lie, and the decimator asks.</summary>
+/// <param name="Allowed">Whether a new vertex, fan centroid or fan edge midpoint may lie at the point; the flag is whether the collapse runs under the tight rule (<paramref name="Tight"/>).</param>
+/// <param name="Tight">Whether a point lies where collapses run under the tight rule (the band about a socket): a collapse of (u, v) does when u or v, before the collapse, does.</param>
 /// <param name="Guard">Skeleton points and their clearance: no fan triangle may come nearer a point than its clearance (the limb guard).</param>
-/// <param name="Forbidden">A hard region no new vertex, fan centroid or fan edge midpoint may enter (a limb stays outside its balls, a ball inside its sphere).</param>
-public sealed record DecimateRules(Func<float3, float> Error, float MaxError, (float3 P, float Clear)[] Guard, Func<float3, bool>? Forbidden);
+public sealed record DecimateRules(Func<float3, bool, bool> Allowed, Func<float3, bool> Tight, (float3 P, float Clear)[] Guard);
 
 /// <summary>
 /// Edge-collapse decimation of a closed welded mesh, engine-free (edge contraction only, t = 0 in Garland-Heckbert terms, so disjoint parts never
@@ -159,6 +158,7 @@ public sealed class PuppetDecimate
         }
 
         var pu = _p[u]; var pv = _p[v]; float len = math.length(pu - pv);
+        bool tight = _rules.Tight(pu) || _rules.Tight(pv);
         var candidates = new List<float3> { pu, pv, (pu + pv) * 0.5f };
         {
             var a = _q[u]; var b = _q[v];
@@ -199,14 +199,14 @@ public sealed class PuppetDecimate
         // The rules that ask the piece's field are the dear ones: the cheapest candidate that keeps them wins, and edges are only asked when they come up.
         scored.Sort((p, q) => p.Cost.CompareTo(q.Cost));
         foreach (var (cost, x) in scored)
-            if (!validate || Within(x, fan, u, v)) return (cost, x);
+            if (!validate || Within(x, fan, u, v, tight)) return (cost, x);
         return (double.PositiveInfinity, default);
     }
 
-    /// <summary>Whether the new vertex x, every fan centroid and every fan edge midpoint is within the error and outside the forbidden region.</summary>
-    private bool Within(float3 x, List<int> fan, int u, int v)
+    /// <summary>Whether the piece allows the new vertex x, every fan centroid and every fan edge midpoint.</summary>
+    private bool Within(float3 x, List<int> fan, int u, int v, bool tight)
     {
-        bool Good(float3 p) => MathF.Abs(_rules.Error(p)) <= _rules.MaxError && (_rules.Forbidden is null || !_rules.Forbidden(p));
+        bool Good(float3 p) => _rules.Allowed(p, tight);
         if (!Good(x)) return false;
         foreach (int t in fan)
         {

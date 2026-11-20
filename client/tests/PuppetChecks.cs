@@ -33,7 +33,7 @@ public static class PuppetChecks
     /// The doll's measured counts (the vacuity floors are half of them): shared edges per pose and edges turning more than a hundredth of a radian per pose,
     /// as printed by the first run on the shipped doll. A check that sees fewer proves nothing about the doll.
     /// </summary>
-    private const int DollSharedEdges = 1110, DollCreasedEdges = 1106;
+    private const int DollSharedEdges = 1998, DollCreasedEdges = 1991;
 
     public static void Run(Action<string> fail, in Box3DSoaView creationView)
     {
@@ -105,6 +105,8 @@ public static class PuppetChecks
 
         PiecesAreSeparate(puppet, real.Count, inputs.Count, triangles, Check);
         Clearance(puppet, fields, triangles, Check);
+        BallsFollowTheirParent(puppet, real.Count, Check);
+        Seated(puppet, fields, triangles, Check);
         WithinTheError(puppet, fields, triangles, Check);
         LimbsKept(puppet, fields, triangles, Check);
         Mesher(puppet, triangles, Check);
@@ -157,36 +159,140 @@ public static class PuppetChecks
 
     /// <summary>
     /// Clearance by construction: no body vertex, centroid or edge midpoint within the radius of a ball it takes part in (the decimator's hard rule is
-    /// the ball's radius plus 0.2 mm), and no ball point outside it.
+    /// the ball's radius plus 0.2 mm).
     /// </summary>
     private static void Clearance(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
     {
-        int inside = 0, outside = 0, probed = 0;
+        int inside = 0, probed = 0;
         foreach (var f in fields)
+        {
+            if (f.IsBall) continue;
             foreach (var p in Samples(shape, triangles[f.Index]))
             {
                 probed++;
-                if (f.IsBall) { if (math.length(p - f.BallCentre) > f.BallRadius + 0.0002f + 1e-5f) outside++; }
-                else foreach (var c in f.Cuts) if (math.length(p - c.Origin) < c.BallRadius + 0.0002f - 1e-5f) inside++;
+                foreach (var c in f.Cuts) if (math.length(p - c.Origin) < c.BallRadius + 0.0002f - 1e-5f) inside++;
             }
+        }
         check(probed > 1000, $"the clearance check is vacuous: {probed} points");
         check(inside == 0, $"{inside} body points lie inside a joint ball's radius");
-        check(outside == 0, $"{outside} ball points lie outside the ball's radius");
     }
 
-    /// <summary>Within the error: every piece's vertices, centroids and edge midpoints lie within FacetError (BallError for a ball) of its own field's surface, the cuts included.</summary>
+    /// <summary>A ball is drawn by its joint's parent: every vertex of ball piece n + j has the bone of joint j's body A.</summary>
+    private static void BallsFollowTheirParent(PuppetShape shape, int bodies, Action<bool, string> check)
+    {
+        int wrong = 0, vertices = 0;
+        for (int v = 0; v < shape.Vertices.Length; v++)
+        {
+            if (shape.Piece[v] < bodies) continue;
+            vertices++;
+            if (shape.Bone[v] != shape.Joints[shape.Piece[v] - bodies].A) wrong++;
+        }
+        check(vertices > 0, "the ball bone check is vacuous: no ball vertices");
+        check(wrong == 0, $"{wrong} of {vertices} ball vertices do not follow their joint's parent body");
+    }
+
+    /// <summary>The distance along the ray from <paramref name="o"/> in direction <paramref name="d"/> to the first of the piece's triangles it crosses, or infinity.</summary>
+    private static float FirstHit(PuppetShape shape, int[] piece, float3 o, float3 d)
+    {
+        float best = float.PositiveInfinity;
+        foreach (int t in piece)
+        {
+            var a = At(shape, 3 * t); var e1 = At(shape, 3 * t + 1) - a; var e2 = At(shape, 3 * t + 2) - a; var pv = math.cross(d, e2);
+            float det = math.dot(e1, pv);
+            if (MathF.Abs(det) < 1e-12f) continue;
+            var tv = o - a; float u = math.dot(tv, pv) / det;
+            if (u < 0 || u > 1) continue;
+            var qv = math.cross(tv, e1); float w = math.dot(d, qv) / det;
+            if (w < 0 || u + w > 1) continue;
+            float distance = math.dot(e2, qv) / det;
+            if (distance > 1e-6f && distance < best) best = distance;
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// The seat (ruling doll-pieces-hug-balls): at the creation pose, per joint and side, 3000 Fibonacci rays leave the joint origin; the cup is the rays whose
+    /// point at the socket radius + 1 mm is inside the piece's field, and the rays kept are those within 0.6 of the cup's angular radius about its mean direction.
+    /// The gap of a ray is where it first meets the limb's mesh less where it first meets the ball's (a miss counts 60 mm). The median gap is at most 7 mm at every
+    /// side, and the largest at most 15 mm at every side whose cup lies within a hemisphere (the pelvis's spine socket spans more). FacetError does not own the seat: the
+    /// band does. Vacuous unless 22 sides have 50 rays.
+    /// </summary>
+    private static void Seated(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
+    {
+        const int rays = 3000; const float miss = 0.06f;
+        var dirs = new float3[rays];
+        for (int i = 0; i < rays; i++) { float z = 1 - 2f * (i + 0.5f) / rays, r = MathF.Sqrt(1 - z * z), ph = i * 2.399963f; dirs[i] = new float3(r * MathF.Cos(ph), r * MathF.Sin(ph), z); }
+        int sides = 0, loose = 0, tooFar = 0; float worstMedian = 0, worstMax = 0;
+        for (int j = 0; j < shape.Joints.Length; j++)
+        {
+            var (_, a, b, o) = shape.Joints[j];
+            int ball = shape.Ids.Length + j; float socket = shape.BallRadius[j] + Doll.Seam;
+            foreach (int body in new[] { a, b })
+            {
+                var cup = dirs.Where(d => fields[body].Value(o + d * (socket + 0.001f)) < 0).ToArray();
+                if (cup.Length == 0) continue;
+                var axis = math.normalize(cup.Aggregate(new float3(0, 0, 0), (x, d) => x + d));
+                float cosMax = cup.Min(d => math.dot(d, axis)), thetaMax = MathF.Acos(MathF.Max(-1, cosMax));
+                var gaps = new List<float>();
+                foreach (var d in dirs)
+                {
+                    if (MathF.Acos(MathF.Min(1, math.dot(d, axis))) > 0.6f * thetaMax) continue;
+                    float limb = FirstHit(shape, triangles[body], o, d);
+                    gaps.Add(float.IsInfinity(limb) || limb > shape.BallRadius[j] + miss ? miss * 1000 : (limb - FirstHit(shape, triangles[ball], o, d)) * 1000);
+                }
+                if (gaps.Count < 50) continue;
+                sides++;
+                gaps.Sort();
+                float median = gaps[gaps.Count / 2], max = gaps[^1];
+                worstMedian = MathF.Max(worstMedian, median);
+                if (median > 7) loose++;
+                if (cosMax >= 0) { worstMax = MathF.Max(worstMax, max); if (max > 15) tooFar++; }
+            }
+        }
+        Console.WriteLine($"PUPPET seat: {sides} sides, worst median gap {worstMedian:F1} mm, worst largest {worstMax:F1} mm (hemispherical cups)");
+        check(sides >= 22, $"the seat check is vacuous: {sides} sides with 50 rays, under 22");
+        check(loose == 0, $"{loose} sides of joints have a limb whose median distance from its ball exceeds 7 mm (worst {worstMedian:F1}): the piece floats off its ball");
+        check(tooFar == 0, $"{tooFar} sides have a ray that meets the limb more than 15 mm beyond the ball (worst {worstMax:F1})");
+    }
+
+    /// <summary>
+    /// Within the error: every body piece's vertices, centroids and edge midpoints lie within FacetError of its field's surface, the cuts included; a
+    /// triangle with all three vertices in the seat band lies within SeatError + 1 mm of it (the fine mesh's own error at the rims); a ball's points lie within
+    /// BallError of its sphere either way.
+    /// </summary>
     private static void WithinTheError(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
     {
-        int over = 0; float worstBody = 0, worstBall = 0;
+        int over = 0, overBand = 0, overBall = 0, bandTriangles = 0; float worstBody = 0, worstBand = 0, worstBall = 0;
         foreach (var f in fields)
-            foreach (var p in Samples(shape, triangles[f.Index]))
+        {
+            if (f.IsBall)
             {
-                float e = MathF.Abs(f.Value(p));
-                if (f.IsBall) worstBall = MathF.Max(worstBall, e); else worstBody = MathF.Max(worstBody, e);
-                if (e > (f.IsBall ? Doll.BallError : Doll.FacetError) + 1e-4f) over++;
+                foreach (var p in Samples(shape, triangles[f.Index]))
+                {
+                    float e = MathF.Abs(math.length(p - f.BallCentre) - f.BallRadius);
+                    worstBall = MathF.Max(worstBall, e);
+                    if (e > Doll.BallError + 1e-4f) overBall++;
+                }
+                continue;
             }
-        Console.WriteLine($"PUPPET worst error: bodies {worstBody * 1000:F1} mm of {Doll.FacetError * 1000:F0}, balls {worstBall * 1000:F1} mm of {Doll.BallError * 1000:F0}");
-        check(over == 0, $"{over} points stray further from their piece's surface than the error allows (bodies {worstBody * 1000:F1} mm, balls {worstBall * 1000:F1} mm)");
+            foreach (int t in triangles[f.Index])
+            {
+                var a = At(shape, 3 * t); var b = At(shape, 3 * t + 1); var c = At(shape, 3 * t + 2);
+                var points = new[] { a, b, c, (a + b + c) / 3f, (a + b) / 2f, (b + c) / 2f, (c + a) / 2f };
+                float worst = points.Max(p => MathF.Abs(f.Value(p)));
+                worstBody = MathF.Max(worstBody, worst);
+                if (worst > Doll.FacetError + 1e-4f) over++;
+                if (!(f.Tight(a) && f.Tight(b) && f.Tight(c))) continue;
+                bandTriangles++;
+                worstBand = MathF.Max(worstBand, worst);
+                if (worst > Doll.SeatError + 0.001f + 1e-4f) overBand++;
+            }
+        }
+        Console.WriteLine($"PUPPET worst error: bodies {worstBody * 1000:F1} mm of {Doll.FacetError * 1000:F0}, {bandTriangles} seat-band triangles {worstBand * 1000:F1} mm of {Doll.SeatError * 1000:F0} + 1, balls {worstBall * 1000:F1} mm of {Doll.BallError * 1000:F0}");
+        check(bandTriangles > 100, $"the seat band check is vacuous: {bandTriangles} triangles");
+        check(over == 0, $"{over} body triangles stray further from their piece's surface than FacetError allows (worst {worstBody * 1000:F1} mm)");
+        check(overBand == 0, $"{overBand} of {bandTriangles} triangles in the seat band stray more than SeatError + 1 mm from their piece's surface (worst {worstBand * 1000:F1} mm)");
+        check(overBall == 0, $"{overBall} ball points stray further from their sphere than BallError allows (worst {worstBall * 1000:F1} mm)");
     }
 
     /// <summary>Limbs kept: every guard point of a piece (its primitives' axis) is inside it with its clearance, half its depth, to the surface: no limb is pinched away.</summary>

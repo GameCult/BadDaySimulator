@@ -96,11 +96,23 @@ public static class Doll
     /// <summary>The decimator's alpha: 0 is plane distance alone, 1 normal deviation alone (ruling puppet-look-artdoll-alpha-half: 0.5).</summary>
     public const float FacetAlpha = 0.5f;
 
-    /// <summary>How far (m) a body piece's surface may stray from its own field when the decimator collapses an edge.</summary>
+    /// <summary>How far (m) a body piece's surface may stray from its own field when the decimator collapses an edge, away from the sockets.</summary>
     public const float FacetError = 0.02f;
 
-    /// <summary>The same for a ball: the sphere is simple, so it keeps nearer (20 mm leaves 228 triangles across the doll's twelve balls, 10 mm 500).</summary>
-    public const float BallError = 0.010f;
+    /// <summary>
+    /// The seat band (m) beyond a socket's radius: a collapse that touches a vertex within it runs under <see cref="SeatError"/>. A field-value error is blind to a
+    /// socket's lip, which is thinner than any tolerance, so the band judges every check point of every collapse near a socket (ruling doll-pieces-hug-balls).
+    /// </summary>
+    public const float SeatBand = 0.015f;
+
+    /// <summary>How far (m) a body piece's surface may stray from its own field, two-sided, inside the seat band: the limb's end sits on its ball with only the seam showing.</summary>
+    public const float SeatError = 0.005f;
+
+    /// <summary>
+    /// How far (m) a ball's surface may stray from its sphere, two-sided: its facets straddle the sphere and fill the socket; where a facet reaches past the seam it is
+    /// inside the cup (intersection is allowed). An inscribed ball (10 mm in, 0.2 out) opens 10.8 mm.
+    /// </summary>
+    public const float BallError = 0.005f;
 
     /// <summary>The radius (m) a fallback box is rounded by (a body with no entry is drawn as its physics shape).</summary>
     public const float FallbackRound = 0.03f;

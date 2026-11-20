@@ -18,8 +18,8 @@ public partial class Smoke : Node
     private const ulong Seed = 1;
     private const double WatchdogSeconds = 150;
 
-    /// <summary>The puppet mesh's triangle range: about 0.6x to 1.6x the doll's measured count, which FacetError and BallError decide.</summary>
-    private const int MinTriangles = 440, MaxTriangles = 1180;
+    /// <summary>The puppet mesh's triangle range: 0.6x to 1.6x the doll's measured 1332, which FacetError, SeatBand, SeatError and BallError decide.</summary>
+    private const int MinTriangles = 800, MaxTriangles = 2130;
 
     private readonly List<string> _failures = new();
     private Main _main = null!;
@@ -206,7 +206,7 @@ public partial class Smoke : Node
 
     /// <summary>
     /// The puppet's mesh as it is drawn: the ball-jointed doll's pieces, at about the triangle count FacetError and BallError leave (the doll measured
-    /// 798 at the probe; PuppetChecks prints the count per piece), one connected piece for every body and every joint ball.
+    /// 1332 at the probe; PuppetChecks prints the count per piece), one connected piece for every body and every joint ball.
     /// </summary>
     private void CheckPuppetMesh(string when)
     {
