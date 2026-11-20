@@ -135,6 +135,7 @@ public static class Program
                                  $"(left {OfficeBody.CountStrikes(b.HandL, rage, end)}, right {OfficeBody.CountStrikes(b.HandR, rage, end)}), " +
                                  $"{b.Strikes(0, rage)} before it");
             }
+            else if (b.Run.Outcome == Outcome.WillBroke) output.WriteLine($"the will broke but --max ended the run at {b.Run.EndMs} ms, before the rage took over");
             else output.WriteLine($"no rage: the will held to {b.Run.EndMs} ms");
             return 0;
         }

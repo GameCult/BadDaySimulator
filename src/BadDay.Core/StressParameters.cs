@@ -17,7 +17,11 @@ public sealed record StressParameters
     /// <summary>Seconds from one rage key to the next [P]: wind-up left, strike left, wind-up right, strike right.</summary>
     public double RageKeySeconds { get; init; } = 0.25;
 
+    /// <summary>The id of the Brain goal whose takeover starts the release: the run ends <see cref="ReleaseSeconds"/> after that goal's GoalChanged, and a change to any other goal does not. The session refuses an id the Brain lacks.</summary>
+    public string ReleaseGoalId { get; init; } = OfficeBrain.RageId;
+
     public Setting Setting { get; init; } = Setting.Office;
+    public Character Character { get; init; } = Character.OfficeFella;
     public Cause Cause { get; init; } = Cause.Office;
 
     // Lodur's records. The noxious nerve and the reflex idle here (no box); Hold is the composure goal's pose behaviour, which only a body reads.

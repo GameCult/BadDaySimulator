@@ -491,8 +491,8 @@ public static class Program
             var ids = Setting.Office.Emitters.Select(e => e.Id).ToHashSet();
             Check(Cause.Office.Stressors.All(s => ids.Contains(s.EmitterId)), "a stressor names an emitter the setting lacks");
             Check(Setting.Office.Emitters.All(e => e.Emitter.Intensity == 0.0), "the setting carries an intensity");
-            Check(Cause.Office.Senses.Threshold == 0.05 && Cause.Office.Senses.SensitisationGrowth == 0.0 && Cause.Office.Senses.ConductionDelaySeconds == 0.0,
-                "the office does not pass its own sense parameters");
+            Check(Character.OfficeFella.Senses.Threshold == 0.05 && Character.OfficeFella.Senses.SensitisationGrowth == 0.0 && Character.OfficeFella.Senses.ConductionDelaySeconds == 0.0,
+                "Office Fella does not carry his own sense parameters");
         }),
 
         ("office: the same seed gives the same bytes, and sessions stepped in turn equal each run alone", () =>
@@ -529,7 +529,7 @@ public static class Program
         ("office: the break sits near 90 s at pull 0.6 with the office sense nerve, and Lodur's default nerve breaks later", () =>
         {
             long own = MedianBreak(new StressParameters(), 1, 20);
-            long lodurDefault = MedianBreak(new StressParameters { Cause = Cause.Office with { Senses = new Lodur.NerveParameters() } }, 1, 20);
+            long lodurDefault = MedianBreak(new StressParameters { Character = Character.OfficeFella with { Senses = new Lodur.NerveParameters() } }, 1, 20);
             Check(own is > 75000 and < 100000, $"median break {own} ms");
             Check(lodurDefault > own * 1.05, $"default nerve breaks at {lodurDefault} ms, office nerve at {own} ms");
         }),
@@ -670,6 +670,14 @@ public static class Program
             }
         }),
 
+        ("office --body: a break whose rage --max clipped is reported as clipped, not as a will that held", () =>
+        {
+            var w = new StringWriter();
+            BadDay.Cli.Program.Execute(new[] { "office", "--seed", "1", "--max", "83.4", "--body" }, w);
+            var text = w.ToString();
+            Check(text.Contains("will broke at 83358 ms") && text.Contains("--max") && !text.Contains("the will held"), $"clipped run reads: {text.Split((char)10, StringSplitOptions.RemoveEmptyEntries)[^1]}");
+        }),
+
         ("office: a silence at S seconds lands on the tick S falls on: exactly, rounded to nearest, never early or late", () =>
         {
             long SilencedAt(double seconds) =>
@@ -704,7 +712,7 @@ public static class Program
                 var spelledOut = p with
                 {
                     TraitJitter = 0.0,
-                    Cause = steady with { Senses = steady.Senses with { Gain = steady.Senses.Gain * gain } },
+                    Character = p.Character with { Senses = p.Character.Senses with { Gain = p.Character.Senses.Gain * gain } },
                     Drive = p.Drive with { DrainTrait = p.Drive.DrainTrait * drain },
                 };
                 Check(Office(p, seed).Render() == Office(spelledOut, seed).Render(), $"seed {seed}: the traits are not the first two draws, gain then drain");
@@ -751,6 +759,16 @@ public static class Program
             Check(clipped.Outcome == Outcome.WillBroke && clipped.EndMs == 85000 && clipped.Timeline.All(e => e.Kind != StressEntryKind.Endured), $"a release past MaxSeconds ended at {clipped.EndMs}");
         }),
 
+        ("office release: the run ends on the Brain's release goal, by id, not on any goal change; an id the Brain lacks is refused", () =>
+        {
+            var r = Office(new StressParameters { ReleaseGoalId = "keep-composure" }, 1);
+            Check(r.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged).TimeMs == 83380 && r.EndMs == 180000 && r.Outcome == Outcome.WillBroke,
+                $"releasing on a goal the Brain never switches to ended the run at {r.EndMs}");
+            bool threw = false;
+            try { NewOffice(new StressParameters { ReleaseGoalId = "calm" }, 1); } catch (ArgumentException) { threw = true; }
+            Check(threw, "a release goal the Brain lacks was accepted");
+        }),
+
         ("office rage: a will that holds never switches, and the job's pull is the composure goal's alone", () =>
         {
             var quiet = Office(new StressParameters { Cause = Cause.Office with { Stressors = Array.Empty<Stressor>() } }, 1);
@@ -760,7 +778,7 @@ public static class Program
             Check(brain.Goals[OfficeBrain.ComposureIndex].Pull == p.Cause.ObjectivePull && brain.Goals[OfficeBrain.RageIndex].Pull == 0.0, "the pulls are not the cause's and zero");
         }),
 
-        ("office body: the rage is visible: both hands move at least 3x faster, and over 0.5 m/s, in the 2 s after the switch than in the 2 s before, the pelvis stays within 1 cm, and two runs agree", () =>
+        ("office body: the rage is visible: both hands move at least 3x faster, and over 1 m/s (a limp rage gives 0.6), in the 2 s after the switch than in the 2 s before, the pelvis stays within 1 cm, and two runs agree", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             var a = OfficeBody.Run(p, 1);
@@ -782,18 +800,23 @@ public static class Program
             foreach (var (name, hand) in new[] { ("left", a.HandL), ("right", a.HandR) })
             {
                 double before = Rms(hand, sw - 2 * Hz, sw), after = Rms(hand, sw, sw + 2 * Hz);
-                Check(after >= 3 * before && after > 0.5, $"{name} hand: {after:F3} m/s after the switch, {before:F3} m/s before");
+                Check(after >= 3 * before && after > 1.0, $"{name} hand: {after:F3} m/s after the switch, {before:F3} m/s before");
             }
-            Check(a.Strikes(0, sw) == 0 && a.Strikes(sw, a.HandL.Count) >= 8, $"strikes: {a.Strikes(0, sw)} before the switch, {a.Strikes(sw, a.HandL.Count)} after");
+            Check(a.Strikes(0, sw) == 0 && a.Strikes(sw, a.HandL.Count) >= 11, $"strikes: {a.Strikes(0, sw)} before the switch, {a.Strikes(sw, a.HandL.Count)} after");
+            // The strike reaches forward: the shoulder's angle shows in how far the fist gets ahead of where the composed hand hung.
+            double Reach(IReadOnlyList<BodyPoint> h) => h.Skip(sw).Max(q => q.Z) - h[sw - 1].Z;
+            Check(Reach(a.HandL) > 0.58 && Reach(a.HandR) > 0.54, $"the strikes reach {Reach(a.HandL):F3} m (left) and {Reach(a.HandR):F3} m (right) ahead of the composed hand");
+            var rage = OfficeBrain.Build(p, OfficeBody.Poses).Goals[OfficeBrain.RageIndex].Behaviour;
+            Check(rage.Hold.HoldStrength == 1f, "the rage does not write full muscle strength");
             float drift = a.Pelvis.Max(q => MathF.Sqrt(MathF.Pow(q.X - a.Pelvis[0].X, 2) + MathF.Pow(q.Y - a.Pelvis[0].Y, 2) + MathF.Pow(q.Z - a.Pelvis[0].Z, 2)));
             Check(drift < 0.01f, $"the pelvis moved {drift:F4} m");
         }),
 
-        ("office body: the desk's emitters are sensed at the head, so the body breaks within 5 s of the headless run", () =>
+        ("office body: the desk's emitters are sensed at the head, so the body breaks within 0.5 s of the headless run (sensed at a hand it is 3.6 s off)", () =>
         {
             var body = OfficeBody.Run(new StressParameters { TickSeconds = OfficeBody.TickSeconds }, 1).Run;
             var headless = Office(new StressParameters(), 1);
-            Check(Math.Abs(body.TimeToBreakMs!.Value - headless.TimeToBreakMs!.Value) < 5000, $"body {body.TimeToBreakMs} ms, headless {headless.TimeToBreakMs} ms");
+            Check(Math.Abs(body.TimeToBreakMs!.Value - headless.TimeToBreakMs!.Value) < 500, $"body {body.TimeToBreakMs} ms, headless {headless.TimeToBreakMs} ms");
         }),
     };
 

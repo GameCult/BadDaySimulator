@@ -10,7 +10,7 @@ namespace BadDay.Core;
 /// <see cref="Tick"/> per step, and the player's lever is <see cref="Silence"/>. The session never writes drive
 /// state, computes load or arousal, or holds a stress field: rows are end-of-tick state read from the Actor, and
 /// nothing reads them back. The rage is the Brain's (<see cref="OfficeBrain"/>): the session goes on past the break, logs the
-/// tick the Actor commits the switch, and ends ReleaseSeconds after it, or at MaxSeconds.
+/// tick the Actor commits the switch, and ends ReleaseSeconds after the Brain's release goal (<see cref="StressParameters.ReleaseGoalId"/>) takes over, or at MaxSeconds.
 /// </summary>
 public sealed class StressSession
 {
@@ -24,6 +24,7 @@ public sealed class StressSession
     private readonly long _maxTick;
     private readonly long _sampleEvery;
     private readonly long _releaseTicks;
+    private readonly int _releaseGoal;
     private long _breakTick = -1;
     private double _minResolve = 1.0;
     private Outcome _outcome = Outcome.Endured;
@@ -64,10 +65,13 @@ public sealed class StressSession
         Actor = new Actor(p.TickSeconds, regionCount, p.Nerve, p.Reflex,
             p.Drive with { DrainTrait = p.Drive.DrainTrait * drainTrait },
             OfficeBrain.Build(p, poses),
-            p.Cause.Senses with { Gain = p.Cause.Senses.Gain * gainTrait }, senseRegion);
+            p.Character.Senses with { Gain = p.Character.Senses.Gain * gainTrait }, senseRegion);
         _maxTick = Ticks(p.MaxSeconds);
         _sampleEvery = Math.Max(1, Ticks(p.SampleEverySeconds));
         _releaseTicks = Ticks(p.ReleaseSeconds);
+        _releaseGoal = -1;
+        for (int g = 0; g < Actor.Brain.Goals.Count; g++) if (Actor.Brain.Goals[g].Id == p.ReleaseGoalId) _releaseGoal = g;
+        if (_releaseGoal < 0) throw new ArgumentException($"the Brain has no goal '{p.ReleaseGoalId}' to release on");
         _endTick = _maxTick;
     }
 
@@ -124,7 +128,7 @@ public sealed class StressSession
         if (tick % _sampleEvery == 0) Log(tick, StressEntryKind.Sample);
         if ((events & TickEvents.GoalChanged) != 0)
         {
-            _endTick = Math.Min(_maxTick, tick + _releaseTicks);
+            if (Actor.GoalIndex == _releaseGoal) _endTick = Math.Min(_maxTick, tick + _releaseTicks);
             Log(tick, StressEntryKind.GoalChanged);
         }
         if (tick >= _endTick)

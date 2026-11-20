@@ -95,8 +95,8 @@ Actor's state at the end of its tick:
 - **Drive:** pain rises with the signal and decays; resolve drains with pain
   and strain, scaled by `(1 - pull)` of the goal in force, and recovers only when pain is low.
   Two seeded traits (nociceptor gain, resolve drain) make each seed a different person.
-- **Goals:** the volunteer is paid to keep his hand in, and his Brain is data
-  (`ChamberBrain`): `HoldHand` pulls with `Payment / (Payment + DollarsAtHalfPull)` (both
+- **Goals:** the volunteer is paid to keep his hand in, and his Brain is data, built in code for now
+  (`ChamberBrain`; it becomes CultCache content with Lodur's Brain content, follow-up `npc-brains-as-content`): `HoldHand` pulls with `Payment / (Payment + DollarsAtHalfPull)` (both
   100 by default, so $100 pulls 0.5; $0 pulls nothing and $400 pulls 0.8), and `Withdraw`
   is eligible once resolve has reached zero and outranks it. Lodur's Actor commits the
   switch after its deliberate latency (100 ms), so the break row still reads `HoldHand`;
@@ -141,16 +141,17 @@ run on Windows and on Linux.
 ## The office stress scenario (rungs 3 and 4)
 
 The office's stressors fill the stress bar until the will breaks, and then Office Fella goes into a rage:
-headless, one tick at a time, or on the seated puppet. The scenario is data in two parts. The **setting** names the emitters (printer, ceiling light, desk
+headless, one tick at a time, or on the seated puppet. The scenario is data in three parts. The **setting** names the emitters (printer, ceiling light, desk
 phone, desktop notifications) and where they sit. The **cause** holds the stressors that drive them (each with
-an onset, ramp, period, duration, intensity and jitter), the job's pull (0.6, the keep-composure goal's) and the sense nerve the
-character hears and sees with. Lodur owns what the stimulus does: sensing, load, arousal, and the arousal
+an onset, ramp, period, duration, intensity and jitter), and the job's pull (0.6, the keep-composure goal's). The **character** holds the sense nerve he
+hears and sees with. Lodur owns what the stimulus does: sensing, load, arousal, and the arousal
 drain on resolve. `StressSession` only writes the emitters' intensities each tick and logs the Actor's state;
-the player's lever is `Silence(stressorId)`, from the current tick on. Office Fella's Brain is data too
-(`OfficeBrain`): `KeepComposure` pulls with the job's pull; `Rage` (eligible once the will has broken, outranks it,
+the player's lever is `Silence(stressorId)`, from the current tick on. Office Fella's Brain is data too, built in code for now (`OfficeBrain`; content later, as above): `KeepComposure` pulls with the job's pull; `Rage` (eligible once the will has broken, outranks it,
 no pull) loops wind-up and strike with each arm at 0.25 s a key. The Actor commits the switch 100 ms after the break,
-the session logs a `GoalChanged` row, and the run goes on `ReleaseSeconds` (6 s) after it, or to 180 s if the will
-holds. Headless the rage moves nothing; `office --body` runs it on the puppet.
+the session logs a `GoalChanged` row, and the run goes on `ReleaseSeconds` (6 s) after the Brain's release goal
+(`ReleaseGoalId`, `rage`) takes over, or to 180 s if the will holds. Who has the day is a `Character` (his senses; `Character.OfficeFella`),
+apart from the setting and the cause. Each scenario builds its own Brain from its own parameters; one entry point keyed by character id
+waits for Brains as content. Headless the rage moves nothing; `office --body` runs it on the puppet.
 
 The stress bar is `1 - resolve` and reads **lost composure**; the label is one constant
 (`StressResult.StressBarLabel`) pending `lodur:question:stress-bar-meaning`.

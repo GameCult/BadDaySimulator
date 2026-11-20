@@ -33,22 +33,11 @@ public sealed record Stressor(
 }
 
 /// <summary>
-/// What goes wrong: the stressors, the objective's pull, and the sense nerve the character hears and sees them
-/// with. It holds no geometry (that is the <see cref="Setting"/>'s). Code defaults, not persisted.
+/// What goes wrong: the stressors and the objective's pull (the job). It holds no geometry (the <see cref="Setting"/>'s)
+/// and no senses (the <see cref="Character"/>'s). Code defaults, not persisted.
 /// </summary>
-public sealed record Cause(IReadOnlyList<Stressor> Stressors, double ObjectivePull, NerveParameters Senses)
+public sealed record Cause(IReadOnlyList<Stressor> Stressors, double ObjectivePull)
 {
-    /// <summary>
-    /// The office's sense nerve: threshold 0.05, no sensitisation, no conduction delay. The office's break near
-    /// 90 s at pull 0.6 holds only with these; Lodur's NerveParameters defaults break at about 100 s.
-    /// </summary>
-    public static NerveParameters OfficeSenses { get; } = new()
-    {
-        Threshold = 0.05,
-        SensitisationGrowth = 0.0,
-        ConductionDelaySeconds = 0.0,
-    };
-
     /// <summary>
     /// The office's sensory-load cause [P]: printer audio 5 s on, every 8 s for 1 s at 0.25; ceiling light 15 s
     /// every 11 s for 2 s at 0.2; desk phone 25 s every 14 s for 3 s at 0.35; desktop interrupt 75 s every 20 s for
@@ -60,7 +49,7 @@ public sealed record Cause(IReadOnlyList<Stressor> Stressors, double ObjectivePu
         new Stressor("ceiling-light", "ceiling-light", 15.0, 0.0, 11.0, 2.0, 0.2, 0.1),
         new Stressor("desk-phone", "desk-phone", 25.0, 0.0, 14.0, 3.0, 0.35, 0.1),
         new Stressor("desktop-interrupt", "desktop", 75.0, 0.0, 20.0, 1.0, 0.3, 0.1),
-    }, 0.6, OfficeSenses);
+    }, 0.6);
 
     /// <summary>Every stressor's intensity times <paramref name="factor"/>.</summary>
     public Cause Scaled(double factor) => this with

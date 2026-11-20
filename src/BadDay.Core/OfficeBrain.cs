@@ -29,6 +29,9 @@ public static class OfficeBrain
     public const int ComposureIndex = 0;
     public const int RageIndex = 1;
 
+    /// <summary>The rage goal's id: what the scenario's release waits for.</summary>
+    public const string RageId = "rage";
+
     public static OfficeGoal GoalAt(int index) => index == RageIndex ? OfficeGoal.Rage : OfficeGoal.KeepComposure;
 
     public static Brain Build(StressParameters p, OfficePoses poses) => new()
@@ -45,7 +48,7 @@ public static class OfficeBrain
             },
             new GoalSpec
             {
-                Id = "rage",
+                Id = RageId,
                 Priority = 1.0,
                 Pull = 0.0,
                 When = new[] { new Condition(DriveQuantity.WillBroken, ConditionOp.AtLeast, 1.0) },
