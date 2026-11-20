@@ -54,7 +54,7 @@ public partial class Main : Node3D
         AddChild(_bodies);
         _chamber = new Chamber { Name = "Chamber" };
         AddChild(_chamber);
-        _camera = new OrbitCamera { Name = "Camera" };
+        _camera = new OrbitCamera { Name = "Camera", Pivot = () => _bodies.PuppetCentre };
         AddChild(_camera);
         AddChild(Look.Studio(_camera));
         _hud = new Hud(this) { Name = "Hud" };

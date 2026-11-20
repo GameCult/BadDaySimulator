@@ -73,7 +73,7 @@ checkouts (`..\Lodur`, `..\Ymir`, `..\CultLib`, or `LODUR_ROOT`, `YMIR_ROOT` and
 
 ```
 dotnet build client/BadDay.Client.csproj     # CultLib Geometry, Lodur, Ymir (cmake) and BDS, plus ymir_box3d.dll, into client/.godot/mono/temp/bin/Debug
-<godot> --path client                        # play: right-drag orbits, the wheel zooms
+<godot> --path client                        # play: Blender's navigation: middle-drag orbits the puppet, Shift+middle-drag pans, Ctrl+middle-drag and the wheel zoom; Alt+left-drag stands for the middle button (OrbitCamera.Emulate3ButtonMouse)
 <godot> --headless --path client res://tests/Smoke.tscn   # the smoke; exit code 0 passes
 <godot> --path client res://tests/RenderCheck.tscn  # the render check, in a window (not headless); exit code 0 passes
 ```
