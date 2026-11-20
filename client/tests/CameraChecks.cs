@@ -81,6 +81,11 @@ public static class CameraChecks
         // Over the top: a drag down of 400 px pitches 160 degrees, past the pole, and the view turns upside down rather than stopping.
         Drag(MouseButton.Middle, new Vector2(0, 400));
         Check(camera.Basis.Y.Dot(Vector3.Up) < 0, "an orbit of 160 degrees over the top did not carry the view over");
+        // Upside down, a drag to the right still turns the scene with the cursor: the yaw reverses (Blender's turntable does).
+        var flipped = camera.Transform;
+        Drag(MouseButton.Middle, new Vector2(50, 0));
+        float flippedTurn = Floor(-flipped.Basis.Z).SignedAngleTo(Floor(-camera.Basis.Z), Vector3.Up);
+        Check(MathF.Abs(flippedTurn - Mathf.DegToRad(50 * Degrees)) < Mathf.DegToRad(0.1f), $"a 50 px drag with the view upside down turned the camera {Mathf.RadToDeg(flippedTurn):F2} degrees about up, not {50 * Degrees}");
         Back();
 
         // Emulation off: Alt+left-drag is no gesture, and the press reaches whoever is behind.
@@ -118,6 +123,9 @@ public static class CameraChecks
         Check(MathF.Abs(camera.Distance - afterPanDistance / 1.2f) < 1e-5f, $"a notch in made the distance {camera.Distance}, not {afterPanDistance / 1.2f}");
         Button(MouseButton.WheelDown, true);
         Check(MathF.Abs(camera.Distance - afterPanDistance) < 1e-5f, $"a notch in and a notch out left the distance {camera.Distance}, not {afterPanDistance}");
+        Button(MouseButton.WheelUp, true, factor: 2);
+        Check(MathF.Abs(camera.Distance - afterPanDistance / 1.44f) < 1e-5f, $"a notch in of factor 2 made the distance {camera.Distance}, not {afterPanDistance / 1.44f}");
+        camera.Distance = afterPanDistance;
         Button(MouseButton.WheelUp, true, ctrl: true);
         Check(MathF.Abs(camera.Distance - afterPanDistance) < 1e-6f && listener.Seen.Count == 1, "a wheel notch with Ctrl held was consumed or zoomed");
         listener.Seen.Clear();
