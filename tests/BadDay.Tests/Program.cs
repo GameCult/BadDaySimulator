@@ -249,7 +249,7 @@ public static class Program
             foreach (int t in new[] { 5 * Hz, breakTick + 2 })
             {
                 var scripted = BodyPainBox.Run(OnBody with { BoxDisableAtSeconds = t / (double)Hz }, 1);
-                var live = RunLive(OnBody, 1, s => { if (s.Session.TickIndex == t) s.SwitchOff(); });
+                var live = RunLive(OnBody, 1, s => { if (s.TickIndex == t) s.SwitchOff(); });
                 SameRun(scripted, live, $"switch-off at tick {t}");
             }
             Check(BodyPainBox.Run(OnBody with { BoxDisableAtSeconds = 5.0 }, 1).Run.Outcome == Outcome.BoxDisabled, "a switch-off with the will holding should end BoxDisabled");
@@ -258,7 +258,7 @@ public static class Program
 
         ("body: SetIntensity(x) before the first Step equals BoxIntensity = x", () =>
         {
-            var set = RunLive(OnBody, 1, s => { if (s.Session.TickIndex == 0) s.SetIntensity(0.5); });
+            var set = RunLive(OnBody, 1, s => { if (s.TickIndex == 0) s.SetIntensity(0.5); });
             SameRun(BodyPainBox.Run(OnBody with { BoxIntensity = 0.5 }, 1), set, "intensity 0.5");
         }),
 
@@ -268,18 +268,20 @@ public static class Program
             using var control = new BodyPainBoxSession(OnBody, 1);
             using var live = new BodyPainBoxSession(OnBody, 1);
             for (int i = 0; i < at; i++) { control.Step(); live.Step(); }
-            double scheduled = control.Session.Box.Intensity;
-            Check(scheduled > 0.3 && live.Session.Box.Intensity == scheduled, $"before the command the tick's intensity is the schedule's: {live.Session.Box.Intensity} against {scheduled}");
+            double scheduled = control.BoxIntensity;
+            Check(scheduled > 0.3 && live.BoxIntensity == scheduled, $"before the command the tick's intensity is the schedule's: {live.BoxIntensity} against {scheduled}");
             live.SetIntensity(0.0);
-            Check(live.Session.Box.Intensity == scheduled, "the command rewrote a tick that had already run");
+            Check(live.BoxIntensity == scheduled, "the command rewrote a tick that had already run");
             control.Step(); live.Step();
-            Check(control.Session.Box.Intensity > 0.3 && live.Session.Box.Intensity == 0.0, $"next tick: control {control.Session.Box.Intensity}, live {live.Session.Box.Intensity}");
+            Check(control.BoxIntensity > 0.3 && live.BoxIntensity == 0.0, $"next tick: control {control.BoxIntensity}, live {live.BoxIntensity}");
         }),
 
-        ("body: stepping past Finished keeps the world moving and the result frozen", () =>
+        ("body: stepping past Finished keeps the world moving, the arm driven and the result frozen", () =>
         {
             using var s = new BodyPainBoxSession(OnBody, 1);
             while (!s.Finished) s.Step();
+            var drained = new BodyEvent[64];
+            s.DrainEvents(drained);
             string render = s.Result().Render();
             long? handOut = s.HandOutMs;
             int excursions = s.Excursions;
@@ -291,8 +293,106 @@ public static class Program
                 moved |= s.Hand != atEnd;
             }
             Check(moved, "the world did not step after Finished");
-            Check(s.Result().Render() == render && s.HandOutMs == handOut && s.Excursions == excursions && s.LastEvents == Lodur.TickEvents.None,
+            // Once the arm has settled (a second), the driven arm moves 0.01 to 0.03 m in the next second; with the re-drive removed it goes limp and moves 0.3 m.
+            var settled = s.Hand;
+            float drift = 0f;
+            for (int i = 0; i < Hz; i++)
+            {
+                s.Step();
+                drift = MathF.Max(drift, MathF.Sqrt(MathF.Pow(s.Hand.X - settled.X, 2) + MathF.Pow(s.Hand.Y - settled.Y, 2) + MathF.Pow(s.Hand.Z - settled.Z, 2)));
+            }
+            Check(drift < 0.08f, $"the hand moved {drift:F3} m in the second after settling: the arm is not being driven");
+            Check(s.Result().Render() == render && s.HandOutMs == handOut && s.Excursions == excursions && s.DrainEvents(drained) == 0,
                 "the result, hand-out, excursions or events changed after Finished");
+        }),
+
+        ("body: the run ends on the confirmed hand-out, not on the settle timeout", () =>
+        {
+            var r = BodyPainBox.Run(OnBody, 1);
+            int outTick = Tick(r.Run.HandOutMs!.Value), holdTicks = (int)Math.Round(BodyPainBox.OutHoldSeconds * Hz);
+            Check(r.Hand.Count - 1 == outTick + holdTicks - 1, $"the last step is tick {r.Hand.Count - 1}; the hand-out at tick {outTick} is confirmed at tick {outTick + holdTicks - 1}");
+        }),
+
+        ("body: before the first Step the hand reads the rest pose, outside the box", () =>
+        {
+            using var s = new BodyPainBoxSession(OnBody, 1);
+            Check(s.TickIndex == 0 && !s.Hand.InBox, "the fresh session's hand is not the rest pose");
+            Check(s.Hand == BodyPainBox.Run(OnBody with { BoxDisableAtSeconds = 0.0 }, 1).Hand[0], "the rest pose differs from the track of a box disabled at tick 0");
+        }),
+
+        ("body: events queue per tick, so draining every 1, 2, 3 or 7 steps (or through a two-slot buffer) gives the Run's flinch, break and withdrawal rows in order", () =>
+        {
+            var run = BodyPainBox.Run(OnBody, 1).Run;
+            var rows = run.Timeline.Where(e => e.Kind is EntryKind.Flinch or EntryKind.WillBroke or EntryKind.Withdrew).Select(e => (e.TimeMs, e.Kind)).ToList();
+            Check(rows.Count >= 10, $"only {rows.Count} event rows in the Run");
+            List<BodyEvent> Collect(int every, int slots)
+            {
+                using var s = new BodyPainBoxSession(OnBody, 1);
+                var got = new List<BodyEvent>();
+                var buffer = new BodyEvent[slots];
+                void Drain() { int n; while ((n = s.DrainEvents(buffer)) > 0) got.AddRange(buffer.Take(n)); }
+                for (int i = 1; !s.Finished; i++)
+                {
+                    s.Step();
+                    if (i % every == 0) Drain();
+                }
+                Drain();
+                return got;
+            }
+            foreach (var (every, slots) in new[] { (1, 8), (2, 8), (3, 8), (7, 8), (7, 2) })
+            {
+                var got = Collect(every, slots);
+                var expanded = new List<(long, EntryKind)>();
+                foreach (var e in got)
+                {
+                    long ms = (long)Math.Round(e.Tick * 1000.0 / Hz);
+                    if ((e.Events & Lodur.TickEvents.Flinch) != 0) expanded.Add((ms, EntryKind.Flinch));
+                    if ((e.Events & Lodur.TickEvents.WillBroke) != 0) expanded.Add((ms, EntryKind.WillBroke));
+                    if ((e.Events & Lodur.TickEvents.Withdrew) != 0) expanded.Add((ms, EntryKind.Withdrew));
+                }
+                Check(expanded.SequenceEqual(rows), $"draining every {every} steps through {slots} slots: {expanded.Count} events against the Run's {rows.Count}, or out of order");
+            }
+        }),
+
+        ("body: SetIntensity refuses a non-finite or negative level before anything ticks, and a refused call changes nothing", () =>
+        {
+            foreach (double bad in new[] { double.PositiveInfinity, double.NegativeInfinity, double.NaN, -0.1 })
+            {
+                using var s = new BodyPainBoxSession(OnBody, 1);
+                bool threw = false;
+                try { s.SetIntensity(bad); } catch (ArgumentOutOfRangeException) { threw = true; }
+                Check(threw, $"SetIntensity({bad}) was accepted");
+            }
+            var refused = RunLive(OnBody, 1, s =>
+            {
+                if (s.TickIndex != 0) return;
+                foreach (double bad in new[] { double.PositiveInfinity, double.NaN, -0.1 })
+                {
+                    try { s.SetIntensity(bad); } catch (ArgumentOutOfRangeException) { }
+                }
+            });
+            SameRun(BodyPainBox.Run(OnBody, 1), refused, "refused intensities");
+        }),
+
+        ("body: after Dispose every member throws ObjectDisposedException and a second Dispose does nothing", () =>
+        {
+            var s = new BodyPainBoxSession(OnBody, 1);
+            s.Step();
+            s.Dispose();
+            s.Dispose();
+            var members = new (string Name, Action Call)[]
+            {
+                ("Step", () => s.Step()), ("Hand", () => _ = s.Hand), ("Result", () => s.Result()), ("SetIntensity", () => s.SetIntensity(0.5)),
+                ("SwitchOff", () => s.SwitchOff()), ("DrainEvents", () => s.DrainEvents(new BodyEvent[4])), ("View", () => _ = s.View),
+                ("Finished", () => _ = s.Finished), ("TickIndex", () => _ = s.TickIndex), ("Excursions", () => _ = s.Excursions),
+                ("HandOutMs", () => _ = s.HandOutMs), ("BoxIntensity", () => _ = s.BoxIntensity), ("Pain", () => _ = s.Pain),
+            };
+            foreach (var (name, call) in members)
+            {
+                bool threw = false;
+                try { call(); } catch (ObjectDisposedException) { threw = true; }
+                Check(threw, $"{name} did not throw after Dispose");
+            }
         }),
 
         ("the seed's trait multiplies the caller's nerve gain and drain trait instead of replacing them", () =>
@@ -610,9 +710,9 @@ public static class Program
         while (!s.Finished)
         {
             beforeStep(s);
-            long before = s.Session.TickIndex;
+            long before = s.TickIndex;
             s.Step();
-            if (s.Session.TickIndex != before || hand.Count == 0) hand.Add(s.Hand);
+            if (s.TickIndex != before || hand.Count == 0) hand.Add(s.Hand);
         }
         return new BodyPainBoxResult(s.Result(), s.Excursions, hand);
     }

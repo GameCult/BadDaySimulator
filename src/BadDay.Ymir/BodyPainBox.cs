@@ -45,23 +45,31 @@ public static class BodyPainBox
         var samples = new List<HandSample>();
         while (!s.Finished)
         {
-            long before = s.Session.TickIndex;
+            long before = s.TickIndex;
             s.Step();
-            if (s.Session.TickIndex != before || samples.Count == 0) samples.Add(s.Hand);
+            if (s.TickIndex != before || samples.Count == 0) samples.Add(s.Hand);
         }
         return new BodyPainBoxResult(s.Result(), s.Excursions, samples);
     }
 }
 
+/// <summary>What the Actor reported on one tick of a <see cref="BodyPainBoxSession"/>; only ticks that reported something are queued.</summary>
+public readonly record struct BodyEvent(long Tick, TickEvents Events);
+
 /// <summary>
 /// One body run, stepped by its caller: BDS creates the Ymir world (a ground, a static stool box welded to the pelvis
 /// because the PD ragdoll cannot balance for 15 s, the ragdoll, the box volume around the right hand's hold
-/// point) and is its only stepper. Per <see cref="Step"/>: the box writes its intensity, the body reports its hand
-/// points, Lodur's Actor decides, the ragdoll is driven, the world steps. The run ends on the Actor's events, never on
-/// the hand: after the deliberate withdrawal, once the hand is out or the settle is over. After <see cref="Finished"/>
+/// point) and is its only stepper; the nervous session inside it is never exposed, so nothing else can tick it.
+/// Per <see cref="Step"/>: the box writes its intensity, the body reports its hand points, Lodur's Actor decides,
+/// the ragdoll is driven, the world steps. The run ends on the Actor's events, never on the hand: after the
+/// deliberate withdrawal, once the hand is out or the settle is over. After <see cref="Finished"/>
 /// <see cref="Step"/> only keeps the body moving: the last strengths and targets are driven again and the world steps,
-/// while the result, <see cref="HandOutMs"/> and <see cref="Excursions"/> stay as they were.
-/// <see cref="SetIntensity"/> and <see cref="SwitchOff"/> take effect on the next tick.
+/// while the result, <see cref="HandOutMs"/> and <see cref="Excursions"/> stay as they were. That free motion is
+/// float arithmetic on the platform's math and is not bit-identical across operating systems; everything up to
+/// <see cref="Finished"/> is.
+/// <see cref="SetIntensity"/> and <see cref="SwitchOff"/> take effect on the next tick. Events queue per tick and a
+/// client drains them with <see cref="DrainEvents"/>, so a frame that spans several steps loses none. After
+/// <see cref="Dispose"/> every member throws <see cref="ObjectDisposedException"/>.
 /// </summary>
 public sealed class BodyPainBoxSession : IDisposable
 {
@@ -76,6 +84,8 @@ public sealed class BodyPainBoxSession : IDisposable
     private readonly PainBoxParameters _p;
     private readonly Box3DSoaWorld _world;
     private readonly HumanoidRagdoll _ragdoll;
+    private readonly PainBoxSession _session;
+    private readonly Queue<BodyEvent> _events = new();
     private readonly float[] _x = new float[HumanoidRagdoll.RegionCount];
     private readonly float[] _y = new float[HumanoidRagdoll.RegionCount];
     private readonly float[] _z = new float[HumanoidRagdoll.RegionCount];
@@ -84,9 +94,13 @@ public sealed class BodyPainBoxSession : IDisposable
     private readonly long _rampEnd;
     private readonly long _settleTicks;
     private readonly long _outHoldTicks;
+    private HandSample _hand;
+    private int _excursions;
+    private long? _handOutMs;
     private long _outSince = -1; // first tick of the current continuous stay outside the box after the break
     private bool _wasIn;
     private long _breakTick = -1, _withdrewTick = -1;
+    private bool _disposed;
 
     public BodyPainBoxSession(PainBoxParameters p, ulong seed)
     {
@@ -116,7 +130,7 @@ public sealed class BodyPainBoxSession : IDisposable
 
             var hp = BodyPainBox.HoldPoint;
             var volume = new BoxStimulus(hp.X, hp.Y, hp.Z, BoxHalf, BoxHalf, BoxHalf);
-            Session = new PainBoxSession(p, seed, volume, HumanoidRagdoll.RegionCount, hold, withdraw, (int)Region.HandR);
+            _session = new PainBoxSession(p, seed, volume, HumanoidRagdoll.RegionCount, hold, withdraw, (int)Region.HandR);
         }
         catch
         {
@@ -127,40 +141,51 @@ public sealed class BodyPainBoxSession : IDisposable
         _rampEnd = (long)Math.Round(p.BoxRampSeconds / p.TickSeconds);
         _settleTicks = (long)Math.Round(SettleSeconds / p.TickSeconds);
         _outHoldTicks = Math.Max(1, (long)Math.Round(BodyPainBox.OutHoldSeconds / p.TickSeconds));
-        Hand = ReadHand();
+        _hand = ReadHand();
     }
 
     /// <summary>The live lanes of the world, for rendering. Read-only: nothing outside this session writes them.</summary>
-    public Box3DSoaView View => _world.View;
-
-    /// <summary>The nervous run: the Actor's drive, the chamber, the timeline so far.</summary>
-    public PainBoxSession Session { get; }
+    public Box3DSoaView View { get { Live(); return _world.View; } }
 
     /// <summary>The right hand after the latest step (the rest pose before the first).</summary>
-    public HandSample Hand { get; private set; }
+    public HandSample Hand { get { Live(); return _hand; } }
 
     /// <summary>Times the hand left the box between the end of the ramp and the break.</summary>
-    public int Excursions { get; private set; }
+    public int Excursions { get { Live(); return _excursions; } }
 
     /// <summary>The start of the first sustained exit after the break; null if there was none (see <see cref="BodyPainBoxResult"/>).</summary>
-    public long? HandOutMs { get; private set; }
+    public long? HandOutMs { get { Live(); return _handOutMs; } }
 
-    /// <summary>The Actor's events of the latest step; none when that step did not tick the session.</summary>
-    public TickEvents LastEvents { get; private set; }
+    public bool Finished { get { Live(); return _session.Finished; } }
 
-    public bool Finished => Session.Finished;
+    /// <summary>Ticks run so far; the tick the next <see cref="Step"/> runs.</summary>
+    public long TickIndex { get { Live(); return _session.TickIndex; } }
+
+    /// <summary>The box's intensity as written on the latest tick.</summary>
+    public double BoxIntensity { get { Live(); return _session.Box.Intensity; } }
+
+    /// <summary>The stimulus volume the hand is held in (a copy), for drawing the chamber.</summary>
+    public BoxStimulus Chamber { get { Live(); return _session.Box; } }
+
+    /// <summary>The Actor's state at the end of the latest tick.</summary>
+    public double Pain { get { Live(); return _session.Actor.Drive.Pain; } }
+    public double Strain { get { Live(); return _session.Actor.Drive.Strain; } }
+    public double Resolve { get { Live(); return _session.Actor.Drive.Resolve; } }
+    public Lodur.Goal Goal { get { Live(); return _session.Actor.Goal; } }
 
     /// <summary>One step of 1/120 s; see the type's summary for what it does after <see cref="Finished"/>.</summary>
     public void Step()
     {
-        bool wasFinished = Finished;
-        bool ticked = !wasFinished && !Session.Disabled(); // a step that finds the box switched off ends the run without stepping the world
-        long tick = Session.TickIndex;
-        LastEvents = TickEvents.None;
+        Live();
+        bool wasFinished = _session.Finished;
+        bool ticked = !wasFinished && !_session.Disabled(); // a step that finds the box switched off ends the run without stepping the world
+        long tick = _session.TickIndex;
+        var events = TickEvents.None;
         if (ticked)
         {
             _ragdoll.ReadRegions(_x, _y, _z);
-            LastEvents = Session.Tick(_x, _y, _z, _strengths, _targets);
+            events = _session.Tick(_x, _y, _z, _strengths, _targets);
+            if (events != TickEvents.None) _events.Enqueue(new BodyEvent(tick, events));
         }
         if (ticked || wasFinished)
         {
@@ -169,51 +194,83 @@ public sealed class BodyPainBoxSession : IDisposable
         }
 
         var sample = ReadHand(); // the rest pose when the box was off at tick 0
-        Hand = sample;
+        _hand = sample;
         if (!ticked) return;
 
-        if ((LastEvents & TickEvents.WillBroke) != 0) _breakTick = tick;
+        if ((events & TickEvents.WillBroke) != 0) _breakTick = tick;
         bool inBox = sample.InBox;
 
         if (_breakTick < 0)
         {
-            if (tick > _rampEnd && _wasIn && !inBox) Excursions++;
+            if (tick > _rampEnd && _wasIn && !inBox) _excursions++;
             _wasIn = inBox;
         }
         else if (inBox)
         {
             _outSince = -1; // back in: whatever exit this was, it was a flinch
-            HandOutMs = null;
+            _handOutMs = null;
         }
         else
         {
             if (_outSince < 0) _outSince = tick;
-            if (tick - _outSince + 1 >= _outHoldTicks) HandOutMs = Session.Ms(_outSince);
+            if (tick - _outSince + 1 >= _outHoldTicks) _handOutMs = _session.Ms(_outSince);
         }
 
         // The run ends on the Actor's events, never on the hand.
-        if (Session.Withdrew)
+        if (_session.Withdrew)
         {
             if (_withdrewTick < 0) _withdrewTick = tick;
-            if (HandOutMs is not null || tick - _withdrewTick >= _settleTicks) Session.EndAt(tick);
+            if (_handOutMs is not null || tick - _withdrewTick >= _settleTicks) _session.EndAt(tick);
         }
     }
 
-    /// <summary>Sets the box intensity from the next tick.</summary>
-    public void SetIntensity(double level) => Session.SetIntensity(level);
+    /// <summary>
+    /// Moves the queued events (oldest first) into <paramref name="buffer"/> and returns how many it wrote; the rest stay
+    /// queued for the next call. Allocation-free once the queue has grown to the client's drain interval.
+    /// </summary>
+    public int DrainEvents(Span<BodyEvent> buffer)
+    {
+        Live();
+        int n = 0;
+        while (n < buffer.Length && _events.Count > 0) buffer[n++] = _events.Dequeue();
+        return n;
+    }
+
+    /// <summary>Sets the box intensity from the next tick; refuses a non-finite or negative level.</summary>
+    public void SetIntensity(double level)
+    {
+        Live();
+        _session.SetIntensity(level);
+    }
 
     /// <summary>Switches the box off from the next tick; the run ends as BoxDisabled if the will still holds.</summary>
-    public void SwitchOff() => Session.SwitchOff();
+    public void SwitchOff()
+    {
+        Live();
+        _session.SwitchOff();
+    }
 
     /// <summary>The nervous result so far, with <see cref="HandOutMs"/>.</summary>
-    public PainBoxResult Result() => Session.Result() with { HandOutMs = HandOutMs };
+    public PainBoxResult Result()
+    {
+        Live();
+        return _session.Result() with { HandOutMs = _handOutMs };
+    }
 
-    public void Dispose() => _world.Dispose();
+    /// <summary>Frees the world; a second call does nothing.</summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _world.Dispose();
+    }
+
+    private void Live() => ObjectDisposedException.ThrowIf(_disposed, this);
 
     private HandSample ReadHand()
     {
         _ragdoll.ReadRegions(_x, _y, _z);
         float hx = _x[(int)Region.HandR], hy = _y[(int)Region.HandR], hz = _z[(int)Region.HandR];
-        return new HandSample(hx, hy, hz, Session.Box.Contains(hx, hy, hz));
+        return new HandSample(hx, hy, hz, _session.Box.Contains(hx, hy, hz));
     }
 }
