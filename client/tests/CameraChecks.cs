@@ -40,11 +40,11 @@ public static class CameraChecks
         var startup = new Transform3D(Basis.Identity, centre + offset).LookingAt(centre, Vector3.Up);
         Check(Near(camera.Transform, startup, 1e-5f) && camera.Fov == 55f && camera.Distance == 2.4f, $"the startup view is {camera.Transform} at {camera.Distance} m, FOV {camera.Fov}, not {startup} at 2.4 m, FOV 55");
 
-        void Button(MouseButton button, bool pressed, bool alt = false, bool shift = false, bool ctrl = false, double factor = 1) =>
+        void Button(MouseButton button, bool pressed, bool alt = false, bool shift = false, bool ctrl = false, double factor = 1, MouseButtonMask also = 0) =>
             viewport.PushInput(new InputEventMouseButton
             {
                 ButtonIndex = button, Pressed = pressed, Position = cursor, GlobalPosition = cursor, AltPressed = alt, ShiftPressed = shift, CtrlPressed = ctrl, Factor = (float)factor,
-                ButtonMask = pressed && button is MouseButton.Left or MouseButton.Middle or MouseButton.Right ? Mask(button) : 0,
+                ButtonMask = pressed && button is MouseButton.Left or MouseButton.Middle or MouseButton.Right ? Mask(button) | also : 0,
             }, true);
         void Motion(Vector2 move, MouseButtonMask held, bool alt = false, bool shift = false, bool ctrl = false) =>
             viewport.PushInput(new InputEventMouseMotion { Position = cursor + move, GlobalPosition = cursor + move, Relative = move, ButtonMask = held, AltPressed = alt, ShiftPressed = shift, CtrlPressed = ctrl }, true);
@@ -151,6 +151,76 @@ public static class CameraChecks
         Motion(new Vector2(10, 0), MouseButtonMask.Left);
         Check(Near(camera.Transform, midDrag, 1e-6f), "a motion with no button held, or one after it, still moved the camera; the drag was not ended");
         Button(MouseButton.Left, false);
+
+        // Pitch turns about the camera's own right axis, not the world's: from a yawed view, a drag down by 50 px is exactly that rotation.
+        Back();
+        Drag(MouseButton.Middle, new Vector2(0, 50));
+        var pitched = new Basis(afterPan.Basis.X, Mathf.DegToRad(-50 * Degrees)) * afterPan.Basis;
+        Check(SameBasis(camera.Basis, pitched, 1e-4f), $"a 50 px drag down from a yawed view gave {camera.Basis}, not a pitch about the camera's own right axis, {pitched}");
+
+        // Thousands of small orbits leave the basis a rotation: no drift into scale or shear.
+        Back();
+        Button(MouseButton.Middle, true);
+        for (int i = 0; i < 20000; i++) Motion(new Vector2(1, 1), MouseButtonMask.Middle);
+        Button(MouseButton.Middle, false);
+        var drifted = camera.Basis;
+        Check(MathF.Abs(drifted.X.Length() - 1) < 1e-6f && MathF.Abs(drifted.Y.Length() - 1) < 1e-6f && MathF.Abs(drifted.Z.Length() - 1) < 1e-6f
+            && MathF.Abs(drifted.X.Dot(drifted.Y)) < 1e-6f && MathF.Abs(drifted.Y.Dot(drifted.Z)) < 1e-6f && MathF.Abs(drifted.X.Dot(drifted.Z)) < 1e-6f,
+            $"after 20000 small orbits the basis is no longer orthonormal: {drifted}");
+
+        // The pivot is read at the press: one that moves mid-drag does not move the orbit.
+        var livePivot = camera.Pivot;
+        var pivotNow = puppet;
+        camera.Pivot = () => pivotNow;
+        Back();
+        var pinned = camera.UnprojectPosition(puppet);
+        Button(MouseButton.Middle, true);
+        pivotNow = puppet + new Vector3(0.5f, 0, 0);
+        Motion(new Vector2(50, 0), MouseButtonMask.Middle);
+        Button(MouseButton.Middle, false);
+        camera.Pivot = livePivot;
+        Check(camera.UnprojectPosition(puppet).DistanceTo(pinned) < 0.5f, "an orbit followed a pivot that moved after the press");
+
+        // The yaw's direction is fixed at the press as well: turning the view over mid-drag does not reverse it, and turning it back does not restore it.
+        float YawOf(Transform3D from, Transform3D to) => Floor(-from.Basis.Z).SignedAngleTo(Floor(-to.Basis.Z), Vector3.Up);
+        Back();
+        Button(MouseButton.Middle, true);
+        for (int i = 0; i < 40; i++) Motion(new Vector2(0, 10), MouseButtonMask.Middle);
+        var over = camera.Transform;
+        Check(camera.Basis.Y.Dot(Vector3.Up) < 0, "the drag did not turn the view over");
+        Motion(new Vector2(50, 0), MouseButtonMask.Middle);
+        Button(MouseButton.Middle, false);
+        Check(MathF.Abs(YawOf(over, camera.Transform) - Mathf.DegToRad(-50 * Degrees)) < Mathf.DegToRad(0.1f), "a drag begun upright reversed its yaw when the view turned over mid-drag");
+        Button(MouseButton.Middle, true); // upside down at the press, so reversed
+        for (int i = 0; i < 40; i++) Motion(new Vector2(0, -10), MouseButtonMask.Middle);
+        var upright = camera.Transform;
+        Check(camera.Basis.Y.Dot(Vector3.Up) > 0, "the drag did not turn the view back");
+        Motion(new Vector2(50, 0), MouseButtonMask.Middle);
+        Button(MouseButton.Middle, false);
+        Check(MathF.Abs(YawOf(upright, camera.Transform) - Mathf.DegToRad(50 * Degrees)) < Mathf.DegToRad(0.1f), "a drag begun upside down lost its reversed yaw when the view came upright mid-drag");
+
+        // A second press while a drag is under way is ignored: the first gesture runs on, and its own release ends it.
+        Back();
+        Button(MouseButton.Middle, true, ctrl: true); // zoom
+        Button(MouseButton.Left, true, alt: true, also: MouseButtonMask.Middle); // an orbit, ignored
+        Motion(new Vector2(0, -32), MouseButtonMask.Middle | MouseButtonMask.Left);
+        Check(MathF.Abs(camera.Distance - afterPanDistance / 1.44f) < 1e-5f && SameBasis(camera.Basis, afterPan.Basis, 1e-6f), "a second press replaced the drag in progress");
+        listener.Seen.Clear();
+        Button(MouseButton.Middle, false);
+        Check(listener.Seen.Count == 0, "the first button's release was not the drag's end");
+        float ended = camera.Distance;
+        Motion(new Vector2(0, -32), MouseButtonMask.Middle);
+        Check(camera.Distance == ended, "the drag outlived its button's release");
+        Button(MouseButton.Left, false);
+
+        // A drag whose button is no longer held (its release was lost) does not block the next press.
+        Back();
+        Button(MouseButton.Left, true, alt: true);
+        Button(MouseButton.Middle, true); // the mask carries no Left: that drag is stale
+        Motion(new Vector2(50, 0), MouseButtonMask.Middle);
+        Check(MathF.Abs(YawOf(afterPan, camera.Transform) - Mathf.DegToRad(-50 * Degrees)) < Mathf.DegToRad(0.1f), "a press after a lost release was ignored");
+        Button(MouseButton.Middle, false);
+        Back();
 
         main.RemoveChild(listener);
         listener.Free();
