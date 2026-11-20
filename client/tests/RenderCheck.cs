@@ -106,7 +106,7 @@ public partial class RenderCheck : Node
     /// 1.34 at the shipped framing and 1.19 at another. The p99 flicker ratio: shipped 1.19 to 1.35 play and 1.16 to 1.22 close; kernel 0 1.56 to 2.19 play and 1.30 to 1.49 close (the bent 60 close view reads 1.30, so
     /// it is the other views that fail it there), the bounds between (1.45, 1.33). The highlight shift in levels of 255: shipped at most 0.97; the paper's pixel variance 1/(2 pi) reads 1.52 to 4.31 in the five session
     /// play framings and 1.28 at most bent, and 1/12, double the shipped, 2.30 and 1.64 in two session framings and nothing bent, so 1.5; both overblurs are therefore caught only in the session pose. The silhouette
-    /// ring, where MSAA works and the interior pixels do not look: the ring's mean |shown - reference| in levels of luma, shipped 16.1 to 18.9, widened or overblurred shaders up to 20.4, no MSAA 25.4 to 29.4, so 22
+    /// ring, where MSAA works and the interior pixels do not look: the ring's mean |shown - reference| in levels of luma, shipped 16.7 to 18.9, widened or overblurred shaders up to 20.4, no MSAA 25.4 to 29.4, so 22
     /// (the ring's std against the reference's overlapped between shipped and no MSAA once the pose moved, so it is not the metric). The orbit's crawl, the halo's mean error second difference: shipped 5.6, kernel 0 10.5,
     /// no MSAA 6.1, the widened smoothstep 7.0, so 8.
     /// </summary>
