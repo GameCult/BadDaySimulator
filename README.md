@@ -109,3 +109,34 @@ The core has no engine reference (`core-engine-free`). It references the sibling
 references it: the CLI and the tests) builds Ymir's native library, which needs cmake and a C compiler
 (on Windows MinGW: `CMAKE_GENERATOR="Ninja Multi-Config" CC=gcc`). The projects were built and the tests
 run on Windows and on Linux.
+
+## The office stress scenario (rung 3)
+
+Sensory load alone: the office's stressors fill the stress bar until the will breaks, headless, one tick at a
+time. The scenario is data in two parts. The **setting** names the emitters (printer, ceiling light, desk
+phone, desktop notifications) and where they sit. The **cause** holds the stressors that drive them (each with
+an onset, ramp, period, duration, intensity and jitter), the objective's pull (0.6) and the sense nerve the
+character hears and sees with. Lodur owns what the stimulus does: sensing, load, arousal, and the arousal
+drain on resolve. `StressSession` only writes the emitters' intensities each tick and logs the Actor's state;
+the player's lever is `Silence(stressorId)`, from the current tick on. A run ends where the will breaks (rung 4
+continues past it) or at 180 s.
+
+The stress bar is `1 - resolve` and reads **lost composure**; the label is one constant
+(`StressResult.StressBarLabel`) pending `lodur:question:stress-bar-meaning`.
+
+- `src/BadDay.Core/Setting.cs`, `Cause.cs`: the office's defaults, in code, not persisted yet.
+- `src/BadDay.Core/StressSession.cs`: one run, driven per tick by the headless run, the sweep, the CLI and a client.
+- `src/BadDay.Core/StressSimulation.cs`: the headless run with scheduled silences, and the seed sweep.
+
+```
+dotnet run --project src/BadDay.Cli -- office --seed 1
+dotnet run --project src/BadDay.Cli -- office --seed 1 --silence printer@20 --silence desk-phone@30
+dotnet run --project src/BadDay.Cli -- office-sweep --seed 1 --count 50 --scale 1.5
+```
+
+Options: `--silence ID@S` (repeatable; `printer`, `ceiling-light`, `desk-phone`, `desktop-interrupt`), `--scale`
+(every stressor's intensity), `--pull`, `--max`, `--every`. The rows are `time_ms kind audio visual interrupt
+load arousal resolve stress goal`, with kinds Sample, Silenced, WillBroke and Endured. The sweep prints the
+break-time min/median/max and the lowest resolve among runs that endured. The office breaks near 90 s at pull
+0.6 only with the office's own sense nerve (threshold 0.05, no sensitisation, no conduction delay); Lodur's
+`NerveParameters` defaults break it near 100 s. **Every number here is a placeholder.**
