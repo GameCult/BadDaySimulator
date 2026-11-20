@@ -32,8 +32,8 @@ public static class BodyPainBox
     /// <summary>The ragdoll's gains are tuned at 120 Hz.</summary>
     public const double TickSeconds = 1.0 / 120.0;
 
-    /// <summary>Centre of the box and the right hand's hold point.</summary>
-    public static readonly (float X, float Y, float Z) HoldPoint = (-0.21f, 1.19f, 0.46f);
+    /// <summary>Centre of the box and the right hand's hold point: where the right palm settles at the hold pose (a copy of Lodur's ConnectedPainBox.Box).</summary>
+    public static readonly (float X, float Y, float Z) HoldPoint = (-0.210f, 1.116f, 0.441f);
 
     /// <summary>The hand is out when it has stayed outside the box this long after the break.</summary>
     public const double OutHoldSeconds = 0.2;
@@ -72,7 +72,8 @@ public readonly record struct BodyEvent(long Tick, TickEvents Events);
 /// </summary>
 public sealed class BodyPainBoxSession : IDisposable
 {
-    private const float BoxHalf = 0.12f;
+    /// <summary>The box's half extent, equal to Lodur's ConnectedPainBox (0.125 m: the palm holds in it until the break).</summary>
+    private const float BoxHalf = 0.125f;
 
     /// <summary>After the deliberate withdrawal begins the run waits this long for the hand to come out.</summary>
     private const double SettleSeconds = 1.0;
