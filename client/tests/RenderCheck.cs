@@ -53,7 +53,7 @@ public partial class RenderCheck : Node
     private const float MinBandTilt = 4f;
 
     /// <summary>Across triangle boundaries (close view): the share of adjacent pixel pairs differing by over 30 degrees, their 90th percentile, and the pairs the check must reach.</summary>
-    private const float MaxAcrossOver30 = 0.006f, MaxAcrossP90 = 6f;
+    private const float MaxAcrossOver30 = 0.005f, MaxAcrossP90 = 6f;
     private const int MinPairs = 20000;
 
     private const int BendSeed = 7;
@@ -96,6 +96,10 @@ public partial class RenderCheck : Node
         foreach (var scenery in main.Bodies.GetChildren().OfType<MeshInstance3D>()) scenery.Visible = false;
         main.GetChildren().OfType<WorldEnvironment>().Single().Environment.BackgroundColor = Colors.Black;
         main.Bodies.Transform = new Transform3D(new Basis(Vector3.Up, 0.45f), new Vector3(0.15f, 0f, 0.1f));
+
+        // The puppet is drawn once as it was created before it is bent: a surface that kept anything from its first pose, creases above all,
+        // is wrong in the next, and nothing here would see it if the bent pose were the first.
+        for (int i = 0; i < 3; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
 
         var bones = PuppetChecks.Bend(shape, BendSeed, BendDegrees * Mathf.Pi / 180f);
         var carriers = new Node3D[shape.Ids.Length];
