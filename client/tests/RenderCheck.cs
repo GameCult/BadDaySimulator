@@ -17,6 +17,8 @@ namespace BadDay.Client.Tests;
 /// It also reads the shading normal the shader draws (ShowNormals: the view-space normal as emission) on the torso in the <see cref="Views"/> (close, far,
 /// bent 90 degrees, and at 1920x1080 mid and far) and compares it pixel by pixel with a CPU reference of the whole formula (see <see cref="NormalCheck"/>), on all the interior pixels
 /// and on the pixels of the corner blend and of sharp creases alone, and the drawn normals of adjacent pixels across triangle boundaries.
+/// Last it checks that the glaze does not flicker (see <see cref="FlickerCheck"/>): the puppet in the pose the player sees, drawn with the project's MSAA from 16 sub-pixel camera shifts in the play and close views, against the same shifts drawn 8 times the window's size.
+/// The frames above are drawn with MSAA off, since they check the shader's own pixels.
 /// <c>godot --path client res://tests/RenderCheck.tscn [-- --png=path] [-- --glaze-png=path] [-- --glaze-behind-png=path] [-- --normals-png=path] [-- --normals-far-png=path] [-- --normals-bend90-png=path] [-- --normals-mid-png=path] [-- --normals-far1080-png=path]</c>; exit code 0 passes, 1 fails. It needs a window, so it is
 /// not part of the headless smoke.
 /// </summary>
@@ -93,6 +95,24 @@ public partial class RenderCheck : Node
     /// <summary>Across triangle boundaries: the pairs of adjacent pixels the check must reach (the shares and percentiles each view allows are in <see cref="Views"/>).</summary>
     private const int MinPairs = 20000;
 
+    /// <summary>The flicker check's reference is this many times the window on a side; each view must reach at least this many interior and highlight pixels (see <see cref="FlickerCheck"/>) or it proves nothing.</summary>
+    private const int FlickerSupersample = 8, MinFlickerPixels = 20000, MinFlickerHighlights = 200;
+
+    private const float HighlightLuma = 245f;
+
+    /// <summary>
+    /// The 99th percentile of the per-pixel luma standard deviation under sub-pixel camera shifts, as a multiple of the supersampled reference's. The shipped glaze (spec AA and MSAA 4x) measures
+    /// 1.19 in the play view and 1.16 in the close view; the glaze without the prefilter (kernel 0, or the studio unfiltered) 1.56 and 1.46; without MSAA 1.40 and 1.21 (the interior metric does see
+    /// triangle edges, in the play view); the studio's smoothstep widened for energy-gaining blur 1.31 and 1.37.
+    /// </summary>
+    private const float MaxFlickerRatio = 1.3f;
+
+    /// <summary>
+    /// How far the mean luma over the reference's highlights (<see cref="HighlightLuma"/> or more) may move from the reference's, in levels of 255. The shipped glaze measures 0.2 in the play view and
+    /// 0.3 in the close view; the pixel filter's variance at the paper's 1/(2 pi) instead of 1/24, which blurs the highlight away, 1.6 and 0.1, so the bound sits between.
+    /// </summary>
+    private const float MaxHighlightShift = 1f;
+
     private const int BendSeed = 7;
     private const float BendDegrees = 60f;
 
@@ -123,6 +143,7 @@ public partial class RenderCheck : Node
 
         // The puppet alone, on black, with a parent that is neither at the origin nor unturned.
         main.SetPhysicsProcess(false);
+        GetViewport().Msaa3D = Viewport.Msaa.Disabled; // the oracle frames below check the shader's own pixels; the flicker check restores the project's setting
         main.Hud.Visible = false;
         // The chamber's volume is not the puppet, but its glow lights the puppet: run the box near full glow and keep the light.
         foreach (var volume in main.Chamber.GetChildren().OfType<MeshInstance3D>()) volume.Visible = false;
@@ -173,6 +194,7 @@ public partial class RenderCheck : Node
         if (lift < MinGlowLift) { GD.PrintErr($"RENDER FAIL: the chamber's light lifts the puppet by {lift:F2} levels, under {MinGlowLift}; the box's glow does not light the body"); ok = false; }
         ok &= await GlazeCheck(main, shape, carriers, world);
         ok &= await NormalCheck(main, shape, carriers, world);
+        ok &= await FlickerCheck(main);
         return ok;
     }
 
@@ -417,6 +439,186 @@ public partial class RenderCheck : Node
         }
         window.Size = home;
         return ok;
+    }
+
+    /// <summary>
+    /// The glaze must not flicker: a highlight whose pixel value jumps as the camera moves by a fraction of a pixel crawls on screen. The puppet (glaze on, the shipped shader
+    /// and the project's MSAA) is drawn from 16 camera positions on a sub-pixel grid in the play view and the close view; the same shifts are drawn by a
+    /// viewport <see cref="FlickerSupersample"/> times the window's size, MSAA off, box-filtered down in linear light, which is what a pixel would show if it averaged the
+    /// highlight over its own area. On the pixels the puppet covers fully in every reference frame (eroded by one pixel, so the silhouette, which MSAA owns, is out), the
+    /// per-pixel standard deviation of luma over the shifts must have its 99th percentile at most <see cref="MaxFlickerRatio"/> times the reference's in both views, and the mean luma
+    /// over the pixels the reference lights to <see cref="HighlightLuma"/> or more must be within <see cref="MaxHighlightShift"/> levels of the reference's (a filter that blurs
+    /// the highlight away, or adds energy, moves it).
+    /// </summary>
+    private async Task<bool> FlickerCheck(Main main)
+    {
+        var window = GetWindow();
+        var home = window.Size;
+        window.Size = Hd;
+        for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+        var puppet = main.Bodies.GetNode<Puppet>("Puppet");
+        var camera = main.GetNode<Camera3D>("Camera");
+        camera.Current = true;
+        puppet.Glazed = true;
+        puppet.ShowNormals = false;
+        // The pose the player sees: the session's own, under an unmoved body renderer, not the bent pose of the oracle frames.
+        main.Bodies.Transform = Transform3D.Identity;
+        main.Bodies.Sync(main.Session.View, teleport: true);
+        for (int i = 0; i < 4; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+        var viewport = GetViewport();
+        viewport.Msaa3D = (Viewport.Msaa)(int)ProjectSettings.GetSetting("rendering/anti_aliasing/quality/msaa_3d");
+        int w = viewport.GetTexture().GetWidth(), h = viewport.GetTexture().GetHeight();
+
+        var carriers = puppet.GetChildren().OfType<Node3D>().Where(c => c.Name.ToString().StartsWith("Body")).ToArray();
+        var head = carriers.OrderByDescending(c => c.GlobalPosition.Y).First().GlobalPosition;
+        var torso = puppet.GetNode<Node3D>("Body101").GlobalPosition;
+        // Both views look at the head and shoulders from the same side: the play view from the distance and field of view OrbitCamera starts at (2.4 m, 55 degrees), the close view from 0.7 m.
+        var target = head * 0.45f + torso * 0.55f;
+        var views = new (string Label, float Distance)[] { ("play", 2.4f), ("close", 0.7f) };
+        const float yaw = 0.5f, pitch = 0.15f;
+
+        var reference = new SubViewport { Size = new Vector2I(w * FlickerSupersample, h * FlickerSupersample), RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled, Msaa3D = Viewport.Msaa.Disabled };
+        var referenceCamera = new Camera3D { Current = true, Fov = 55f };
+        reference.AddChild(referenceCamera);
+        AddChild(reference);
+
+        var shifts = new List<Vector2>();
+        for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) shifts.Add(new Vector2((i + 0.5f) / 4f - 0.5f, (j + 0.5f) / 4f - 0.5f));
+
+        bool ok = true;
+        foreach (var (label, distance) in views)
+        {
+            void Place(Vector2 shift)
+            {
+                camera.Fov = 55f;
+                var direction = new Vector3(Mathf.Sin(yaw) * Mathf.Cos(pitch), Mathf.Sin(pitch), Mathf.Cos(yaw) * Mathf.Cos(pitch));
+                camera.GlobalPosition = target + direction * distance;
+                camera.LookAt(target, Vector3.Up);
+                float pixel = 2f * distance * Mathf.Tan(Mathf.DegToRad(55f) / 2f) / h;
+                camera.GlobalPosition += camera.GlobalBasis.X * shift.X * pixel + camera.GlobalBasis.Y * shift.Y * pixel;
+                referenceCamera.Fov = camera.Fov;
+                referenceCamera.GlobalTransform = camera.GlobalTransform;
+            }
+
+            var supersampled = new List<float[]>();
+            var coverage = new List<float[]>();
+            foreach (var shift in shifts)
+            {
+                Place(shift);
+                var (luma, cover) = await Supersample(reference, w, h);
+                supersampled.Add(luma);
+                coverage.Add(cover);
+            }
+            var drawn = new List<float[]>();
+            foreach (var shift in shifts)
+            {
+                Place(shift);
+                for (int i = 0; i < 3; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                var image = viewport.GetTexture().GetImage();
+                image.Convert(Image.Format.Rgba8);
+                drawn.Add(Luma(image.GetData(), w * h));
+            }
+
+            var interior = new bool[w * h];
+            Array.Fill(interior, true);
+            foreach (var cover in coverage) for (int i = 0; i < interior.Length; i++) interior[i] &= cover[i] >= 0.999f;
+            var eroded = new bool[w * h];
+            for (int y = 1; y < h - 1; y++)
+                for (int x = 1; x < w - 1; x++)
+                {
+                    int i = y * w + x;
+                    eroded[i] = interior[i] && interior[i - 1] && interior[i + 1] && interior[i - w] && interior[i + w];
+                }
+            var highlight = new bool[w * h];
+            for (int i = 0; i < highlight.Length; i++) highlight[i] = eroded[i] && supersampled.Any(l => l[i] >= HighlightLuma);
+
+            int pixels = eroded.Count(b => b), highlights = highlight.Count(b => b);
+            float shownP99 = P99(Deviation(drawn, eroded)), referenceP99 = P99(Deviation(supersampled, eroded));
+            float shownMean = Mean(drawn, highlight), referenceMean = Mean(supersampled, highlight);
+            float ratio = shownP99 / Mathf.Max(referenceP99, 1e-3f), highlightShift = Mathf.Abs(shownMean - referenceMean);
+            GD.Print($"RENDER flicker ({label}): {pixels} interior pixels, {highlights} highlight; p99 luma std {shownP99:F1} against the {FlickerSupersample}x reference's {referenceP99:F1} (ratio {ratio:F2}); highlight mean {shownMean:F1} against {referenceMean:F1} (shift {highlightShift:F1})");
+            if (pixels < MinFlickerPixels || highlights < MinFlickerHighlights) { GD.PrintErr($"RENDER FAIL: the {label} flicker view reaches {pixels} interior and {highlights} highlight pixels, under {MinFlickerPixels} and {MinFlickerHighlights}; it proves nothing"); ok = false; }
+            if (ratio > MaxFlickerRatio) { GD.PrintErr($"RENDER FAIL: the glaze's highlights flicker in the {label} view: p99 luma std {shownP99:F1} is {ratio:F2} times the supersampled reference's {referenceP99:F1}, over {MaxFlickerRatio}"); ok = false; }
+            if (highlightShift > MaxHighlightShift) { GD.PrintErr($"RENDER FAIL: the {label} view's highlights average {shownMean:F1}, {highlightShift:F1} levels from the reference's {referenceMean:F1}, over {MaxHighlightShift}; the glaze is blurred away or brighter than the studio"); ok = false; }
+        }
+        reference.QueueFree();
+        window.Size = home;
+        return ok;
+    }
+
+    /// <summary>The reference frame of the current camera: the supersampled viewport box-filtered to the window's size in linear light, as luma (Rec. 709 weights on the encoded levels, 0 to 255) and the share of its samples the puppet covers (any channel over 31 of 255, on black).</summary>
+    private async Task<(float[] Luma, float[] Cover)> Supersample(SubViewport reference, int w, int h)
+    {
+        reference.RenderTargetUpdateMode = SubViewport.UpdateMode.Once;
+        for (int i = 0; i < 2; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+        var big = reference.GetTexture().GetImage();
+        big.Convert(Image.Format.Rgba8);
+        var data = big.GetData();
+        big.Dispose();
+        int factor = FlickerSupersample, row = w * factor;
+        var luma = new float[w * h];
+        var cover = new float[w * h];
+        float inverse = 1f / (factor * factor);
+        Parallel.For(0, h, y =>
+        {
+            for (int x = 0; x < w; x++)
+            {
+                float r = 0, g = 0, b = 0, covered = 0;
+                for (int sy = 0; sy < factor; sy++)
+                    for (int sx = 0; sx < factor; sx++)
+                    {
+                        int o = ((y * factor + sy) * row + x * factor + sx) * 4;
+                        r += SrgbToLinear[data[o]]; g += SrgbToLinear[data[o + 1]]; b += SrgbToLinear[data[o + 2]];
+                        if (Math.Max(data[o], Math.Max(data[o + 1], data[o + 2])) > 31) covered++;
+                    }
+                luma[y * w + x] = 0.2126f * LinearToSrgb(r * inverse) + 0.7152f * LinearToSrgb(g * inverse) + 0.0722f * LinearToSrgb(b * inverse);
+                cover[y * w + x] = covered * inverse;
+            }
+        });
+        return (luma, cover);
+    }
+
+    private static readonly float[] SrgbToLinear = Enumerable.Range(0, 256).Select(i => { float c = i / 255f; return c <= 0.04045f ? c / 12.92f : Mathf.Pow((c + 0.055f) / 1.055f, 2.4f); }).ToArray();
+
+    private static float LinearToSrgb(float c) => 255f * (c <= 0.0031308f ? c * 12.92f : 1.055f * Mathf.Pow(c, 1f / 2.4f) - 0.055f);
+
+    private static float[] Luma(byte[] rgba, int count)
+    {
+        var luma = new float[count];
+        for (int i = 0; i < count; i++) luma[i] = 0.2126f * rgba[4 * i] + 0.7152f * rgba[4 * i + 1] + 0.0722f * rgba[4 * i + 2];
+        return luma;
+    }
+
+    /// <summary>The standard deviation over the frames of each masked pixel.</summary>
+    private static List<float> Deviation(List<float[]> frames, bool[] mask)
+    {
+        var result = new List<float>();
+        for (int i = 0; i < mask.Length; i++)
+        {
+            if (!mask[i]) continue;
+            float mean = 0;
+            foreach (var f in frames) mean += f[i];
+            mean /= frames.Count;
+            float sum = 0;
+            foreach (var f in frames) sum += (f[i] - mean) * (f[i] - mean);
+            result.Add(Mathf.Sqrt(sum / frames.Count));
+        }
+        return result;
+    }
+
+    private static float P99(List<float> values)
+    {
+        if (values.Count == 0) return 0;
+        values.Sort();
+        return values[(int)(values.Count * 0.99f)];
+    }
+
+    private static float Mean(List<float[]> frames, bool[] mask)
+    {
+        double sum = 0;
+        long count = 0;
+        foreach (var f in frames) for (int i = 0; i < mask.Length; i++) if (mask[i]) { sum += f[i]; count++; }
+        return count == 0 ? 0 : (float)(sum / count);
     }
 
     private static Surface BuildSurface(PuppetShape shape, Transform3D[] world)
