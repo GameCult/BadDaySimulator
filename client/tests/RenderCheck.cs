@@ -170,10 +170,15 @@ public partial class RenderCheck : Node
     {
         var main = GD.Load<PackedScene>("res://Main.tscn").Instantiate<Main>();
         AddChild(main);
+        main.SetPhysicsProcess(false); // at once, before the first frame: Godot enables it on ready, and every physics frame while the pieces build steps the session, so the pose would depend on how long they took (wall clock)
         if (main.Failure is { } failure) { GD.PrintErr("RENDER FAIL: Main could not start a session: " + failure); return false; }
-        // The puppet's pieces are built off the physics thread: wait, bounded, for its shape.
+        // The puppet's pieces are built off the physics thread: wait, bounded, for its shape, publishing it ourselves (Present does that on a physics frame, and there are none).
         ulong started = Time.GetTicksMsec();
-        while (main.Bodies.PuppetShape is null && Time.GetTicksMsec() - started < 30000) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        while (main.Bodies.PuppetShape is null && Time.GetTicksMsec() - started < 30000)
+        {
+            main.Bodies.Sync(main.Session.View, teleport: true);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        }
         if (main.Bodies.PuppetShape is not { } shape) { GD.PrintErr("RENDER FAIL: the puppet has no mesh 30 s after the start"); return false; }
 
         // The puppet alone, on black, with a parent that is neither at the origin nor unturned.
