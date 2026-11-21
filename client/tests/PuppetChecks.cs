@@ -176,8 +176,10 @@ public static class PuppetChecks
         HandsArePieces(puppet, real, fields, Check);
         BallsArePrimitives(puppet, set, triangles, Check);
         ThinPiecesKeepTheirSilhouette(puppet, real, fields, triangles, Check);
+        RootsWrapTheirBalls(puppet, real, fields, triangles, Check);
         ExistingPiecesUnchanged(fields, Check);
         HandsHug(puppet, set.Balls, triangles, Check);
+        RollEndsAreCovered(puppet, set.Balls, triangles, Check);
         NoSlits(puppet, real, set.Balls, triangles, Check);
         NoSeeInside(puppet, real, set.Balls, triangles, Check);
         WithinTheError(puppet, fields, triangles, Check);
@@ -329,11 +331,11 @@ public static class PuppetChecks
     private const float MaxSilhouetteMiss = 0.149f;
 
     /// <summary>
-    /// How far, in units of its error, the field's surface may lie from the mesh at a thin limb that wraps a roll (the fingers at the knuckle): the farthest surface voxel (1 mm) of the field from the mesh. The roll's cut
-    /// leaves the fingers' root a dished trough between thin lips, and a box top over the trough's rim (top 14 mm over the roll's axis against 11 now) lost a lip at the root and read 2.01; shipped 1.32,
-    /// separation 1.52, bound their geometric midpoint 1.63 (lodur:ruling:deterministic-bound-margin).
+    /// How far, in units of its error, the field's surface may lie from the mesh at a limb's root on a hand ball (forearms, palms, thumbs, fingers): the farthest surface voxel (1 mm) of the field from the mesh. Shipped worst 1.25
+    /// (the palm, at the thumb's socket rim); least claimed mutant cell-not-error 2.43 (the palm's rim lost to a 6.8 mm grid), decimator-one-sided 5.21; separation 1.94, the bound their geometric midpoint 1.74
+    /// (lodur:ruling:deterministic-bound-margin). The body roots read 0.57 to 1.01 but the pelvis 5.84 (its grid drops a 6 mm film of the cone above the spine ball: extraction, not the decimator), so they are not judged.
     /// </summary>
-    private const float MaxRootReach = 1.63f;
+    private const float MaxRootReach = 1.74f;
 
     /// <summary>The thickness (m) under which a thin body is judged by <see cref="MaxSilhouetteMiss"/>.</summary>
     private const float ThinnestBody = 0.012f;
@@ -344,7 +346,7 @@ public static class PuppetChecks
     /// </summary>
     private static void ThinPiecesKeepTheirSilhouette(PuppetShape shape, List<PuppetBody> bodies, PieceField[] fields, int[][] triangles, Action<bool, string> check)
     {
-        const float px = 0.0005f; int thin = 0, judged = 0; float worst = 0; var reach = new float[bodies.Count]; int rolled = 0; float worstRoot = 0; string rootAt = ""; string where = "";
+        const float px = 0.0005f; int thin = 0, judged = 0; float worst = 0; string where = "";
         for (int i = 0; i < bodies.Count; i++)
         {
             if (PuppetField.Thickness(bodies[i].Kind, bodies[i].Size) >= 0.04f) continue;
@@ -375,51 +377,73 @@ public static class PuppetChecks
                 for (int k = 0; k < inField.Length; k++) { if (inField[k]) field++; if (inField[k] != inMesh[k]) differ++; }
                 misses[axis] = differ / (float)Math.Max(field, 1);
             }
-            {
-                // the field's surface against the mesh: every surface voxel (1 mm) of the field, the farthest from the mesh, in units of the body's error
-                const float cell = 0.001f; int nx = (int)((hi.x - lo.x) / cell) + 1, ny = (int)((hi.y - lo.y) / cell) + 1, nz = (int)((hi.z - lo.z) / cell) + 1;
-                var inF = new bool[nx, ny, nz];
-                System.Threading.Tasks.Parallel.For(0, nx, x => { for (int y = 0; y < ny; y++) for (int z = 0; z < nz; z++) inF[x, y, z] = f.Value(lo + new float3(x + 0.5f, y + 0.5f, z + 0.5f) * cell) < 0; });
-                float far = 0; var farAt = default(float3); object gate = new();
-                System.Threading.Tasks.Parallel.For(1, nx - 1, x =>
-                {
-                    float localFar = 0; float3 at = default;
-                    for (int y = 1; y < ny - 1; y++) for (int z = 1; z < nz - 1; z++)
-                    {
-                        if (!inF[x, y, z] || (inF[x - 1, y, z] && inF[x + 1, y, z] && inF[x, y - 1, z] && inF[x, y + 1, z] && inF[x, y, z - 1] && inF[x, y, z + 1])) continue;
-                        var q = lo + new float3(x + 0.5f, y + 0.5f, z + 0.5f) * cell; float d = float.MaxValue;
-                        foreach (var (a1, b1, c1) in tris) d = MathF.Min(d, PuppetDecimate.PointTriangle(q, a1, b1, c1));
-                        if (d > localFar) { localFar = d; at = q; }
-                    }
-                    lock (gate) if (localFar > far) { far = localFar; farAt = at; }
-                });
-                reach[i] = far;
-                Console.WriteLine($"PUPPET thin reach: body {i}: the field's surface is at most {far * 1000:F1} mm from the mesh ({far / f.Error:F2} of its error {f.Error * 1000:F2} mm) at ({farAt.x * 1000:F0}, {farAt.y * 1000:F0}, {farAt.z * 1000:F0})");
-                if (f.Cuts.Count > 0 && f.Cuts.All(c => math.lengthsq(c.Roll) > 0) && PuppetField.Thickness(bodies[i].Kind, bodies[i].Size) < ThinnestBody) { rolled++; if (far / f.Error > worstRoot) { worstRoot = far / f.Error; rootAt = $"body {i}"; } }
-            }
             float mean = misses.Average();
             if (PuppetField.Thickness(bodies[i].Kind, bodies[i].Size) < ThinnestBody) { judged++; if (mean > worst) { worst = mean; where = $"body {i}"; } }
             Console.WriteLine($"PUPPET thin silhouette: body {i} ({bodies[i].Kind}, {triangles[i].Length} triangles): miss along x {misses[0] * 100:F1}%, y {misses[1] * 100:F1}%, z {misses[2] * 100:F1}%, mean {mean * 100:F1}%");
         }
         Console.WriteLine($"PUPPET thin silhouettes: {thin} thin bodies, {judged} judged, worst mean miss {worst * 100:F1}% of {MaxSilhouetteMiss * 100:F1}% ({where})");
-        Console.WriteLine($"PUPPET root reach: {rolled} thin limbs wrapping a roll, the field's surface at most {worstRoot:F2} of the error from the mesh (of {MaxRootReach}; {rootAt})");
-        check(rolled >= 2, $"the root reach check is vacuous: {rolled} thin limbs wrapping a roll, under 2");
-        check(worstRoot <= MaxRootReach, $"a thin limb's root does not wrap its roll: the field's surface is {worstRoot:F2} of its error from the mesh ({rootAt}), over {MaxRootReach}: the root is caved or has a window");
         check(thin >= 6 && judged >= 4, $"the thin silhouette check is vacuous: {thin} bodies under 40 mm and {judged} under {ThinnestBody * 1000:F0} mm, not six and four");
         check(worst <= MaxSilhouetteMiss, $"a thin body's mesh silhouette differs from its field's by {worst * 100:F1}% on average over its three axes ({where}), over {MaxSilhouetteMiss * 100:F1}%: its shape is lost");
     }
 
     /// <summary>
-    /// The meshes of the body pieces the hands did not touch, as the doll made them before the hands (every body but the forearms and the hands; the balls are primitives, pinned by <see cref="BallsArePrimitives"/>):
+    /// The reach of a piece's field from its mesh: the farthest surface voxel (1 mm) of the field from the mesh, in metres, and where. A decimated mesh may lose a lip: a rim thinner than the error is not
+    /// held by the mesh-to-field rule, and the field's surface at the lost rim lies far from what is drawn.
+    /// </summary>
+    internal static (float Far, float3 At) Reach(PuppetShape shape, PieceField f, int[] triangles)
+    {
+        var tris = triangles.Select(t => (a: f.Local(At(shape, 3 * t)), b: f.Local(At(shape, 3 * t + 1)), c: f.Local(At(shape, 3 * t + 2)))).ToArray();
+        const float cell = 0.001f; var lo = f.Lo - 0.01f; var hi = f.Hi + 0.01f;
+        int nx = (int)((hi.x - lo.x) / cell) + 1, ny = (int)((hi.y - lo.y) / cell) + 1, nz = (int)((hi.z - lo.z) / cell) + 1;
+        var inF = new bool[nx, ny, nz];
+        System.Threading.Tasks.Parallel.For(0, nx, x => { for (int y = 0; y < ny; y++) for (int z = 0; z < nz; z++) inF[x, y, z] = f.Value(lo + new float3(x + 0.5f, y + 0.5f, z + 0.5f) * cell) < 0; });
+        float far = 0; var farAt = default(float3); object gate = new();
+        System.Threading.Tasks.Parallel.For(1, nx - 1, x =>
+        {
+            float localFar = 0; float3 at = default;
+            for (int y = 1; y < ny - 1; y++) for (int z = 1; z < nz - 1; z++)
+            {
+                if (!inF[x, y, z] || (inF[x - 1, y, z] && inF[x + 1, y, z] && inF[x, y - 1, z] && inF[x, y + 1, z] && inF[x, y, z - 1] && inF[x, y, z + 1])) continue;
+                var q = lo + new float3(x + 0.5f, y + 0.5f, z + 0.5f) * cell; float d = float.MaxValue;
+                foreach (var (a1, b1, c1) in tris) d = MathF.Min(d, PuppetDecimate.PointTriangle(q, a1, b1, c1));
+                if (d > localFar) { localFar = d; at = q; }
+            }
+            lock (gate) if (localFar > far) { far = localFar; farAt = at; }
+        });
+        return (far, farAt);
+    }
+
+    /// <summary>
+    /// Roots wrap their balls: every body piece with a socket on a hand ball (a ball under <see cref="HandBall"/>: the wrist, the thumb's, the knuckle roll: the forearms, palms, thumbs and fingers) is read and judged.
+    /// </summary>
+    private static void RootsWrapTheirBalls(PuppetShape shape, List<PuppetBody> bodies, PieceField[] fields, int[][] triangles, Action<bool, string> check)
+    {
+        int judged = 0; float worst = 0; string at = "";
+        for (int i = 0; i < bodies.Count; i++)
+        {
+            var f = fields[i];
+            if (!f.Cuts.Any(c => c.BallRadius < HandBall)) continue; // the body roots are not read here: the bound does not separate them (the pelvis reads 5.84: its fine grid drops a 6 mm film of the cone, not the decimator)
+            var (far, farAt) = Reach(shape, f, triangles[i]);
+            float units = far / f.Error;
+            Console.WriteLine($"PUPPET root reach: body {i} ({bodies[i].Kind}): the field's surface is at most {far * 1000:F1} mm from the mesh ({units:F2} of its error {f.Error * 1000:F2} mm) at ({farAt.x * 1000:F0}, {farAt.y * 1000:F0}, {farAt.z * 1000:F0})");
+            judged++; if (units > worst) { worst = units; at = $"body {i} at ({farAt.x * 1000:F0}, {farAt.y * 1000:F0}, {farAt.z * 1000:F0}) mm"; }
+        }
+        Console.WriteLine($"PUPPET root reach: {judged} hand roots, at most {worst:F2} of the error from the mesh (of {MaxRootReach}; {at})");
+        check(judged >= 8, $"the root reach check is vacuous: {judged} bodies on hand balls, under 8");
+        check(worst <= MaxRootReach, $"a limb's root does not wrap its ball: the field's surface is {worst:F2} of its error from the mesh ({at}), over {MaxRootReach}: the root is caved or has a window");
+    }
+
+    /// <summary>
+    /// The meshes of the body pieces the hands did not touch (every body but the forearms and the hands; the balls are primitives, pinned by <see cref="BallsArePrimitives"/>), as the two-sided decimator makes them (lodur:ruling:decimator-two-sided-error re-pinned them; the 4d21191 harvests were 170, 140, 38, 30, 82, 46 and 40 triangles):
     /// per piece key, the vertex and triangle counts and a sum of the vertices to 0.1 mm. A piece of those keys that differs was changed by the hands; the pieces are a pure function of their key.
     /// </summary>
     private static readonly (string Key, int Vertices, int Triangles, long Sum)[] BeforeTheHands =
     {
-        ("entry 0|-900,-700,0,700;0,800,0,720;900,-700,0,700", 87, 170, 8281621657712494562),
-        ("entry 1|-2100,1400,0,500;0,-2200,0,720;0,2200,0,360;2100,1400,0,500", 72, 140, -6458902082010238553),
-        ("entry 2|0,-1100,0,360", 21, 38, -4950703998283759519), ("entry 3|0,-1550,0,380;0,1550,0,500", 17, 30, -7670264571177566577),
-        ("entry 5|0,-2500,0,500;0,2500,0,700", 43, 82, 2598061049774360997), ("entry 6|0,-2300,0,340;0,2300,0,500", 25, 46, 3412638719505470267),
-        ("entry 7|0,400,-500,340", 22, 40, 4538328027949402287),
+        ("entry 0|-900,-700,0,700;0,800,0,720;900,-700,0,700", 107, 210, 5999877845298199278),
+        ("entry 1|-2100,1400,0,500;0,-2200,0,720;0,2200,0,360;2100,1400,0,500", 84, 164, -2537497859487156714),
+        ("entry 2|0,-1100,0,360", 23, 42, -8654447676977475529), ("entry 3|0,-1550,0,380;0,1550,0,500", 30, 56, -2931376677802415662),
+        ("entry 5|0,-2500,0,500;0,2500,0,700", 60, 116, -3088683477772603283), ("entry 6|0,-2300,0,340;0,2300,0,500", 41, 78, 4836624054987066346),
+        ("entry 7|0,400,-500,340", 26, 48, -2145891217157672404),
     };
 
     private static long MeshSum(float3[] v)
@@ -491,6 +515,44 @@ public static class PuppetChecks
         check(bare == 0, $"{bare} limbs at hand balls seat on under {HugShare * 100:F1}% of their ball within Seam + 1 mm (least {least * 100:F1}%): they stop short of it");
     }
 
+
+    /// <summary>
+    /// The least share of a roll's end cap (the hemisphere of the knuckle roll's radius beyond its segment) that must lie within 3 mm of the palm or the fingers at rest: a bare roll end, which the whole-ball
+    /// <see cref="HugShare"/> does not see (the fingers cover a palm 15 mm short at each end). Shipped least 16.3%; palm-short-z (the palm's half length 40 to 25 mm) 2.5%; separation 6.5, the bound their geometric
+    /// midpoint 6.4% (lodur:ruling:deterministic-bound-margin).
+    /// </summary>
+    private const float MinEndCover = 0.064f;
+
+    private static void RollEndsAreCovered(PuppetShape shape, JointBall[] balls, int[][] triangles, Action<bool, string> check)
+    {
+        const int count = 600; const float near = 0.003f;
+        int ends = 0; float least = float.MaxValue; string leastAt = "";
+        for (int j = 0; j < shape.Joints.Length; j++)
+        {
+            var roll = balls[j].Roll;
+            if (math.lengthsq(roll) == 0) continue;
+            var (_, a, b, o) = shape.Joints[j]; float radius = shape.BallRadius[j];
+            foreach (float sign in new[] { 1f, -1f })
+            {
+                var end = o + sign * roll; var axis = sign * math.normalize(roll);
+                int covered = 0, total = 0;
+                for (int i = 0; i < 2 * count; i++)
+                {
+                    float z = 1 - 2f * (i + 0.5f) / (2 * count), r = MathF.Sqrt(1 - z * z), ph = i * 2.399963f;
+                    var u = new float3(r * MathF.Cos(ph), r * MathF.Sin(ph), z); if (math.dot(u, axis) < 0) continue;
+                    total++; var p = end + u * radius; float gap = float.MaxValue;
+                    foreach (int body in new[] { a, b }) foreach (int t in triangles[body]) gap = MathF.Min(gap, PuppetDecimate.PointTriangle(p, At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2)));
+                    if (gap <= near) covered++;
+                }
+                float cover = covered / (float)total; ends++;
+                Console.WriteLine($"PUPPET roll end: joint {j} {(sign > 0 ? "+" : "-")}: {cover * 100:F1}% of the end cap within 3 mm of the palm or the fingers");
+                if (cover < least) { least = cover; leastAt = $"joint {j} {(sign > 0 ? "+" : "-")}"; }
+            }
+        }
+        Console.WriteLine($"PUPPET roll ends: {ends} ends, least cover {least * 100:F1}% of {MinEndCover * 100:F1}% ({leastAt})");
+        check(ends >= 4, $"the roll end check is vacuous: {ends} roll ends, under 4");
+        check(least >= MinEndCover, $"a roll's end is bare: {least * 100:F1}% of its cap is within 3 mm of the palm or the fingers ({leastAt}), under {MinEndCover * 100:F1}%");
+    }
 
     /// <summary>A ball joint's readings' poses: the creation pose (the ball and its two neighbours' triangles, in the bind) and, at a hand's joint, the bent pose: the child turned about the joint by its bend (<see cref="HandBodies"/>) about z, as the hand bends about its joints.</summary>
     private static List<(string Pose, List<(float3, float3, float3)> Tris)> JointPoses(PuppetShape shape, List<PuppetBody> bodies, int[][] triangles, int j)

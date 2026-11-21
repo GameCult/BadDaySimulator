@@ -6,9 +6,10 @@ namespace BadDay.Client;
 
 /// <summary>What a collapse must not do, besides leave the mesh non-manifold: the piece says where a point may lie, and the decimator asks.</summary>
 /// <param name="Allowed">Whether a new vertex, fan centroid or fan edge midpoint may lie at the point; the flag is whether the collapse runs under the tight rule (<paramref name="Tight"/>).</param>
-/// <param name="Tight">Whether a point lies where collapses run under the tight rule (the band about a socket): a collapse of (u, v) does when u or v, before the collapse, does.</param>
+/// <param name="Tight">Whether a point lies where collapses run under the tight rule (the band about a socket): a collapse of (u, v) to x does when u, v or x does.</param>
+/// <param name="Stray">How far (m) the field's surface may lie from the mesh at a point (the carried surface points): <see cref="PieceField.Stray"/>; the mesh side is <paramref name="Allowed"/>'s.</param>
 /// <param name="Guard">Skeleton points and their clearance: no fan triangle may come nearer a point than its clearance (the limb guard).</param>
-public sealed record DecimateRules(Func<float3, bool, bool> Allowed, Func<float3, bool> Tight, (float3 P, float Clear)[] Guard);
+public sealed record DecimateRules(Func<float3, bool, bool> Allowed, Func<float3, bool> Tight, Func<float3, float> Stray, (float3 P, float Clear)[] Guard);
 
 /// <summary>
 /// Edge-collapse decimation of a closed welded mesh, engine-free (edge contraction only, t = 0 in Garland-Heckbert terms, so disjoint parts never
@@ -17,13 +18,16 @@ public sealed record DecimateRules(Func<float3, bool, bool> Allowed, Func<float3
 ///   E(x) = sum over the new fan of 2 (A_t - S_t . n_t(x)), where each live triangle t carries the area A_t and area-weighted normal sum S_t of the
 ///          fine faces it stands for: the L2,1 normal deviation of those faces from their stand-in (Cohen-Steiner et al. 2004);
 ///   cost = (1 - alpha) D + alpha k E, k in m^2 (D is m^4, E m^2).
-/// A collapse is refused if it breaks the link condition (manifoldness), turns a fan triangle by more than 80 degrees, makes one degenerate, or breaks
-/// a <see cref="DecimateRules"/> rule at the new vertex, any fan centroid or any fan edge midpoint.
+/// A collapse is refused if it breaks the link condition (manifoldness), turns a fan triangle by more than 60 degrees, makes one degenerate, or breaks
+/// a <see cref="DecimateRules"/> rule at the new vertex, any fan centroid or any fan edge midpoint. The error is bounded both ways (lodur:ruling:decimator-two-sided-error): the mesh stays within the
+/// error of the field (the rules above), and the field's surface stays within it of the mesh. Every vertex carries the original surface points it stands for (the fine mesh's vertices, on the field's surface), a collapse
+/// merges the carried points of u and v, and it is refused unless each is within its stray limit of the new fan (a sampled, Hausdorff-style bound, as Metro measures: Cignoni, Rocchini, Scopigno 1998), so no lip or tongue
+/// of the field thinner than the error is dropped.
 /// </summary>
 public sealed class PuppetDecimate
 {
-    /// <summary>cos of the largest turn (80 degrees) a collapse may give a fan triangle.</summary>
-    private const float FlipCos = 0.17f;
+    /// <summary>cos of the largest turn (60 degrees) a collapse may give a fan triangle.</summary>
+    private const float FlipCos = 0.5f;
 
     private readonly List<float3> _p;
     private readonly List<int[]> _t = new();
@@ -34,6 +38,7 @@ public sealed class PuppetDecimate
     private readonly double[][] _q;
     private readonly int[] _ver;
     private readonly bool[] _dead;
+    private readonly List<(float3 P, float Limit)>[] _carry;
     private readonly double _alpha, _k;
     private readonly DecimateRules _rules;
     private int _live;
@@ -43,8 +48,8 @@ public sealed class PuppetDecimate
         _alpha = alpha; _k = k; _rules = rules;
         _p = new List<float3>(vertices);
         int nv = vertices.Length;
-        _q = new double[nv][]; _ver = new int[nv]; _dead = new bool[nv];
-        for (int i = 0; i < nv; i++) { _q[i] = new double[10]; _vt.Add(new HashSet<int>()); }
+        _q = new double[nv][]; _ver = new int[nv]; _dead = new bool[nv]; _carry = new List<(float3, float)>[nv];
+        for (int i = 0; i < nv; i++) { _q[i] = new double[10]; _vt.Add(new HashSet<int>()); _carry[i] = new List<(float3, float)> { (_p[i], rules.Stray(_p[i])) }; }
         for (int k2 = 0; k2 < triangles.Length; k2 += 3)
         {
             var tri = new[] { triangles[k2], triangles[k2 + 1], triangles[k2 + 2] };
@@ -199,14 +204,35 @@ public sealed class PuppetDecimate
         // The rules that ask the piece's field are the dear ones: the cheapest candidate that keeps them wins, and edges are only asked when they come up.
         scored.Sort((p, q) => p.Cost.CompareTo(q.Cost));
         foreach (var (cost, x) in scored)
-            if (!validate || Within(x, fan, u, v, tight)) return (cost, x);
+            if (!validate || (Within(x, fan, u, v, tight) && Hugs(x, fan, u, v))) return (cost, x);
         return (double.PositiveInfinity, default);
+    }
+
+    /// <summary>Whether every original surface point u and v carry lies within its stray limit of the new fan (the triangles around x): the field's surface is held by the mesh.</summary>
+    private bool Hugs(float3 x, List<int> fan, int u, int v)
+    {
+        var fanTris = new (float3 A, float3 B, float3 C)[fan.Count];
+        for (int i = 0; i < fanTris.Length; i++)
+        {
+            var tri = _t[fan[i]];
+            float3 R(int k) => tri[k] == u || tri[k] == v ? x : _p[tri[k]];
+            fanTris[i] = (R(0), R(1), R(2));
+        }
+        foreach (var carried in new[] { _carry[u], _carry[v] })
+            foreach (var (p, limit) in carried)
+            {
+                bool near = false;
+                foreach (var (a, b, c) in fanTris) if (PointTriangle(p, a, b, c) <= limit) { near = true; break; }
+                if (!near) return false;
+            }
+        return true;
     }
 
     /// <summary>Whether the piece allows the new vertex x, every fan centroid and every fan edge midpoint.</summary>
     private bool Within(float3 x, List<int> fan, int u, int v, bool tight)
     {
-        bool Good(float3 p) => _rules.Allowed(p, tight);
+        bool under = tight || _rules.Tight(x); // a collapse lands in the band, or starts there
+        bool Good(float3 p) => _rules.Allowed(p, under);
         if (!Good(x)) return false;
         foreach (int t in fan)
         {
@@ -263,6 +289,8 @@ public sealed class PuppetDecimate
         foreach (int d in shared) { _alive[d] = false; foreach (int w in _t[d]) _vt[w].Remove(d); _live--; }
         foreach (int t in new List<int>(_vt[v])) { var tri = _t[t]; for (int i = 0; i < 3; i++) if (tri[i] == v) tri[i] = u; _vt[u].Add(t); }
         _vt[v].Clear(); _dead[v] = true;
+        if (_carry[v].Count > _carry[u].Count) (_carry[u], _carry[v]) = (_carry[v], _carry[u]);
+        _carry[u].AddRange(_carry[v]); _carry[v] = null!;
         for (int i = 0; i < 10; i++) _q[u][i] += _q[v][i];
         _p[u] = x;
     }

@@ -129,7 +129,7 @@ public sealed class PieceField
     public float3 Hi { get; }
     public IReadOnlyList<PieceCut> Cuts => _cuts;
 
-    /// <summary>The grid (m) the piece is extracted on before decimation.</summary>
+    /// <summary>The grid (m) the piece is extracted on before decimation: <see cref="Doll.BodyCell"/>, at most half its thinnest primitive, and no coarser than its error, so a lip as thin as the error still has surface samples for the decimator's field-to-mesh bound to hold (the palm's rim at 6.8 mm lost one: the fine mesh itself read 2.39 of the error from the field).</summary>
     public float Cell { get; }
 
     /// <summary>How far (m) a body piece's surface may stray from its field away from the sockets: <see cref="Doll.FacetError"/>, less for a thin body (<see cref="Doll.ThinError"/>).</summary>
@@ -147,7 +147,7 @@ public sealed class PieceField
             thinnest = MathF.Min(thinnest, p.Thickness);
         }
         Lo = lo; Hi = hi;
-        Cell = MathF.Min(Doll.BodyCell, thinnest / 2);
+        Cell = MathF.Min(Doll.BodyCell, MathF.Min(thinnest / 2, error));
     }
 
     internal void Cut(PieceCut cut) => _cuts.Add(cut);
@@ -237,6 +237,9 @@ public sealed class PieceField
         return limit;
     }
 
+    /// <summary>How far (m) the field's surface may lie from the mesh at <paramref name="p"/> (the decimator's carried surface points): <see cref="Error"/>, or in the seat band at most <see cref="SeatLimit"/> too.</summary>
+    public float Stray(float3 p) => Tight(p) ? MathF.Min(Error, SeatLimit(p)) : Error;
+
     /// <summary>
     /// Where a decimated surface point may lie, the one owner of the error map: within <see cref="Error"/> of the field, and under the tight rule within <see cref="SeatLimit"/> too,
     /// and never within a ball's radius + 0.2 mm of its core (the origin, or a roll's segment).
@@ -318,7 +321,7 @@ public static class PuppetField
     internal static (float3[] V, int[] Tris) Mesh(PieceField f)
     {
         var (v, tris) = Extract(f);
-        return PuppetDecimate.Run(v, tris, Doll.FacetAlpha, Doll.FacetScale, new DecimateRules(f.Allowed, f.Tight, f.Guard()));
+        return PuppetDecimate.Run(v, tris, Doll.FacetAlpha, Doll.FacetScale, new DecimateRules(f.Allowed, f.Tight, f.Stray, f.Guard()));
     }
 
     /// <summary>Builds the shape and waits for it: the bodies' meshes come from <see cref="PuppetPieces"/> (built once per key), so a second build of the same doll builds nothing; the balls are built inline.</summary>

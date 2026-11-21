@@ -53,14 +53,18 @@ mutant seat-share-off       $D 's/SeatShare = 0.15f/SeatShare = 100f/' "a ball j
 mutant limb-end-over-ball   $D 's/V(.0135f, .022f, .027f)/V(.0135f, .022f, .034f)/' "a ball joint shows slits"
 mutant palm-top-open        $D 's/DollPrim.Box(V(0, -.0125f, 0), V(.014f, .0265f, .04f), .011f)/DollPrim.Box(V(0, -.0175f, 0), V(.014f, .0215f, .04f), .011f)/' "shows the inside of a piece"
 # The fingers' root over the roll's trough rim (the box top at 14 mm over the axis, not 11): a lip of the root is lost.
-mutant fingers-root-lip     $D 's/DollPrim.Box(V(0, -.00575f, 0), V(.0115f, .03625f, .037f), .0095f)/DollPrim.Box(V(0, -.00275f, 0), V(.0115f, .03925f, .037f), .0095f)/' "does not wrap its roll"
 mutant thin-error-half      $D 's/ThinError = 0.25f/ThinError = 0.5f/' "silhouette differs"
 mutant body-seam-10mm       $D 's/Seam = 0.002f/Seam = 0.010f/'                             "a ball joint shows slits"
 # Joints are built primitives, never meshed (ruling doll-joints-built-primitives): a ball routed through the decimator; the thin rule moved onto the bodies of 80 mm (ThinBelow); the seat limit without the thin error (Allowed's minimum); a lower seat share.
-mutant ball-decimated       $F 's#public (float3\[\] V, int\[\] Tris) Mesh() => PuppetField.Primitive(Radius, Axis, math.length(Roll), Doll.BallFrequency);#public (float3[] V, int[] Tris) Mesh() { var (v, t) = PuppetField.Primitive(Radius, Axis, math.length(Roll), Doll.BallFrequency); return PuppetDecimate.Run(v, t, Doll.FacetAlpha, Doll.FacetScale, new DecimateRules((p, tight) => true, p => false, System.Array.Empty<(float3 P, float Clear)>())); }#' "are not 38 vertices and 72 triangles"
+mutant ball-decimated       $F 's#public (float3\[\] V, int\[\] Tris) Mesh() => PuppetField.Primitive(Radius, Axis, math.length(Roll), Doll.BallFrequency);#public (float3[] V, int[] Tris) Mesh() { var (v, t) = PuppetField.Primitive(Radius, Axis, math.length(Roll), Doll.BallFrequency); return PuppetDecimate.Run(v, t, Doll.FacetAlpha, Doll.FacetScale, new DecimateRules(p => true, p => 1f, System.Array.Empty<(float3 P, float Clear)>())); }#' "are not 38 vertices and 72 triangles"
 mutant thinbelow-8cm        $D 's/ThinBelow = 0.04f/ThinBelow = 0.08f/' "the hands must not change changed"
-mutant allowed-no-min       $F 's/(tight ? MathF.Min(Error, SeatLimit(p)) : Error)/(tight ? SeatLimit(p) : Error)/' "stray further from their piece's surface"
+mutant allowed-no-min       $F 's/Tight(p) ? MathF.Min(Error, SeatLimit(p)) : Error;/Tight(p) ? SeatLimit(p) : Error;/' "stray further from their piece's surface"
 mutant seat-share-008       $D 's/SeatShare = 0.15f/SeatShare = 0.08f/' "shows the inside of a piece"
+# The decimator bounds the error both ways (ruling decimator-two-sided-error): the old one-sided rule drops a lip thinner than the error; and the fine grid no coarser than the error keeps one to carry.
+mutant decimator-one-sided  client/PuppetDecimate.cs 's/ \&\& Hugs(x, fan, u, v))/)/' "does not wrap its ball"
+# The spec's fingers-root-lip entry (the fingers' top 3 mm over the roll) is no longer a mutant: the two-sided decimator holds the lip (root reach 1.25 against shipped 1.26), so it is not claimed.
+mutant palm-short-z         $D 's/V(.014f, .0265f, .04f)/V(.014f, .0265f, .025f)/' "a roll's end is bare"
+mutant cell-not-error       $F 's/MathF.Min(thinnest \/ 2, error)/thinnest \/ 2/' "does not wrap its ball"
 P=client/PuppetPieces.cs; M=client/PuppetModel.cs
 mutant no-cache             $P 's/Cache.GetOrAdd(key, _ =>/Cache.GetOrAdd(new PieceKey(System.Guid.NewGuid().ToString()), _ =>/' "piece meshes"
 mutant build-in-update      $M 's/if (_pendingSet is not { } set || !_pending.All(t => t.IsCompleted)) return false;/if (_pendingSet is not { } set) return false; Task.WaitAll(_pending);/' "pieces were not built yet"
