@@ -90,10 +90,20 @@ public sealed class PuppetShape
     public int PieceCount => Ids.Length + Joints.Length;
 }
 
-/// <summary>A cut on a body piece at a joint: the socket the ball fills.</summary>
-public sealed record PieceCut(float3 Origin, float BallRadius)
+/// <summary>A cut on a body piece at a joint: the socket the ball fills. A roll (<see cref="DollEntry.RollAxis"/>) is the segment Origin +- Roll swept by the ball's radius; no roll is a sphere.</summary>
+public sealed record PieceCut(float3 Origin, float BallRadius, float3 Roll = default)
 {
     public float SocketRadius => BallRadius + Doll.Seam;
+
+    /// <summary>The distance from <paramref name="p"/> to the ball's core: the origin, or the segment Origin +- Roll. The ball is <c>Off(p) &lt;= BallRadius</c>.</summary>
+    public float Off(float3 p) => Core(p - Origin, Roll);
+
+    /// <summary>The distance from <paramref name="q"/> to the segment +- <paramref name="roll"/> about the origin (to the origin for a zero roll).</summary>
+    public static float Core(float3 q, float3 roll)
+    {
+        float l2 = math.lengthsq(roll);
+        return math.length(l2 > 0 ? q - roll * math.clamp(math.dot(q, roll) / l2, -1f, 1f) : q);
+    }
 }
 
 /// <summary>
@@ -106,6 +116,7 @@ public sealed class PieceField
     private readonly DollPrim[] _prims = Array.Empty<DollPrim>();
     private readonly string _shape;
     private readonly float _radius;
+    private readonly float3 _roll;
     private readonly List<PieceCut> _cuts = new();
 
     /// <summary>Which piece this is (as <see cref="PuppetShape.Piece"/>) and which body it follows.</summary>
@@ -127,9 +138,15 @@ public sealed class PieceField
     /// <summary>The ball's radius (for a ball).</summary>
     public float BallRadius => _radius;
 
-    internal PieceField(int index, int bone, DollPrim[] prims, string shape, Rigid bind)
+    /// <summary>The ball's roll, a half-segment in the bind's axes (for a ball): zero for a sphere.</summary>
+    public float3 Roll => _roll;
+
+    /// <summary>How far (m) a body piece's surface may stray from its field away from the sockets: <see cref="Doll.FacetError"/>, less for a thin body (<see cref="Doll.ThinError"/>).</summary>
+    public float Error { get; }
+
+    internal PieceField(int index, int bone, DollPrim[] prims, string shape, Rigid bind, float error)
     {
-        Index = index; Bone = bone; _prims = prims; _shape = shape; Placement = bind;
+        Index = index; Bone = bone; _prims = prims; _shape = shape; Placement = bind; Error = error;
         var lo = new float3(float.MaxValue, float.MaxValue, float.MaxValue); var hi = -lo;
         float thinnest = float.MaxValue;
         foreach (var p in prims)
@@ -142,11 +159,12 @@ public sealed class PieceField
         Cell = MathF.Min(Doll.BodyCell, thinnest / 2);
     }
 
-    internal PieceField(int index, int bone, float3 origin, float radius)
+    internal PieceField(int index, int bone, float3 origin, float radius, float3 roll = default)
     {
-        Index = index; Bone = bone; IsBall = true; _radius = radius; _shape = "ball";
+        Index = index; Bone = bone; IsBall = true; _radius = radius; _roll = roll; _shape = "ball";
         Placement = new Rigid(new float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1), origin);
-        Lo = new float3(-radius, -radius, -radius); Hi = new float3(radius, radius, radius);
+        var reach = new float3(radius, radius, radius) + math.abs(roll);
+        Lo = -reach; Hi = reach;
         Cell = MathF.Min(Doll.BallCell, radius / 4);
     }
 
@@ -164,8 +182,9 @@ public sealed class PieceField
         get
         {
             static long Q(float v) => (long)MathF.Round(v * 1e4f);
-            if (IsBall) return new PieceKey($"ball {Q(_radius)}");
-            var sockets = _cuts.Select(c => $"{Q(c.Origin.x)},{Q(c.Origin.y)},{Q(c.Origin.z)},{Q(c.BallRadius)}").OrderBy(x => x, StringComparer.Ordinal);
+            static string Rolled(float3 r) => math.lengthsq(r) > 0 ? $",{Q(r.x)},{Q(r.y)},{Q(r.z)}" : "";
+            if (IsBall) return new PieceKey($"ball {Q(_radius)}{Rolled(_roll)}");
+            var sockets = _cuts.Select(c => $"{Q(c.Origin.x)},{Q(c.Origin.y)},{Q(c.Origin.z)},{Q(c.BallRadius)}{Rolled(c.Roll)}").OrderBy(x => x, StringComparer.Ordinal);
             return new PieceKey($"{_shape}|{string.Join(";", sockets)}");
         }
     }
@@ -179,10 +198,17 @@ public sealed class PieceField
     /// <summary>The field at <paramref name="p"/>, in the piece's frame.</summary>
     public float Value(float3 p)
     {
-        if (IsBall) return math.length(p) - _radius;
+        if (IsBall) return PieceCut.Core(p, _roll) - _radius;
+        float d = Body(p);
+        foreach (var c in _cuts) d = MathF.Max(d, c.SocketRadius - c.Off(p));
+        return d;
+    }
+
+    /// <summary>A body's primitives smooth-min'd, before its sockets are cut.</summary>
+    public float Body(float3 p)
+    {
         float d = _prims[0].Dist(p);
         for (int i = 1; i < _prims.Length; i++) d = SmoothMin(d, _prims[i].Dist(p), Doll.BodyBlend);
-        foreach (var c in _cuts) d = MathF.Max(d, c.SocketRadius - math.length(p - c.Origin));
         return d;
     }
 
@@ -217,19 +243,20 @@ public sealed class PieceField
     /// <summary>Whether <paramref name="p"/> lies in the seat band: within a socket's radius + <see cref="Doll.SeatBand"/> of a joint origin (a ball has none).</summary>
     public bool Tight(float3 p)
     {
-        foreach (var c in _cuts) if (math.length(p - c.Origin) < c.SocketRadius + Doll.SeatBand) return true;
+        foreach (var c in _cuts) if (c.Off(p) < c.SocketRadius + Doll.SeatBand) return true;
         return false;
     }
 
     /// <summary>
     /// Where a decimated surface point may lie, the one owner of the error map: a ball within <see cref="Doll.BallError"/> of its sphere, either way; a body within
-    /// <see cref="Doll.SeatError"/> of its field under the tight rule and <see cref="Doll.FacetError"/> otherwise, and never within a ball's radius + 0.2 mm of its origin.
+    /// <see cref="Doll.SeatError"/> of its field under the tight rule (never looser than <see cref="Error"/>) and <see cref="Error"/> otherwise, and never within a ball's radius + 0.2 mm
+    /// of its core (the origin, or a roll's segment).
     /// </summary>
     public bool Allowed(float3 p, bool tight)
     {
-        if (IsBall) return MathF.Abs(math.length(p) - _radius) <= Doll.BallError;
-        if (MathF.Abs(Value(p)) > (tight ? Doll.SeatError : Doll.FacetError)) return false;
-        foreach (var c in _cuts) if (math.length(p - c.Origin) < c.BallRadius + 0.0002f) return false;
+        if (IsBall) return MathF.Abs(PieceCut.Core(p, _roll) - _radius) <= Doll.BallError;
+        if (MathF.Abs(Value(p)) > (tight ? MathF.Min(Doll.SeatError, Error) : Error)) return false;
+        foreach (var c in _cuts) if (c.Off(p) < c.BallRadius + 0.0002f) return false;
         return true;
     }
 }
@@ -240,7 +267,7 @@ public sealed record PieceSet(IReadOnlyList<PuppetBody> Bodies, IReadOnlyList<Pu
 /// <summary>
 /// The puppet's surface, engine-free: the ball-jointed doll as rigid pieces (lodur:ruling:puppet-joints-ball-jointed-doll). Every shape body is dressed
 /// from <see cref="Doll"/> (or drawn as its physics shape) into its own closed piece, every joint gets a ball piece, and each piece is meshed fine
-/// (surface nets) and decimated to <see cref="Doll.FacetError"/> or <see cref="Doll.BallError"/> by <see cref="PuppetDecimate"/>. Each vertex has one
+/// (surface nets) and decimated to <see cref="PieceField.Error"/> or <see cref="Doll.BallError"/> by <see cref="PuppetDecimate"/>. Each vertex has one
 /// bone; nothing blends across a joint.
 /// </summary>
 public static class PuppetField
@@ -260,7 +287,7 @@ public static class PuppetField
     /// <summary>
     /// The pieces' fields, bodies first (piece i is body i) then one ball per joint (piece n + j), each in its own frame: a body from its <see cref="Doll"/> entry
     /// or its physics shape, in the body's frame (placed by its bind); a ball of the child's entry radius (or the child's thickness) about the joint origin, kept by
-    /// the parent; at each joint both bodies lose the socket sphere (ball radius + <see cref="Doll.Seam"/>) at the origin in their frame, and nothing else.
+    /// the parent; at each joint both bodies lose the socket (ball radius + <see cref="Doll.Seam"/>, about the origin or a roll's segment) in their frame, and nothing else.
     /// </summary>
     public static PieceSet Pieces(IReadOnlyList<PuppetBody> bodies, IReadOnlyList<PuppetJoint> joints)
     {
@@ -270,7 +297,8 @@ public static class PuppetField
         {
             var entry = Doll.Find(bodies[i].Kind, bodies[i].Size);
             string shape = entry is null ? $"{bodies[i].Kind} {MathF.Round(bodies[i].Size.x * 1e4f)} {MathF.Round(bodies[i].Size.y * 1e4f)} {MathF.Round(bodies[i].Size.z * 1e4f)}" : $"entry {Array.IndexOf(Doll.Entries, entry)}";
-            fields[i] = new PieceField(i, i, entry?.Prims ?? Doll.Fallback(bodies[i].Kind, bodies[i].Size), shape, bodies[i].Bind);
+            float error = MathF.Min(Doll.FacetError, Doll.ThinError * Thickness(bodies[i].Kind, bodies[i].Size));
+            fields[i] = new PieceField(i, i, entry?.Prims ?? Doll.Fallback(bodies[i].Kind, bodies[i].Size), shape, bodies[i].Bind, error);
         }
         for (int j = 0; j < joints.Count; j++)
         {
@@ -278,9 +306,11 @@ public static class PuppetField
             var o = bodies[joint.A].Bind.Apply(joint.LocalOrigin);
             var child = Doll.Find(bodies[joint.B].Kind, bodies[joint.B].Size);
             float radius = child is { BallRadius: > 0 } ? child.BallRadius : Thickness(bodies[joint.B].Kind, bodies[joint.B].Size);
-            fields[n + j] = new PieceField(n + j, joint.A, o, radius);
-            fields[joint.A].Cut(new PieceCut(joint.LocalOrigin, radius));
-            fields[joint.B].Cut(new PieceCut(bodies[joint.B].Bind.Inverse().Apply(o), radius));
+            var inChild = child is { RollHalf: > 0 } ? child.RollAxis * child.RollHalf : default; // a roll's half-segment, in the child's frame; then in the bind's axes, then in the parent's frame
+            var inBind = math.mul(bodies[joint.B].Bind.R, inChild);
+            fields[n + j] = new PieceField(n + j, joint.A, o, radius, inBind);
+            fields[joint.A].Cut(new PieceCut(joint.LocalOrigin, radius, math.mul(bodies[joint.A].Bind.Inverse().R, inBind)));
+            fields[joint.B].Cut(new PieceCut(bodies[joint.B].Bind.Inverse().Apply(o), radius, inChild));
         }
         return new PieceSet(bodies, joints, fields);
     }

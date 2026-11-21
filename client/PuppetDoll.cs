@@ -75,7 +75,9 @@ public sealed record DollPrim(DollShape Shape, float3 A, float3 B, float Ra, flo
 /// <param name="Size">The physics shape's Size0..2 (matched within 1e-4).</param>
 /// <param name="Prims">The body's primitives in its own frame, smooth-min'd by <see cref="Doll.BodyBlend"/>.</param>
 /// <param name="BallRadius">The radius (m) of the ball at the joint to the parent, or 0 for a body with no joint to a parent of its own.</param>
-public sealed record DollEntry(Box3DSoaKind Kind, float3 Size, DollPrim[] Prims, float BallRadius = 0)
+/// <param name="RollAxis">A hinge ball stretched along the hinge axis into a roll (ruling doll-knuckle-roll), as a unit vector in this body's own frame, or zero for a sphere.</param>
+/// <param name="RollHalf">Half the roll's length (m) between its two end centres; the ball is the segment of this half-length about the joint origin, swept by <paramref name="BallRadius"/>.</param>
+public sealed record DollEntry(Box3DSoaKind Kind, float3 Size, DollPrim[] Prims, float BallRadius = 0, float3 RollAxis = default, float RollHalf = 0)
 {
     public bool Matches(Box3DSoaKind kind, float3 size) => kind == Kind && math.length(size - Size) <= 1e-4f;
 }
@@ -98,6 +100,12 @@ public static class Doll
 
     /// <summary>How far (m) a body piece's surface may stray from its own field when the decimator collapses an edge, away from the sockets.</summary>
     public const float FacetError = 0.02f;
+
+    /// <summary>
+    /// A body piece's facet error is at most this fraction of its thickness (<see cref="PuppetField.Thickness"/>): below 40 mm a part cannot afford <see cref="FacetError"/> (at 20 mm
+    /// the probe's fingers, 11 mm thick, decimated to 2 triangles and the palm to 8). Every body of 40 mm or more keeps <see cref="FacetError"/>, so its mesh does not change.
+    /// </summary>
+    public const float ThinError = 0.5f;
 
     /// <summary>
     /// The seat band (m) beyond a socket's radius: a collapse that touches a vertex within it runs under <see cref="SeatError"/>. A field-value error is blind to a

@@ -224,8 +224,8 @@ public static class PuppetChecks
     }
 
     /// <summary>
-    /// Clearance by construction: no body vertex, centroid or edge midpoint within the radius of a ball it takes part in (the decimator's hard rule is
-    /// the ball's radius plus 0.2 mm).
+    /// Clearance by construction: no body vertex, centroid or edge midpoint within the radius of a ball it takes part in, of its core (the joint origin, or a roll's
+    /// segment: the knuckle roll's clearance is its radius from the segment, not from its centre); the decimator's hard rule is the ball's radius plus 0.2 mm.
     /// </summary>
     private static void Clearance(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
     {
@@ -236,7 +236,7 @@ public static class PuppetChecks
             foreach (var p in Samples(shape, triangles[f.Index]))
             {
                 probed++;
-                foreach (var c in f.Cuts) if (math.length(f.Local(p) - c.Origin) < c.BallRadius + 0.0002f - 1e-5f) inside++;
+                foreach (var c in f.Cuts) if (c.Off(f.Local(p)) < c.BallRadius + 0.0002f - 1e-5f) inside++;
             }
         }
         check(probed > 1000, $"the clearance check is vacuous: {probed} points");
@@ -322,7 +322,7 @@ public static class PuppetChecks
     }
 
     /// <summary>
-    /// Within the error: every body piece's vertices, centroids and edge midpoints lie within FacetError of its field's surface, the cuts included; a
+    /// Within the error: every body piece's vertices, centroids and edge midpoints lie within its error (FacetError, or ThinError of its thickness where that is less) of its field's surface, the cuts included; a
     /// triangle with all three vertices in the seat band lies within SeatError + 1 mm of it (the fine mesh's own error at the rims); a ball's points lie within
     /// BallError of its sphere either way.
     /// </summary>
@@ -335,7 +335,7 @@ public static class PuppetChecks
             {
                 foreach (var p in Samples(shape, triangles[f.Index]))
                 {
-                    float e = MathF.Abs(math.length(f.Local(p)) - f.BallRadius);
+                    float e = MathF.Abs(PieceCut.Core(f.Local(p), f.Roll) - f.BallRadius);
                     worstBall = MathF.Max(worstBall, e);
                     if (e > Doll.BallError + 1e-4f) overBall++;
                 }
@@ -347,16 +347,16 @@ public static class PuppetChecks
                 var points = new[] { a, b, c, (a + b + c) / 3f, (a + b) / 2f, (b + c) / 2f, (c + a) / 2f };
                 float worst = points.Max(p => MathF.Abs(f.Value(f.Local(p))));
                 worstBody = MathF.Max(worstBody, worst);
-                if (worst > Doll.FacetError + 1e-4f) over++;
+                if (worst > f.Error + 1e-4f) over++;
                 if (!(f.Tight(f.Local(a)) && f.Tight(f.Local(b)) && f.Tight(f.Local(c)))) continue;
                 bandTriangles++;
                 worstBand = MathF.Max(worstBand, worst);
                 if (worst > Doll.SeatError + 0.001f + 1e-4f) overBand++;
             }
         }
-        Console.WriteLine($"PUPPET worst error: bodies {worstBody * 1000:F1} mm of {Doll.FacetError * 1000:F0}, {bandTriangles} seat-band triangles {worstBand * 1000:F1} mm of {Doll.SeatError * 1000:F0} + 1, balls {worstBall * 1000:F1} mm of {Doll.BallError * 1000:F0}");
+        Console.WriteLine($"PUPPET worst error: bodies {worstBody * 1000:F1} mm of {Doll.FacetError * 1000:F0} (less for thin pieces), {bandTriangles} seat-band triangles {worstBand * 1000:F1} mm of {Doll.SeatError * 1000:F0} + 1, balls {worstBall * 1000:F1} mm of {Doll.BallError * 1000:F0}");
         check(bandTriangles > 100, $"the seat band check is vacuous: {bandTriangles} triangles");
-        check(over == 0, $"{over} body triangles stray further from their piece's surface than FacetError allows (worst {worstBody * 1000:F1} mm)");
+        check(over == 0, $"{over} body triangles stray further from their piece's surface than its error allows (worst {worstBody * 1000:F1} mm)");
         check(overBand == 0, $"{overBand} of {bandTriangles} triangles in the seat band stray more than SeatError + 1 mm from their piece's surface (worst {worstBand * 1000:F1} mm)");
         check(overBall == 0, $"{overBall} ball points stray further from their sphere than BallError allows (worst {worstBall * 1000:F1} mm)");
     }
