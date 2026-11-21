@@ -32,13 +32,19 @@ F=client/PuppetField.cs; D=client/PuppetDoll.cs
 mutant seam-10mm            $D 's/Seam = 0.002f/Seam = 0.010f/'                 "from its ball"
 mutant seat-band-0          $D 's/SeatBand = 0.015f/SeatBand = 0f/'             "from its ball"
 mutant seat-error-40mm      $D 's/SeatError = 0.005f/SeatError = 0.040f/'       "from its ball"
-mutant ball-inscribed       $F 's/return MathF.Abs(math.length(p) - _radius) <= Doll.BallError;/{ float r = math.length(p) - _radius; return r <= 0.0002f \&\& r >= -0.010f; }/' "from its ball"
+mutant ball-inscribed       $F 's/return MathF.Abs(PieceCut.Core(p, _roll) - _radius) <= Doll.BallError;/{ float r = PieceCut.Core(p, _roll) - _radius; return r <= 0.0002f \&\& r >= -0.010f; }/' "from its ball"
 # FacetError does not own the seat: at 40 mm the mesher check (an inward face) catches it, and the seat check must not.
 mutant facet-error-40mm     $D 's/FacetError = 0.02f/FacetError = 0.04f/'       "face into their piece" "from its ball"
-mutant ball-bone-child      $F 's/new PieceField(n + j, joint.A, o, radius)/new PieceField(n + j, joint.B, o, radius)/' "do not follow their joint's parent"
-mutant ball-bone-root       $F 's/new PieceField(n + j, joint.A, o, radius)/new PieceField(n + j, 0, o, radius)/'       "do not follow their joint's parent"
+mutant ball-bone-child      $F 's/new PieceField(n + j, joint.A, o, radius, inBind)/new PieceField(n + j, joint.B, o, radius, inBind)/' "do not follow their joint's parent"
+mutant ball-bone-root       $F 's/new PieceField(n + j, joint.A, o, radius, inBind)/new PieceField(n + j, 0, o, radius, inBind)/'       "do not follow their joint's parent"
 mutant seam-0               $D 's/Seam = 0.002f/Seam = 0f/'                     "inside a joint ball's radius"
 mutant thigh-078            $D 's/DollPrim.Cone(V(0, .2f, 0), .07f, V(0, -.22f, 0), .05f)/DollPrim.Cone(V(0, .2f, 0), .078f, V(0, -.22f, 0), .05f)/' "fold"
+# The hands: a limb 5 mm short of its ball, a palm with no entry, ThinError off, a roll's clearance by point distance, and the thin error leaking into the other pieces
+mutant palm-5mm-short       $D 's/DollPrim.Box(V(0, -.004f, 0), V(.0155f, .045f, .04f), .011f)/DollPrim.Box(V(0, -.004f, 0), V(.0155f, .040f, .04f), .011f)/' "stop short of it"
+mutant no-palm-entry        $D 's/new(Box3DSoaKind.Box, V(.014f, .045f, .04f), new\[\]/new(Box3DSoaKind.Box, V(.0141f, .045f, .04f), new[]/' "of the palm bodies are drawn as their fallback"
+mutant thin-error-off       $D 's/ThinError = 0.5f/ThinError = 100f/'           "fewer than 8 triangles"
+mutant roll-clearance-point $F 's/if (c.Off(p) < c.BallRadius + 0.0002f) return false;/if (math.length(p - c.Origin) < c.BallRadius + 0.0002f) return false;/' "inside a joint ball's radius"
+mutant facet-error-19mm     $D 's/FacetError = 0.02f/FacetError = 0.019f/'       "the hands must not change changed"
 
 P=client/PuppetPieces.cs; M=client/PuppetModel.cs
 mutant no-cache             $P 's/Cache.GetOrAdd(key, _ =>/Cache.GetOrAdd(new PieceKey(System.Guid.NewGuid().ToString()), _ =>/' "piece meshes"

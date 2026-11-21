@@ -249,13 +249,13 @@ public sealed class PieceField
 
     /// <summary>
     /// Where a decimated surface point may lie, the one owner of the error map: a ball within <see cref="Doll.BallError"/> of its sphere, either way; a body within
-    /// <see cref="Doll.SeatError"/> of its field under the tight rule (never looser than <see cref="Error"/>) and <see cref="Error"/> otherwise, and never within a ball's radius + 0.2 mm
+    /// <see cref="Doll.SeatError"/> of its field under the tight rule and <see cref="Error"/> otherwise, and never within a ball's radius + 0.2 mm
     /// of its core (the origin, or a roll's segment).
     /// </summary>
     public bool Allowed(float3 p, bool tight)
     {
         if (IsBall) return MathF.Abs(PieceCut.Core(p, _roll) - _radius) <= Doll.BallError;
-        if (MathF.Abs(Value(p)) > (tight ? MathF.Min(Doll.SeatError, Error) : Error)) return false;
+        if (MathF.Abs(Value(p)) > (tight ? Doll.SeatError : Error)) return false;
         foreach (var c in _cuts) if (c.Off(p) < c.BallRadius + 0.0002f) return false;
         return true;
     }

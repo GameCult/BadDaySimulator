@@ -144,10 +144,16 @@ public static class Doll
         }, 0.072f),
         new(Box3DSoaKind.Sphere, V(.11f, 0, 0), new[] { DollPrim.Ellipsoid(V(0, .015f, -.005f), V(.085f, .108f, .095f)), DollPrim.Cone(V(0, -.02f, .015f), .06f, V(0, -.075f, .045f), .033f) }, 0.036f),
         new(Box3DSoaKind.Capsule, V(.045f, .11f, 0), new[] { DollPrim.Cone(V(0, .125f, 0), .05f, V(0, -.12f, 0), .037f) }, 0.05f),
-        new(Box3DSoaKind.Capsule, V(.04f, .10f, 0), new[] { DollPrim.Cone(V(0, .115f, 0), .036f, V(0, -.09f, 0), .03f), DollPrim.Ellipsoid(V(0, -.155f, .005f), V(.03f, .058f, .042f)) }, 0.038f),
+        new(Box3DSoaKind.Capsule, V(.04f, .10f, 0), new[] { DollPrim.Cone(V(0, .115f, 0), .036f, V(0, -.105f, 0), .027f) }, 0.038f),
         new(Box3DSoaKind.Capsule, V(.07f, .18f, 0), new[] { DollPrim.Cone(V(0, .2f, 0), .07f, V(0, -.22f, 0), .05f) }, 0.07f),
         new(Box3DSoaKind.Capsule, V(.06f, .17f, 0), new[] { DollPrim.Cone(V(0, .2f, 0), .05f, V(0, -.2f, 0), .035f), DollPrim.Ellipsoid(V(0, .08f, -.012f), V(.05f, .1f, .055f)) }, 0.05f),
         new(Box3DSoaKind.Box, V(.05f, .04f, .12f), new[] { DollPrim.Ellipsoid(V(0, 0, -.005f), V(.045f, .038f, .105f)), DollPrim.Cone(V(0, .01f, -.08f), .036f, V(0, -.015f, .1f), .02f) }, 0.034f),
+        // The hands (ruling puppet-hands-thumb-palm-fingers): the forearm ends at the wrist ball; the palm runs from the wrist (y +.045) to the knuckles (y -.045); the thumb from its
+        // CMC ball (y +.05) down its metacarpal; the fingers from the knuckle (y +.0425) down. Sockets only on the hand joints (doll-pieces-hug-balls), and the knuckle ball is a roll
+        // across the hand (doll-knuckle-roll) that palm and fingers hug.
+        new(Box3DSoaKind.Box, V(.014f, .045f, .04f), new[] { DollPrim.Box(V(0, -.004f, 0), V(.0155f, .045f, .04f), .011f), DollPrim.Ellipsoid(V(0, .028f, 0), V(.014f, .022f, .03f)) }, 0.022f),
+        new(Box3DSoaKind.Capsule, V(.011f, .03f, 0), new[] { DollPrim.Cone(V(0, .05f, 0), .0135f, V(0, -.032f, 0), .0105f) }, 0.012f),
+        new(Box3DSoaKind.Box, V(.011f, .0425f, .038f), new[] { DollPrim.Box(V(0, .002f, 0), V(.0115f, .044f, .037f), .0095f) }, 0.0125f, V(0, 0, 1), 0.028f),
     };
 
     /// <summary>The entry that dresses a body of this physics shape, or null.</summary>

@@ -12,7 +12,7 @@ public readonly record struct PieceKey(string Id);
 
 /// <summary>
 /// The piece meshes, engine-free, by key: a piece's mesh (in its own frame) is built once per process on the thread pool and never edited, so the doll's
-/// twenty-five pieces cost its fourteen distinct shapes, a crowd of forty spheres costs one, and a second build of the same doll costs none. No eviction:
+/// thirty-seven pieces cost its twenty-one distinct shapes, a crowd of forty spheres costs one, and a second build of the same doll costs none. No eviction:
 /// the keys are authored shapes (<see cref="Doll"/>), not poses.
 /// </summary>
 public static class PuppetPieces

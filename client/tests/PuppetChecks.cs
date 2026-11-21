@@ -173,6 +173,10 @@ public static class PuppetChecks
         Clearance(puppet, fields, triangles, Check);
         BallsFollowTheirParent(puppet, real.Count, Check);
         Seated(puppet, fields, triangles, Check);
+        HandsArePieces(puppet, real, fields, Check);
+        ThinPiecesKeepTheirShape(real, fields, triangles, Check);
+        ExistingPiecesUnchanged(fields, Check);
+        HandsHug(puppet, fields, triangles, Check);
         WithinTheError(puppet, fields, triangles, Check);
         LimbsKept(puppet, fields, triangles, Check);
         Mesher(puppet, triangles, Check);
@@ -180,6 +184,9 @@ public static class PuppetChecks
         SkinnedSurface(puppet, Check);
         FoldHasNoCrease(Check);
     }
+
+    /// <summary>The doll's other balls are 34 mm or more; a ball under this radius belongs to a hand (the wrist ball is 22 mm) and is judged by <see cref="HandsHug"/>, not by the seat's mm-scale bounds.</summary>
+    private const float HandBall = 0.03f;
 
     /// <summary>The corner slot's vertex, in the bind.</summary>
     private static float3 At(PuppetShape shape, int slot) => shape.Vertices[shape.Corners[slot]];
@@ -257,6 +264,134 @@ public static class PuppetChecks
         check(wrong == 0, $"{wrong} of {vertices} ball vertices do not follow their joint's parent body");
     }
 
+    /// <summary>The hand's three bodies as the doll keys them (ruling puppet-hands-thumb-palm-fingers): by physics shape, never by name.</summary>
+    private static readonly (string Name, Box3DSoaKind Kind, float3 Size)[] HandBodies =
+    {
+        ("palm", Box3DSoaKind.Box, new float3(.014f, .045f, .04f)),
+        ("thumb", Box3DSoaKind.Capsule, new float3(.011f, .03f, 0f)),
+        ("fingers", Box3DSoaKind.Box, new float3(.011f, .0425f, .038f)),
+    };
+
+    /// <summary>The puppet is 37 pieces (19 bodies, 18 balls; PiecesAreSeparate holds each closed), and every palm, thumb and fingers body is dressed by its doll entry, not drawn as its physics shape.</summary>
+    private static void HandsArePieces(PuppetShape shape, List<PuppetBody> bodies, PieceField[] fields, Action<bool, string> check)
+    {
+        check(shape.PieceCount == 37, $"the puppet is {shape.PieceCount} pieces, not the 37 of 19 bodies and 18 balls");
+        foreach (var (name, kind, size) in HandBodies)
+        {
+            var mine = Enumerable.Range(0, bodies.Count).Where(i => bodies[i].Kind == kind && math.length(bodies[i].Size - size) <= 1e-4f).ToArray();
+            check(mine.Length == 2, $"{mine.Length} {name} bodies, not two");
+            int fallback = mine.Count(i => !fields[i].Key.Id.StartsWith("entry "));
+            check(fallback == 0, $"{fallback} of the {name} bodies are drawn as their fallback physics shape, not by a doll entry");
+        }
+    }
+
+    /// <summary>
+    /// Thin pieces keep their shape: a body under 40 mm thick has a facet error of ThinError of its thickness (the vertices, centroids and midpoints within it are
+    /// WithinTheError's) and at least eight triangles (at FacetError the probe's fingers fell to 2 and the palm to 8). Vacuous under six thin bodies (two hands of three).
+    /// </summary>
+    private static void ThinPiecesKeepTheirShape(List<PuppetBody> bodies, PieceField[] fields, int[][] triangles, Action<bool, string> check)
+    {
+        int thin = 0, wrongError = 0, few = 0;
+        for (int i = 0; i < bodies.Count; i++)
+        {
+            float thickness = PuppetField.Thickness(bodies[i].Kind, bodies[i].Size);
+            if (thickness >= 0.04f) continue;
+            thin++;
+            if (MathF.Abs(fields[i].Error - MathF.Min(Doll.FacetError, Doll.ThinError * thickness)) > 1e-6f) wrongError++;
+            if (triangles[i].Length < 8) few++;
+        }
+        check(thin >= 6, $"the thin piece check is vacuous: {thin} bodies under 40 mm, not six");
+        check(wrongError == 0, $"{wrongError} thin bodies have an error other than FacetError or ThinError of their thickness");
+        check(few == 0, $"{few} thin bodies decimated to fewer than 8 triangles: their shape is lost");
+    }
+
+    /// <summary>
+    /// The meshes of the pieces the hands did not touch, as the doll made them before the hands (every body and ball but the forearms, which lose their mitten, and the hands):
+    /// per piece key, the vertex and triangle counts and a sum of the vertices to 0.1 mm. A piece of those keys that differs was changed by the hands; the pieces are a pure function of their key.
+    /// </summary>
+    private static readonly (string Key, int Vertices, int Triangles, long Sum)[] BeforeTheHands =
+    {
+        ("ball 340", 17, 30, 2662395357964981027), ("ball 360", 17, 30, -5792559409839439423), ("ball 380", 18, 32, -4419817509474853178),
+        ("ball 500", 24, 44, 7200472121594289660), ("ball 700", 33, 62, 8337367169922813364), ("ball 720", 32, 60, 459400065258429355),
+        ("entry 0|-900,-700,0,700;0,800,0,720;900,-700,0,700", 87, 170, 8281621657712494562),
+        ("entry 1|-2100,1400,0,500;0,-2200,0,720;0,2200,0,360;2100,1400,0,500", 72, 140, -6458902082010238553),
+        ("entry 2|0,-1100,0,360", 21, 38, -4950703998283759519), ("entry 3|0,-1550,0,380;0,1550,0,500", 17, 30, -7670264571177566577),
+        ("entry 5|0,-2500,0,500;0,2500,0,700", 43, 82, 2598061049774360997), ("entry 6|0,-2300,0,340;0,2300,0,500", 25, 46, 3412638719505470267),
+        ("entry 7|0,400,-500,340", 22, 40, 4538328027949402287),
+    };
+
+    private static long MeshSum(float3[] v)
+    {
+        long h = 0;
+        foreach (var q in v) h = h * 31 + (long)MathF.Round(q.x * 1e4f) * 7 + (long)MathF.Round(q.y * 1e4f) * 13 + (long)MathF.Round(q.z * 1e4f);
+        return h;
+    }
+
+    /// <summary>Every piece but the hands and the forearms is the mesh it was before the hands (<see cref="BeforeTheHands"/>); vacuous under 20 pieces compared.</summary>
+    private static void ExistingPiecesUnchanged(PieceField[] fields, Action<bool, string> check)
+    {
+        int compared = 0; var changed = new List<string>();
+        foreach (var f in fields)
+            foreach (var (key, vertices, triangles, sum) in BeforeTheHands)
+            {
+                if (key != f.Key.Id) continue;
+                compared++;
+                var (v, t) = PuppetPieces.Get(f.Key, f).Result;
+                if (v.Length != vertices || t.Length / 3 != triangles || MeshSum(v) != sum) changed.Add(key);
+            }
+        check(compared >= 20, $"the unchanged-pieces check is vacuous: {compared} pieces compared, under 20");
+        check(changed.Count == 0, $"pieces the hands must not change changed: {string.Join("; ", changed.Distinct())}");
+    }
+
+    /// <summary>
+    /// Hands hug their balls (ruling doll-pieces-hug-balls, doll-knuckle-roll): at rest every limb at a hand ball seats against it. The ball's true surface (the sphere, or the roll: its two end
+    /// caps and its side) is sampled 4000 times; the share of it within Seam + 1 mm of a neighbouring piece's mesh is that piece's seat, at least HugShare. A limb that stops short of
+    /// its ball has no seat, and the share is what a cup holds, not a single touching point. Vacuous under 12 sides of hand joints.
+    /// </summary>
+    private static void HandsHug(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
+    {
+        const int count = 2000; const float near = Doll.Seam + 0.001f;
+        var dirs = new float3[count];
+        for (int i = 0; i < count; i++) { float z = 1 - 2f * (i + 0.5f) / count, r = MathF.Sqrt(1 - z * z), ph = i * 2.399963f; dirs[i] = new float3(r * MathF.Cos(ph), r * MathF.Sin(ph), z); }
+        int bodies = shape.Ids.Length, sides = 0, bare = 0; float least = float.MaxValue;
+        for (int j = 0; j < shape.Joints.Length; j++)
+        {
+            float radius = shape.BallRadius[j];
+            if (radius >= HandBall) continue;
+            var (_, a, b, o) = shape.Joints[j];
+            var roll = fields[bodies + j].Roll;
+            var surface = new List<float3>();
+            if (math.lengthsq(roll) == 0) foreach (var u in dirs) surface.Add(o + u * radius);
+            else
+            {
+                // the capsule about the segment o +- roll: two end caps, and the side as rings about the roll's axis
+                foreach (var u in dirs) surface.Add(o + (math.dot(u, roll) >= 0 ? roll : -roll) + u * radius);
+                var along = math.normalize(roll); var e1 = math.normalize(math.cross(along, math.abs(along.y) < 0.9f ? new float3(0, 1, 0) : new float3(1, 0, 0))); var e2 = math.cross(along, e1);
+                for (int k = 0; k <= 20; k++) for (int m = 0; m < 100; m++)
+                    { float ph = m * 6.2831853f / 100; surface.Add(o + roll * (2f * k / 20 - 1) + (e1 * MathF.Cos(ph) + e2 * MathF.Sin(ph)) * radius); }
+            }
+            foreach (int body in new[] { a, b })
+            {
+                int hug = 0;
+                foreach (var p in surface)
+                {
+                    float gap = float.MaxValue;
+                    foreach (int t in triangles[body]) gap = MathF.Min(gap, PuppetDecimate.PointTriangle(p, At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2)));
+                    if (gap <= near) hug++;
+                }
+                float share = hug / (float)surface.Count;
+                sides++; least = MathF.Min(least, share);
+                if (share < HugShare) bare++;
+            }
+        }
+        Console.WriteLine($"PUPPET hands hug: {sides} hand sides, least seat {least * 100:F1}% of {HugShare * 100:F0}%");
+        check(sides >= 12, $"the hands' hug check is vacuous: {sides} sides of hand joints, under 12");
+        check(bare == 0, $"{bare} limbs at hand balls seat on under {HugShare * 100:F0}% of their ball within Seam + 1 mm (least {least * 100:F1}%): they stop short of it");
+    }
+
+    /// <summary>The share of a hand ball's surface a limb's mesh must lie within Seam + 1 mm of, per side: derived from the shipped hands and the palm mutant (a limb 5 mm short seats on none).</summary>
+    private const float HugShare = 0.05f;
+
     /// <summary>The distance along the ray from <paramref name="o"/> in direction <paramref name="d"/> to the first of the piece's triangles it crosses, or infinity.</summary>
     private static float FirstHit(PuppetShape shape, int[] piece, float3 o, float3 d)
     {
@@ -291,6 +426,7 @@ public static class PuppetChecks
         int sides = 0, loose = 0, tooFar = 0; float worstMedian = 0, worstMax = 0;
         for (int j = 0; j < shape.Joints.Length; j++)
         {
+            if (shape.BallRadius[j] < HandBall) continue;
             var (_, a, b, o) = shape.Joints[j];
             int ball = shape.Ids.Length + j; float socket = shape.BallRadius[j] + Doll.Seam;
             foreach (int body in new[] { a, b })
