@@ -144,7 +144,7 @@ public sealed class PieceField
     /// <summary>How far (m) a body piece's surface may stray from its field away from the sockets: <see cref="Doll.FacetError"/>, less for a thin body (<see cref="Doll.ThinError"/>).</summary>
     public float Error { get; }
 
-    internal PieceField(int index, int bone, DollPrim[] prims, string shape, Rigid bind, float error, float cell = 0)
+    internal PieceField(int index, int bone, DollPrim[] prims, string shape, Rigid bind, float error)
     {
         Index = index; Bone = bone; _prims = prims; _shape = shape; Placement = bind; Error = error;
         var lo = new float3(float.MaxValue, float.MaxValue, float.MaxValue); var hi = -lo;
@@ -156,7 +156,7 @@ public sealed class PieceField
             thinnest = MathF.Min(thinnest, p.Thickness);
         }
         Lo = lo; Hi = hi;
-        Cell = cell > 0 ? cell : MathF.Min(Doll.BodyCell, thinnest / 2);
+        Cell = MathF.Min(Doll.BodyCell, thinnest / 2);
     }
 
     internal PieceField(int index, int bone, float3 origin, float radius, float3 roll = default)
@@ -298,7 +298,7 @@ public static class PuppetField
             var entry = Doll.Find(bodies[i].Kind, bodies[i].Size);
             string shape = entry is null ? $"{bodies[i].Kind} {MathF.Round(bodies[i].Size.x * 1e4f)} {MathF.Round(bodies[i].Size.y * 1e4f)} {MathF.Round(bodies[i].Size.z * 1e4f)}" : $"entry {Array.IndexOf(Doll.Entries, entry)}";
             float error = MathF.Min(Doll.FacetError, Doll.ThinError * Thickness(bodies[i].Kind, bodies[i].Size));
-            fields[i] = new PieceField(i, i, entry?.Prims ?? Doll.Fallback(bodies[i].Kind, bodies[i].Size), shape, bodies[i].Bind, error, entry?.Cell ?? 0);
+            fields[i] = new PieceField(i, i, entry?.Prims ?? Doll.Fallback(bodies[i].Kind, bodies[i].Size), shape, bodies[i].Bind, error);
         }
         for (int j = 0; j < joints.Count; j++)
         {

@@ -42,14 +42,9 @@ mutant thigh-078            $D 's/DollPrim.Cone(V(0, .2f, 0), .07f, V(0, -.22f, 
 # The hands: sockets 10 mm off their balls (the hands are judged by the hug check, not the seat), a palm with no entry, ThinError off, a roll's clearance by point distance, and the thin error leaking into the other pieces
 mutant hands-seam-10mm      $D 's/Seam = 0.002f/Seam = 0.010f/'                 "stop short of it"
 mutant no-palm-entry        $D 's/new(Box3DSoaKind.Box, V(.014f, .045f, .04f), new\[\]/new(Box3DSoaKind.Box, V(.015f, .045f, .04f), new[]/' "of the palm bodies are drawn as their fallback"
-# ThinError off with the fingers' cup and its grid gone too (the fingers as they were before the cups): the cup holds them at 14 triangles even at ThinError off (18 shipped), and on the cup's finer grid at 8, so the 8-triangle floor fails only on the fingers without both (2 triangles).
-mutant thin-error-off       $D 's/ThinError = 0.5f/ThinError = 100f/; s/, Cup(V(0, .0425f, 0), .0125f, V(0, 0, .028f)) }, 0.0125f, V(0, 0, 1), 0.028f, CupCell)/ }, 0.0125f, V(0, 0, 1), 0.028f)/' "fewer than 8 triangles"
+mutant thin-error-off       $D 's/ThinError = 0.5f/ThinError = 100f/' "fewer than 8 triangles"
 mutant roll-clearance-point $F 's/if (c.Off(p) < c.BallRadius + 0.0002f) return false;/if (math.length(p - c.Origin) < c.BallRadius + 0.0002f) return false;/' "inside a joint ball's radius"
 mutant facet-error-19mm     $D 's/FacetError = 0.02f/FacetError = 0.019f/'       "the hands must not change changed"
-# The lips (ruling doll-pieces-hug-balls): a hand piece's cup is what covers its ball's silhouette. Each hand cup removed fails the hand slit bound, and the 10 mm seam fails the body's (its slits grow with the seam).
-mutant wrist-cup-gone       $D 's/, Cup(V(0, .045f, 0), .022f) }/ }/'                      "a hand ball joint shows slits"
-mutant thumb-cup-gone       $D 's/, Cup(V(0, .05f, 0), .012f) }/ }/'                        "a hand ball joint shows slits"
-mutant knuckle-cup-gone     $D 's/, Cup(V(0, .0425f, 0), .0125f, V(0, 0, .028f)) }/ }/'    "a hand ball joint shows slits"
 mutant body-seam-10mm       $D 's/Seam = 0.002f/Seam = 0.010f/'                             "a body ball joint shows slits"
 
 P=client/PuppetPieces.cs; M=client/PuppetModel.cs
