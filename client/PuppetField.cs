@@ -90,8 +90,8 @@ public sealed class PuppetShape
     public int PieceCount => Ids.Length + Joints.Length;
 }
 
-/// <summary>A cut on a body piece at a joint: the socket the ball fills. A roll (<see cref="DollEntry.RollAxis"/>) is the segment Origin +- Roll swept by the ball's radius; no roll is a sphere.</summary>
-public sealed record PieceCut(float3 Origin, float BallRadius, float3 Roll = default)
+/// <summary>A cut on a body piece at a joint: the socket the ball fills, or, when <paramref name="Filled"/>, the socket the piece's own cup fills (<see cref="DollEntry.Cupped"/>): not carved, but the surface still keeps the ball's clearance. A roll (<see cref="DollEntry.RollAxis"/>) is the segment Origin +- Roll swept by the ball's radius; no roll is a sphere.</summary>
+public sealed record PieceCut(float3 Origin, float BallRadius, float3 Roll = default, bool Filled = false)
 {
     public float SocketRadius => BallRadius + Doll.Seam;
 
@@ -200,7 +200,7 @@ public sealed class PieceField
     {
         if (IsBall) return PieceCut.Core(p, _roll) - _radius;
         float d = Body(p);
-        foreach (var c in _cuts) d = MathF.Max(d, c.SocketRadius - c.Off(p));
+        foreach (var c in _cuts) if (!c.Filled) d = MathF.Max(d, c.SocketRadius - c.Off(p));
         return d;
     }
 
@@ -310,7 +310,7 @@ public static class PuppetField
             var inBind = math.mul(bodies[joint.B].Bind.R, inChild);
             fields[n + j] = new PieceField(n + j, joint.A, o, radius, inBind);
             fields[joint.A].Cut(new PieceCut(joint.LocalOrigin, radius, math.mul(bodies[joint.A].Bind.Inverse().R, inBind)));
-            fields[joint.B].Cut(new PieceCut(bodies[joint.B].Bind.Inverse().Apply(o), radius, inChild));
+            fields[joint.B].Cut(new PieceCut(bodies[joint.B].Bind.Inverse().Apply(o), radius, inChild, child is { Cupped: true }));
         }
         return new PieceSet(bodies, joints, fields);
     }

@@ -77,8 +77,9 @@ public sealed record DollPrim(DollShape Shape, float3 A, float3 B, float Ra, flo
 /// <param name="BallRadius">The radius (m) of the ball at the joint to the parent, or 0 for a body with no joint to a parent of its own.</param>
 /// <param name="RollAxis">A hinge ball stretched along the hinge axis into a roll (ruling doll-knuckle-roll), as a unit vector in this body's own frame, or zero for a sphere.</param>
 /// <param name="RollHalf">Half the roll's length (m) between its two end centres; the ball is the segment of this half-length about the joint origin, swept by <paramref name="BallRadius"/>.</param>
+/// <param name="Cupped">The body wears a cup (<see cref="Doll.Lip"/>) round the ball at its joint to its parent, and the cup is solid: its socket is not carved. A carved cup is a 7 mm shell round a void, and a void is a surface the mesher either drops (the thumb's and fingers') or keeps as a second sheet that the decimator tangles with the skin (the palm's: rays from outside then met the cavity wall's back, ruling doll-pieces-hug-balls). Solid, the ball lies inside the piece and no surface looks into it.</param>
 /// <param name="Cell">The grid (m) the body is extracted on, or 0 for <see cref="Doll.BodyCell"/> (half the thinnest primitive where that is less). A body with a cup (<see cref="Doll.Lip"/>) has a wall of a few millimetres, which one vertex per cell cannot hold open at <see cref="Doll.BodyCell"/>.</param>
-public sealed record DollEntry(Box3DSoaKind Kind, float3 Size, DollPrim[] Prims, float BallRadius = 0, float3 RollAxis = default, float RollHalf = 0, float Cell = 0)
+public sealed record DollEntry(Box3DSoaKind Kind, float3 Size, DollPrim[] Prims, float BallRadius = 0, float3 RollAxis = default, float RollHalf = 0, float Cell = 0, bool Cupped = false)
 {
     public bool Matches(Box3DSoaKind kind, float3 size) => kind == Kind && math.length(size - Size) <= 1e-4f;
 }
@@ -167,9 +168,9 @@ public static class Doll
         // The hands (ruling puppet-hands-thumb-palm-fingers): the forearm ends at the wrist ball; the palm runs from the wrist (y +.045) to the knuckles (y -.045); the thumb from its
         // CMC ball (y +.05) down its metacarpal; the fingers from the knuckle (y +.0425) down. Sockets only on the hand joints (doll-pieces-hug-balls), and the knuckle ball is a roll
         // across the hand (doll-knuckle-roll) that palm and fingers hug. Each hand piece carries a cup (<see cref="Lip"/>) round the ball at its joint to its parent: the palm's wrist, the thumb's CMC, the fingers' knuckle roll.
-        new(Box3DSoaKind.Box, V(.014f, .045f, .04f), new[] { DollPrim.Box(V(0, -.004f, 0), V(.0155f, .045f, .04f), .011f), DollPrim.Ellipsoid(V(0, .028f, 0), V(.014f, .022f, .03f)), Cup(V(0, .045f, 0), .022f) }, 0.022f, Cell: CupCell),
-        new(Box3DSoaKind.Capsule, V(.011f, .03f, 0), new[] { DollPrim.Cone(V(0, .05f, 0), .0135f, V(0, -.032f, 0), .0105f), Cup(V(0, .05f, 0), .012f) }, 0.012f, Cell: CupCell),
-        new(Box3DSoaKind.Box, V(.011f, .0425f, .038f), new[] { DollPrim.Box(V(0, .002f, 0), V(.0115f, .044f, .037f), .0095f), Cup(V(0, .0425f, 0), .0125f, V(0, 0, .028f)) }, 0.0125f, V(0, 0, 1), 0.028f, CupCell),
+        new(Box3DSoaKind.Box, V(.014f, .045f, .04f), new[] { DollPrim.Box(V(0, -.004f, 0), V(.0155f, .045f, .04f), .011f), DollPrim.Ellipsoid(V(0, .028f, 0), V(.014f, .022f, .03f)), Cup(V(0, .045f, 0), .022f) }, 0.022f, Cell: CupCell, Cupped: true),
+        new(Box3DSoaKind.Capsule, V(.011f, .03f, 0), new[] { DollPrim.Cone(V(0, .05f, 0), .0135f, V(0, -.032f, 0), .0105f), Cup(V(0, .05f, 0), .012f) }, 0.012f, Cell: CupCell, Cupped: true),
+        new(Box3DSoaKind.Box, V(.011f, .0425f, .038f), new[] { DollPrim.Box(V(0, .002f, 0), V(.0115f, .044f, .037f), .0095f), Cup(V(0, .0425f, 0), .0125f, V(0, 0, .028f)) }, 0.0125f, V(0, 0, 1), 0.028f, CupCell, true),
     };
 
     /// <summary>The entry that dresses a body of this physics shape, or null.</summary>

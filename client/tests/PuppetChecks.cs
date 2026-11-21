@@ -178,6 +178,7 @@ public static class PuppetChecks
         ExistingPiecesUnchanged(fields, Check);
         HandsHug(puppet, fields, triangles, Check);
         NoSlits(puppet, triangles, Check);
+        NothingSeenInside(puppet, fields, triangles, Check);
         WithinTheError(puppet, fields, triangles, Check);
         LimbsKept(puppet, fields, triangles, Check);
         Mesher(puppet, triangles, Check);
@@ -378,10 +379,10 @@ public static class PuppetChecks
                 {
                     float gap = float.MaxValue;
                     foreach (int t in triangles[body]) gap = MathF.Min(gap, PuppetDecimate.PointTriangle(p, At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2)));
-                    if (gap <= near) hug++;
+                    if (gap <= near || Inside(shape, triangles[body], p)) hug++;
                 }
                 float share = hug / (float)surface.Count;
-                sides++; least = MathF.Min(least, share);
+                Console.WriteLine($"DUMP hug joint {j} body {body} share {share:P1}"); sides++; least = MathF.Min(least, share);
                 if (share < HugShare) bare++;
             }
         }
@@ -390,6 +391,71 @@ public static class PuppetChecks
         check(bare == 0, $"{bare} limbs at hand balls seat on under {HugShare * 100:F0}% of their ball within Seam + 1 mm (least {least * 100:F1}%): they stop short of it");
     }
 
+
+    /// <summary>The triangles of joint <paramref name="j"/>'s ball and its two neighbouring pieces (its parent body and its child body), in the bind.</summary>
+    private static List<(float3, float3, float3)> JointTriangles(PuppetShape shape, int[][] triangles, int j)
+    {
+        var (_, a, b, _) = shape.Joints[j];
+        var tris = new List<(float3, float3, float3)>();
+        foreach (int piece in new[] { shape.Ids.Length + j, a, b })
+            foreach (int t in triangles[piece]) tris.Add((At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2)));
+        return tris;
+    }
+
+    /// <summary>
+    /// Nothing is seen inside a piece (ruling doll-pieces-hug-balls): at every ball joint of the doll at its creation pose, rays from <see cref="SeeInside.Directions"/> directions over the whole sphere meet the ball and
+    /// its two neighbours, and the area whose first hit is a back face (<see cref="SeeInside"/>) is at most <see cref="MaxSeeInside"/> mm2, the mean over the directions. Prints each joint's reading. Vacuous under 18 joints.
+    /// </summary>
+    private static void NothingSeenInside(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
+    {
+        int joints = shape.Joints.Length;
+        var mean = new float[joints]; var max = new float[joints];
+        var clock = Stopwatch.StartNew();
+        System.Threading.Tasks.Parallel.For(0, joints, j => (mean[j], max[j]) = SeeInside.Per(JointTriangles(shape, triangles, j), shape.Joints[j].Origin, shape.BallRadius[j]));
+        foreach (int j in new[] { 12, 13, 15, 14 })
+        {
+            SeeInside.Dump = true; SeeInside.Debug = new();
+            var tt = JointTriangles(shape, triangles, j); var o = shape.Joints[j].Origin;
+            SeeInside.Per(tt, o, shape.BallRadius[j]);
+            var hits = SeeInside.Debug.ToArray();
+            var byTri = hits.GroupBy(h => h.Tri).OrderByDescending(g => g.Count()).Take(8);
+            Console.WriteLine($"DUMP joint {j}: {hits.Length} back hits"); if (hits.Length == 0) continue;
+            if (j == 15) foreach (var g in byTri.Take(4)) { var (a, b, c) = tt[g.Key]; var f = fields[16]; var cen = (a + b + c) / 3f; var n = -math.normalize(math.cross(b - a, c - a)); var nl = math.mul(f.Placement.Inverse().R, n); var gr = math.normalize(f.Gradient(f.Local(cen)));
+                Console.WriteLine($"DUMP field tri {g.Key}: value at centroid {f.Value(f.Local(cen)) * 1000:F1} mm, normal.gradient {math.dot(nl, gr):F2}, area {0.5f * math.length(math.cross(b - a, c - a)) * 1e6f:F0} mm2, count {g.Count()}"); }
+            foreach (var g in byTri) { var (a, b, c) = tt[g.Key]; Console.WriteLine($"DUMP   tri {g.Key} x{g.Count()} verts r {math.length(a - o) * 1000:F1} {math.length(b - o) * 1000:F1} {math.length(c - o) * 1000:F1} rel a ({(a - o).x * 1000:F1},{(a - o).y * 1000:F1},{(a - o).z * 1000:F1}) b ({(b - o).x * 1000:F1},{(b - o).y * 1000:F1},{(b - o).z * 1000:F1}) c ({(c - o).x * 1000:F1},{(c - o).y * 1000:F1},{(c - o).z * 1000:F1})"); }
+        }
+        SeeInside.Dump = false;
+        { int j = 13; var o = shape.Joints[j].Origin; var sb = new System.Text.StringBuilder();
+          foreach (int t in triangles[14]) sb.Append($"[{math.length(At(shape, 3 * t) - o) * 1000:F0} {math.length(At(shape, 3 * t + 1) - o) * 1000:F0} {math.length(At(shape, 3 * t + 2) - o) * 1000:F0}] ");
+          Console.WriteLine("DUMP thumb radii " + sb); }
+        foreach (int j in new[] { 12, 13, 15, 16 })
+        {
+            var o = shape.Joints[j].Origin; int b = shape.Joints[j].B;
+            int pieceIdx = shape.Joints[j].B;
+            foreach (int pi in new[] { shape.Joints[j].B })
+            {
+                int inner = 0, outer = 0, mixed = 0;
+                foreach (int t in triangles[pi])
+                {
+                    var rs = new[] { math.length(At(shape, 3 * t) - o), math.length(At(shape, 3 * t + 1) - o), math.length(At(shape, 3 * t + 2) - o) };
+                    float mid = shape.BallRadius[j] + Doll.Seam + Doll.Lip / 2f;
+                    if (rs.All(r => r < mid)) inner++; else if (rs.All(r => r >= mid)) outer++; else mixed++;
+                }
+                Console.WriteLine($"DUMP piece {pi} (child of joint {j}): {triangles[pi].Length} tris, inner-sheet {inner}, outer-sheet {outer}, bridging {mixed}");
+            }
+        }
+        float worst = 0;
+        for (int j = 0; j < joints; j++)
+        {
+            Console.WriteLine($"PUPPET inside: joint {j} ({(shape.BallRadius[j] < HandBall ? "hand" : "body")}, bodies {shape.Joints[j].A}-{shape.Joints[j].B}, ball {shape.BallRadius[j] * 1000:F1} mm): mean {mean[j]:F3} mm2, worst direction {max[j]:F1}");
+            worst = MathF.Max(worst, mean[j]);
+        }
+        Console.WriteLine($"PUPPET inside: worst joint {worst:F3} mm2 of {MaxSeeInside} ({clock.ElapsedMilliseconds} ms)");
+        check(joints >= 18, $"the see-inside check is vacuous: {joints} joints, under 18");
+        check(worst <= MaxSeeInside, $"a piece is seen into: a ball joint reads {worst:F3} mm2 of first hits on a back face, over {MaxSeeInside}");
+    }
+
+    private const float MaxSeeInside = 0f;
 
     /// <summary>
     /// No slits at a ball (ruling doll-pieces-hug-balls: intersection beats a gap): at every ball joint of the doll at its creation pose, the mean over <see cref="Slits.Views"/> silhouettes of the background a
@@ -403,11 +469,7 @@ public static class PuppetChecks
         var clock = Stopwatch.StartNew();
         System.Threading.Tasks.Parallel.For(0, joints, j =>
         {
-            var (_, a, b, o) = shape.Joints[j];
-            var tris = new List<(float3, float3, float3)>();
-            foreach (int piece in new[] { bodies + j, a, b })
-                foreach (int t in triangles[piece]) tris.Add((At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2)));
-            (mean[j], max[j]) = Slits.Per(tris, o, shape.BallRadius[j]);
+            (mean[j], max[j]) = Slits.Per(JointTriangles(shape, triangles, j), shape.Joints[j].Origin, shape.BallRadius[j]);
         });
         float worstHand = 0, worstBody = 0;
         for (int j = 0; j < joints; j++)
@@ -432,6 +494,14 @@ public static class PuppetChecks
 
     /// <summary>The share of a hand ball's surface a limb's mesh must lie within Seam + 1 mm of, per side: derived from the shipped hands (the least side seats on 20.2% with the cups, 9.3% before them) and the seam mutant (sockets 10 mm off their balls seat on none).</summary>
     private const float HugShare = 0.05f;
+
+    /// <summary>Whether the point lies inside the piece's mesh: a ray from it crosses the piece's triangles an odd number of times (the pieces are closed).</summary>
+    private static bool Inside(PuppetShape shape, int[] piece, float3 p)
+    {
+        var d = math.normalize(new float3(0.5773f, 0.6021f, 0.5527f)); int crossings = 0;
+        foreach (int t in piece) if (Crosses(p, d, At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2))) crossings++;
+        return crossings % 2 == 1;
+    }
 
     /// <summary>The distance along the ray from <paramref name="o"/> in direction <paramref name="d"/> to the first of the piece's triangles it crosses, or infinity.</summary>
     private static float FirstHit(PuppetShape shape, int[] piece, float3 o, float3 d)
