@@ -422,10 +422,15 @@ public static class PuppetChecks
         check(worstBody <= MaxBodySlit, $"a body ball joint shows slits: mean {worstBody:F2} mm2 over {Slits.Views} views, over {MaxBodySlit}");
     }
 
-    /// <summary>The most slit area (mm2, mean over the views) a hand joint may show, and a body joint.</summary>
-    private const float MaxHandSlit = 2.5f, MaxBodySlit = 18f;
+    /// <summary>
+    /// The most slit area (mm2, mean over the views) a hand joint may show, and a body joint, derived as lodur:ruling:render-floors-from-mutant-power derives a floor: a bound over the shipped doll's worst
+    /// reading times 1.2 and under the least reading of the mutants that must fail it divided by 1.2. Hand joints: shipped 0.64 at most (thumb), so over 0.77; the wrist cup removed reads 18.1, the thumb's 4.6, the
+    /// knuckle's 3.7, so under 3.1; 1.5 sits between, 2.3 times over the shipped and 2.5 under the least mutant. Body joints carry no cup yet (follow-up bds-doll-hug-balls): shipped 11.4 at most (the elbows),
+    /// so over 13.7, and the 10 mm seam reads 32.1, so under 26.7; 19.
+    /// </summary>
+    private const float MaxHandSlit = 1.5f, MaxBodySlit = 19f;
 
-    /// <summary>The share of a hand ball's surface a limb's mesh must lie within Seam + 1 mm of, per side: derived from the shipped hands (the least side seats on 9.3%) and the seam mutant (sockets 10 mm off their balls seat on none).</summary>
+    /// <summary>The share of a hand ball's surface a limb's mesh must lie within Seam + 1 mm of, per side: derived from the shipped hands (the least side seats on 20.2% with the cups, 9.3% before them) and the seam mutant (sockets 10 mm off their balls seat on none).</summary>
     private const float HugShare = 0.05f;
 
     /// <summary>The distance along the ray from <paramref name="o"/> in direction <paramref name="d"/> to the first of the piece's triangles it crosses, or infinity.</summary>
