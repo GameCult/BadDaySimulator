@@ -345,12 +345,12 @@ public static class PuppetChecks
 
     /// <summary>
     /// Hands hug their balls (ruling doll-pieces-hug-balls, doll-knuckle-roll): at rest every limb at a hand ball seats against it. The ball's true surface (the sphere, or the roll: its two end
-    /// caps and its side) is sampled 4000 times; the share of it within Seam + 1 mm of a neighbouring piece's mesh is that piece's seat, at least HugShare. A limb that stops short of
+    /// caps and its side) is sampled 4000 times; the share of it within 3 mm (2 mm seam + 1 mm) of a neighbouring piece's mesh is that piece's seat, at least HugShare. A limb that stops short of
     /// its ball has no seat, and the share is what a cup holds, not a single touching point. Vacuous under 12 sides of hand joints.
     /// </summary>
     private static void HandsHug(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
     {
-        const int count = 2000; const float near = Doll.Seam + 0.001f;
+        const int count = 2000; const float near = 0.003f; // the ruling's 2 mm seam and 1 mm, fixed: the check is not to follow Doll.Seam
         var dirs = new float3[count];
         for (int i = 0; i < count; i++) { float z = 1 - 2f * (i + 0.5f) / count, r = MathF.Sqrt(1 - z * z), ph = i * 2.399963f; dirs[i] = new float3(r * MathF.Cos(ph), r * MathF.Sin(ph), z); }
         int bodies = shape.Ids.Length, sides = 0, bare = 0; float least = float.MaxValue;
@@ -389,7 +389,7 @@ public static class PuppetChecks
         check(bare == 0, $"{bare} limbs at hand balls seat on under {HugShare * 100:F0}% of their ball within Seam + 1 mm (least {least * 100:F1}%): they stop short of it");
     }
 
-    /// <summary>The share of a hand ball's surface a limb's mesh must lie within Seam + 1 mm of, per side: derived from the shipped hands and the palm mutant (a limb 5 mm short seats on none).</summary>
+    /// <summary>The share of a hand ball's surface a limb's mesh must lie within Seam + 1 mm of, per side: derived from the shipped hands (the least side seats on 9.3%) and the seam mutant (sockets 10 mm off their balls seat on none).</summary>
     private const float HugShare = 0.05f;
 
     /// <summary>The distance along the ray from <paramref name="o"/> in direction <paramref name="d"/> to the first of the piece's triangles it crosses, or infinity.</summary>
