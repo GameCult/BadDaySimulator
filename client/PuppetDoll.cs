@@ -169,7 +169,7 @@ public static class Doll
         // 14 mm half-thickness under the knuckle roll's 15, so the ball shows round where a flat shoulder would leave a wedge; the roll shows a 12 mm band between the palm (ending 6 mm short of the knuckle axis) and the fingers (starting 6 mm past it).
         new(Box3DSoaKind.Box, V(.014f, .045f, .04f), new[] { DollPrim.Box(V(0, -.0125f, 0), V(.014f, .0265f, .04f), .011f), DollPrim.Ellipsoid(V(0, .028f, 0), V(.0135f, .022f, .027f)) }, 0.026f),
         new(Box3DSoaKind.Capsule, V(.011f, .03f, 0), new[] { DollPrim.Cone(V(0, .044f, 0), .012f, V(0, -.032f, 0), .0105f) }, 0.014f),
-        new(Box3DSoaKind.Box, V(.011f, .0425f, .038f), new[] { DollPrim.Box(V(0, -.00275f, 0), V(.0115f, .03925f, .037f), .0095f) }, 0.015f, V(0, 0, 1), 0.028f),
+        new(Box3DSoaKind.Box, V(.011f, .0425f, .038f), new[] { DollPrim.Box(V(0, -.00575f, 0), V(.0115f, .03625f, .037f), .0095f) }, 0.015f, V(0, 0, 1), 0.028f),
     };
 
     /// <summary>The entry that dresses a body of this physics shape, or null.</summary>

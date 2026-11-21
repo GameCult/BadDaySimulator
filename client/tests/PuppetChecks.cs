@@ -328,6 +328,13 @@ public static class PuppetChecks
     /// </summary>
     private const float MaxSilhouetteMiss = 0.149f;
 
+    /// <summary>
+    /// How far, in units of its error, the field's surface may lie from the mesh at a thin limb that wraps a roll (the fingers at the knuckle): the farthest surface voxel (1 mm) of the field from the mesh. The roll's cut
+    /// leaves the fingers' root a dished trough between thin lips, and a box top over the trough's rim (top 14 mm over the roll's axis against 11 now) lost a lip at the root and read 2.01; shipped 1.32,
+    /// separation 1.52, bound their geometric midpoint 1.63 (lodur:ruling:deterministic-bound-margin).
+    /// </summary>
+    private const float MaxRootReach = 1.63f;
+
     /// <summary>The thickness (m) under which a thin body is judged by <see cref="MaxSilhouetteMiss"/>.</summary>
     private const float ThinnestBody = 0.012f;
 
@@ -337,7 +344,7 @@ public static class PuppetChecks
     /// </summary>
     private static void ThinPiecesKeepTheirSilhouette(PuppetShape shape, List<PuppetBody> bodies, PieceField[] fields, int[][] triangles, Action<bool, string> check)
     {
-        const float px = 0.0005f; int thin = 0, judged = 0; float worst = 0; string where = "";
+        const float px = 0.0005f; int thin = 0, judged = 0; float worst = 0; var reach = new float[bodies.Count]; int rolled = 0; float worstRoot = 0; string rootAt = ""; string where = "";
         for (int i = 0; i < bodies.Count; i++)
         {
             if (PuppetField.Thickness(bodies[i].Kind, bodies[i].Size) >= 0.04f) continue;
@@ -368,11 +375,36 @@ public static class PuppetChecks
                 for (int k = 0; k < inField.Length; k++) { if (inField[k]) field++; if (inField[k] != inMesh[k]) differ++; }
                 misses[axis] = differ / (float)Math.Max(field, 1);
             }
+            {
+                // the field's surface against the mesh: every surface voxel (1 mm) of the field, the farthest from the mesh, in units of the body's error
+                const float cell = 0.001f; int nx = (int)((hi.x - lo.x) / cell) + 1, ny = (int)((hi.y - lo.y) / cell) + 1, nz = (int)((hi.z - lo.z) / cell) + 1;
+                var inF = new bool[nx, ny, nz];
+                System.Threading.Tasks.Parallel.For(0, nx, x => { for (int y = 0; y < ny; y++) for (int z = 0; z < nz; z++) inF[x, y, z] = f.Value(lo + new float3(x + 0.5f, y + 0.5f, z + 0.5f) * cell) < 0; });
+                float far = 0; var farAt = default(float3); object gate = new();
+                System.Threading.Tasks.Parallel.For(1, nx - 1, x =>
+                {
+                    float localFar = 0; float3 at = default;
+                    for (int y = 1; y < ny - 1; y++) for (int z = 1; z < nz - 1; z++)
+                    {
+                        if (!inF[x, y, z] || (inF[x - 1, y, z] && inF[x + 1, y, z] && inF[x, y - 1, z] && inF[x, y + 1, z] && inF[x, y, z - 1] && inF[x, y, z + 1])) continue;
+                        var q = lo + new float3(x + 0.5f, y + 0.5f, z + 0.5f) * cell; float d = float.MaxValue;
+                        foreach (var (a1, b1, c1) in tris) d = MathF.Min(d, PuppetDecimate.PointTriangle(q, a1, b1, c1));
+                        if (d > localFar) { localFar = d; at = q; }
+                    }
+                    lock (gate) if (localFar > far) { far = localFar; farAt = at; }
+                });
+                reach[i] = far;
+                Console.WriteLine($"PUPPET thin reach: body {i}: the field's surface is at most {far * 1000:F1} mm from the mesh ({far / f.Error:F2} of its error {f.Error * 1000:F2} mm) at ({farAt.x * 1000:F0}, {farAt.y * 1000:F0}, {farAt.z * 1000:F0})");
+                if (f.Cuts.Count > 0 && f.Cuts.All(c => math.lengthsq(c.Roll) > 0) && PuppetField.Thickness(bodies[i].Kind, bodies[i].Size) < ThinnestBody) { rolled++; if (far / f.Error > worstRoot) { worstRoot = far / f.Error; rootAt = $"body {i}"; } }
+            }
             float mean = misses.Average();
             if (PuppetField.Thickness(bodies[i].Kind, bodies[i].Size) < ThinnestBody) { judged++; if (mean > worst) { worst = mean; where = $"body {i}"; } }
             Console.WriteLine($"PUPPET thin silhouette: body {i} ({bodies[i].Kind}, {triangles[i].Length} triangles): miss along x {misses[0] * 100:F1}%, y {misses[1] * 100:F1}%, z {misses[2] * 100:F1}%, mean {mean * 100:F1}%");
         }
         Console.WriteLine($"PUPPET thin silhouettes: {thin} thin bodies, {judged} judged, worst mean miss {worst * 100:F1}% of {MaxSilhouetteMiss * 100:F1}% ({where})");
+        Console.WriteLine($"PUPPET root reach: {rolled} thin limbs wrapping a roll, the field's surface at most {worstRoot:F2} of the error from the mesh (of {MaxRootReach}; {rootAt})");
+        check(rolled >= 2, $"the root reach check is vacuous: {rolled} thin limbs wrapping a roll, under 2");
+        check(worstRoot <= MaxRootReach, $"a thin limb's root does not wrap its roll: the field's surface is {worstRoot:F2} of its error from the mesh ({rootAt}), over {MaxRootReach}: the root is caved or has a window");
         check(thin >= 6 && judged >= 4, $"the thin silhouette check is vacuous: {thin} bodies under 40 mm and {judged} under {ThinnestBody * 1000:F0} mm, not six and four");
         check(worst <= MaxSilhouetteMiss, $"a thin body's mesh silhouette differs from its field's by {worst * 100:F1}% on average over its three axes ({where}), over {MaxSilhouetteMiss * 100:F1}%: its shape is lost");
     }

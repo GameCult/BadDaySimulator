@@ -52,6 +52,8 @@ mutant roll-sphere          $D 's/0.015f, V(0, 0, 1), 0.028f)/0.015f, V(0, 0, 1)
 mutant seat-share-off       $D 's/SeatShare = 0.15f/SeatShare = 100f/' "a ball joint shows slits"
 mutant limb-end-over-ball   $D 's/V(.0135f, .022f, .027f)/V(.0135f, .022f, .034f)/' "a ball joint shows slits"
 mutant palm-top-open        $D 's/DollPrim.Box(V(0, -.0125f, 0), V(.014f, .0265f, .04f), .011f)/DollPrim.Box(V(0, -.0175f, 0), V(.014f, .0215f, .04f), .011f)/' "shows the inside of a piece"
+# The fingers' root over the roll's trough rim (the box top at 14 mm over the axis, not 11): a lip of the root is lost.
+mutant fingers-root-lip     $D 's/DollPrim.Box(V(0, -.00575f, 0), V(.0115f, .03625f, .037f), .0095f)/DollPrim.Box(V(0, -.00275f, 0), V(.0115f, .03925f, .037f), .0095f)/' "does not wrap its roll"
 mutant thin-error-half      $D 's/ThinError = 0.25f/ThinError = 0.5f/' "silhouette differs"
 mutant body-seam-10mm       $D 's/Seam = 0.002f/Seam = 0.010f/'                             "a ball joint shows slits"
 
