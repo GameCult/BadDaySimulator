@@ -115,17 +115,16 @@ public partial class RenderCheck : Node
     private const float HighlightLuma = 245f;
 
     /// <summary>
-    /// The bounds on the flicker views, re-derived on the shipped doll (1294 triangles, flat facets with a 2 px bevel) from what each metric reads on the shipped shader and on the mutants, over every pose and framing it draws
-    /// (the session pose in seven framings, the puppet bent 30 and 60 degrees in three each), the shipped doll also at seven parent yaws. The p99 flicker ratio: shipped 1.17 to 1.35 (its bent views 1.15 to 1.38 over the seven yaws; the
-    /// bent 60 close hold view is the highest); kernel 0 1.38 to 2.04, over 1.45 in twelve of the thirteen views; no MSAA 1.31 to 1.61, over 1.45 in ten or eleven; a bevel width fixed at 720 lines (the supersampled reference then
-    /// differs from the shown frame) 1.15 to 1.63; the glaze at four times 1.56 to 2.00; so the bound sits between, 1.45, 1.05 times over the shipped worst of the sweep and 1.11 under no MSAA's highest view. The highlight shift in
-    /// levels of 255, on the doll with hands (1512 triangles) and the session stepped only by this check (the same reading in every one of five builds): shipped at most 0.57; the paper's pixel variance 1/(2 pi) reads 3.32 and the glaze at four times 4.96, so the bound is between 0.57 x 1.2 and 3.32 / 1.2 (0.68 and 2.77): 1.5 keeps both margins. Kernel 0 reads 0.98 and is caught by the ratio. The silhouette ring, where MSAA
-    /// works and the interior pixels do not look: the ring's mean |shown - reference| in levels of luma, shipped 16.9 to 21.8, no MSAA 25.3 to 33.1, so 23.5 (it was 22, 1% over the shipped worst). The orbit's crawl, the halo's
-    /// mean error second difference: shipped 3.4 to 3.6, kernel 0 5.52, no MSAA 4.2, the glaze at four times 7.0, so 4.5 (it was 7, from a kernel 0 that read 9.0 on the blended puppet). Not claimed: the kernel
-    /// doubled (1/12), which reads the ratio 1.33 at most, the shift 1.40 (inside the margin band, 1.25 to 1.8: unjudged by render-mutants.sh) and the crawl inside the shipped numbers; the kernel is nonzero only where the shading normal changes across a pixel, the 2 px bands, and
+    /// The bounds on the flicker views, derived by lodur:ruling:deterministic-bound-margin on the shipped doll (2262 triangles: 918 in its bodies and 1344 in its primitive balls; the session pose in seven framings, the puppet
+    /// bent 30 and 60 degrees in three each), every reading identical run to run (lodur:ruling:render-check-deterministic-first): each bound is the geometric midpoint of the shipped worst and the least claimed
+    /// mutant's worst view, and that mutant must read at least 1.2 times the shipped worst. The p99 flicker ratio: shipped worst 1.33 (the close hold views, the bent 30 one too), kernel 0 (the glaze's prefilter off) worst 1.93,
+    /// separation 1.45, bound 1.60. The silhouette ring, where MSAA works and the interior pixels do not look, mean |shown - reference| in levels of luma: shipped worst 21.54, no MSAA 32.80, separation 1.52, bound 26.6.
+    /// The highlight shift in levels of 255: shipped worst 0.65, the paper's pixel variance 1/(2 pi) 2.75 and the glaze at four times 4.66, separation 4.2 against the least, bound 1.34. The orbit's crawl, the halo's mean
+    /// error second difference: shipped 3.18, kernel 0 5.32 (no MSAA 3.70, the glaze at four times higher still), separation 1.67, bound 4.1. Not claimed: the kernel doubled (1/12), which reads the ratio 1.29 at most, the shift
+    /// 0.82 (under the shift bound's margin band, 1.12 to 1.61: it passes in render-mutants.sh) and the crawl 2.72, inside the shipped numbers; the kernel is nonzero only where the shading normal changes across a pixel, the 2 px bands, and
     /// doubling it moves the p99 of the whole interior by less than the shipped views differ among themselves. No bound here fails it, and none could without failing the shipped doll.
     /// </summary>
-    private const float MaxFlickerRatio = 1.45f, MaxHighlightShift = 1.5f, MaxSilhouetteError = 23.5f, MaxOrbitCrawl = 4.5f;
+    private const float MaxFlickerRatio = 1.60f, MaxHighlightShift = 1.34f, MaxSilhouetteError = 26.6f, MaxOrbitCrawl = 4.1f;
 
     private const int OrbitFrames = 30, MinOrbitSamples = 1000;
 
@@ -410,7 +409,7 @@ public partial class RenderCheck : Node
     /// the screen width are within a tenth of each other and the width changes across the frame. Bend 90 is a pose of sharp creases: the
     /// crease clamp is reached there, and the continuity across triangles has its own bar, since some edges fold past 120 degrees and 2 px
     /// cannot soften them. Each view looks at a joint of the doll, where the seat bands make the triangles small and the corner and crease pixels plentiful.
-    /// The floors (interior, band, capped, corner, sharp) are derived on the shipped doll (1294 triangles; the doll is not densified to meet a floor), under independent draws with replacement of the view's own pixels (the model
+    /// The floors (interior, band, capped, corner, sharp) are derived on the doll of 1294 triangles (the doll is not densified to meet a floor; the doll of 2262 reaches them, and every floor's mutant still fails: render-mutants.sh), under independent draws with replacement of the view's own pixels (the model
     /// of a count of pixels that are samples of a rendering, whatever their number; 2000 draws, sizes 50 up in steps of 50, 1000 up in 500s): the least size k* from which the metric on every draw of that size never puts the shipped reading over its bound
     /// nor any mutant that the metric catches in that view (its full reading the bound times 1.2 or more) under it. The mutants are the bevel's (no tilt, a widened and a linear falloff, no width cap, a width fixed at 720 lines, a corner reach of 1.0,
     /// a crease clamp of 1.0, a vertex normal left in model space). A floor is k* or above, never under it. k* by view (close, far, bend 90, mid 1080, far 1080): interior 900, 50, 150, 2000, 150; band 100, 50, 50, 150, 50; capped 50, 450, 50, 300, 200;
