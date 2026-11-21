@@ -3,7 +3,7 @@
 # failure line the mutant must print. The mutants are the ones the sample floors and bounds of RenderCheck.cs were derived against. A "survives" mutant is one the check
 # cannot tell from the shipped doll; it must still pass, so that the list stays true if the check changes: a stale crease (PuppetSkin keeping the first pose's creases: every edge lies inside one
 # rigid piece, so a crease never changes with the pose and the mutant draws the same puppet). A doubled kernel is UNCLAIMED, not a survivor: the kernel is nonzero only in the 2 px bands, so the
-# whole-interior statistics barely see it, and the check claims nothing about it: its highlight shift (0.82 on the doll of 2262 triangles) is under the bound's margin band, so it passes, and were it ever to read in the band it is unjudged (see below).
+# whole-interior statistics barely see it, and the check claims nothing about it: its highlight shift (1.06 on the doll of 2258 triangles) is under the bound's margin band, so it passes, and were it ever to read in the band it is unjudged (see below).
 # Refuses a dirty tree; restores every file it edits. Every edit must apply exactly once, by itself (not "the file changed": one edit of a mutant applying does not vouch for its
 # others), whatever the file's line endings (a newline in an old text matches LF or CRLF; a new text takes the file's): an edit that does not aborts the whole run, status 3,
 # before anything is built, since a mutant built from a half-applied edit is some other program and its verdict means nothing.

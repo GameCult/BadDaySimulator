@@ -115,13 +115,13 @@ public partial class RenderCheck : Node
     private const float HighlightLuma = 245f;
 
     /// <summary>
-    /// The bounds on the flicker views, derived by lodur:ruling:deterministic-bound-margin on the shipped doll (2262 triangles: 918 in its bodies and 1344 in its primitive balls; the session pose in seven framings, the puppet
+    /// The bounds on the flicker views, derived by lodur:ruling:deterministic-bound-margin on the shipped doll (2258 triangles: 914 in its bodies and 1344 in its primitive balls; the session pose in seven framings, the puppet
     /// bent 30 and 60 degrees in three each), every reading identical run to run (lodur:ruling:render-check-deterministic-first): each bound is the geometric midpoint of the shipped worst and the least claimed
     /// mutant's worst view, and that mutant must read at least 1.2 times the shipped worst. The p99 flicker ratio: shipped worst 1.33 (the close hold views, the bent 30 one too), kernel 0 (the glaze's prefilter off) worst 1.93,
     /// separation 1.45, bound 1.60. The silhouette ring, where MSAA works and the interior pixels do not look, mean |shown - reference| in levels of luma: shipped worst 21.54, no MSAA 32.80, separation 1.52, bound 26.6.
     /// The highlight shift in levels of 255: shipped worst 0.65, the paper's pixel variance 1/(2 pi) 2.75 and the glaze at four times 4.66, separation 4.2 against the least, bound 1.34. The orbit's crawl, the halo's mean
     /// error second difference: shipped 3.18, kernel 0 5.32 (no MSAA 3.70, the glaze at four times higher still), separation 1.67, bound 4.1. Not claimed: the kernel doubled (1/12), which reads the ratio 1.29 at most, the shift
-    /// 0.82 (under the shift bound's margin band, 1.12 to 1.61: it passes in render-mutants.sh) and the crawl 2.72, inside the shipped numbers; the kernel is nonzero only where the shading normal changes across a pixel, the 2 px bands, and
+    /// 1.06 (under the shift bound's margin band, 1.12 to 1.61: it passes in render-mutants.sh) and the crawl 2.72, inside the shipped numbers; the kernel is nonzero only where the shading normal changes across a pixel, the 2 px bands, and
     /// doubling it moves the p99 of the whole interior by less than the shipped views differ among themselves. No bound here fails it, and none could without failing the shipped doll.
     /// </summary>
     private const float MaxFlickerRatio = 1.60f, MaxHighlightShift = 1.34f, MaxSilhouetteError = 26.6f, MaxOrbitCrawl = 4.1f;
