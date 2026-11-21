@@ -4,7 +4,9 @@
 # cannot tell from the shipped doll; it must still pass, so that the list stays true if the check changes. Two do: a doubled kernel (the kernel is nonzero only in the 2 px
 # bands, and doubling it moves the whole-interior statistics less than the shipped views differ among themselves), and a stale crease (PuppetSkin keeping the first pose's creases:
 # every edge lies inside one rigid piece, so a crease never changes with the pose and the mutant draws the same puppet).
-# Refuses a dirty tree; restores every file it edits; an edit that changes nothing fails the mutant.
+# Refuses a dirty tree; restores every file it edits. Every edit must apply exactly once, by itself (not "the file changed": one edit of a mutant applying does not vouch for its
+# others), whatever the file's line endings (a newline in an old text matches LF or CRLF; a new text takes the file's): an edit that does not aborts the whole run, status 3,
+# before anything is built, since a mutant built from a half-applied edit is some other program and its verdict means nothing.
 #   GODOT=<godot console exe> bash client/tests/render-mutants.sh (ONLY="name name" limits the run, LOG=<dir> keeps the logs)
 set -u
 cd "$(dirname "$0")/../.."
@@ -12,17 +14,21 @@ GODOT="${GODOT:-F:/Applications/Godot_v4.7.2-stable_mono_win64/Godot_v4.7.2-stab
 [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "refusing: the tree is dirty"; exit 2; }
 LOG="${LOG:-$(mktemp -d)}"; failed=0; ran=0; EDITED=()
 
-# edit <file> <old text> <new text>: one literal replacement, recorded for the mutant that follows
-edit() { OLD="$2" NEW="$3" perl -0pi -e 's/\Q$ENV{OLD}\E/$ENV{NEW}/' "$1"; EDITED+=("$1"); }
+# edit <file> <old text> <new text>: one literal replacement, recorded for the mutant that follows; the old text must occur exactly once
+edit() {
+  EDITED+=("$1")
+  if ! OLD="$2" NEW="$3" perl -0pe 'BEGIN { binmode STDIN; binmode STDOUT } $c = /\r\n/ ? "\r\n" : "\n"; ($o, $n) = ($ENV{OLD}, $ENV{NEW}); $n =~ s/\n/$c/g;
+      $re = join(q{\r?\n}, map { quotemeta } split(/\n/, $o, -1)); $k = () = /$re/g; if ($k != 1) { print STDERR "$k matches\n"; exit 1 } s/$re/$n/' "$1" > "$1.edited"; then
+    rm -f "$1.edited"; echo "ABORT: an edit of $1 applied to nothing or more than once: ${2:0:70}"; restore; exit 3
+  fi
+  mv "$1.edited" "$1"
+}
 
 # mutant <name> <substring the check must print, or SURVIVES (it must pass), or SHIPPED (no edit; it must pass)>, after the edits it is made of
 mutant() {
   local name="$1" want="$2" f
   if [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $name "* ]]; then restore; return; fi
   ran=$((ran + 1))
-  for f in "${EDITED[@]+"${EDITED[@]}"}"; do
-    if git diff --quiet -- "$f"; then echo "FAIL  $name: the edit changed nothing in $f"; failed=$((failed + 1)); restore; return; fi
-  done
   if ! dotnet build client/BadDay.Client.csproj -v q > "$LOG/$name.build" 2>&1; then
     echo "FAIL  $name: does not build"; failed=$((failed + 1)); restore; return
   fi
