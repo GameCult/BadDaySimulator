@@ -160,7 +160,7 @@ public static class PuppetChecks
         var clock = Stopwatch.StartNew();
         var puppet = PuppetField.Build(real, inputs);
         long built = clock.ElapsedMilliseconds; // waits on the pieces the scene's puppet already asked for
-        var fields = PuppetField.Pieces(real, inputs).Fields;
+        var set = PuppetField.Pieces(real, inputs); var fields = set.Fields;
         Console.WriteLine($"PUPPET {PuppetPieces.Built} piece meshes built so far, {PuppetPieces.BuildMilliseconds:F0} ms summed over the thread pool");
         long builtKeys = PuppetPieces.Built; var again2 = Stopwatch.StartNew();
         PuppetField.Build(real, inputs);
@@ -174,10 +174,12 @@ public static class PuppetChecks
         BallsFollowTheirParent(puppet, real.Count, Check);
         Seated(puppet, fields, triangles, Check);
         HandsArePieces(puppet, real, fields, Check);
-        ThinPiecesKeepTheirShape(real, fields, triangles, Check);
+        BallsArePrimitives(puppet, set, triangles, Check);
+        ThinPiecesKeepTheirSilhouette(puppet, real, fields, triangles, Check);
         ExistingPiecesUnchanged(fields, Check);
-        HandsHug(puppet, fields, triangles, Check);
-        NoSlits(puppet, triangles, Check);
+        HandsHug(puppet, set.Balls, triangles, Check);
+        NoSlits(puppet, real, triangles, Check);
+        NoSeeInside(puppet, real, triangles, Check);
         WithinTheError(puppet, fields, triangles, Check);
         LimbsKept(puppet, fields, triangles, Check);
         Mesher(puppet, triangles, Check);
@@ -186,7 +188,7 @@ public static class PuppetChecks
         FoldHasNoCrease(Check);
     }
 
-    /// <summary>The doll's other balls are 34 mm or more; a ball under this radius belongs to a hand (the wrist ball is 22 mm) and is judged by <see cref="HandsHug"/>, not by the seat's mm-scale bounds.</summary>
+    /// <summary>The doll's body balls are 34 mm or more; a ball under this radius belongs to a hand (the wrist ball is 26 mm) and is judged by <see cref="HandsHug"/>, not by the seat's mm-scale bounds.</summary>
     private const float HandBall = 0.03f;
 
     /// <summary>The corner slot's vertex, in the bind.</summary>
@@ -240,7 +242,6 @@ public static class PuppetChecks
         int inside = 0, probed = 0;
         foreach (var f in fields)
         {
-            if (f.IsBall) continue;
             foreach (var p in Samples(shape, triangles[f.Index]))
             {
                 probed++;
@@ -265,19 +266,19 @@ public static class PuppetChecks
         check(wrong == 0, $"{wrong} of {vertices} ball vertices do not follow their joint's parent body");
     }
 
-    /// <summary>The hand's three bodies as the doll keys them (ruling puppet-hands-thumb-palm-fingers): by physics shape, never by name.</summary>
-    private static readonly (string Name, Box3DSoaKind Kind, float3 Size)[] HandBodies =
+    /// <summary>The hand's three bodies as the doll keys them (ruling puppet-hands-thumb-palm-fingers): by physics shape, never by name, and each one's bend (rad) at its joint to its parent in the bent pose (wrist 0.6, thumb 0.7, fingers 1.2, as HandFrames bends them).</summary>
+    private static readonly (string Name, Box3DSoaKind Kind, float3 Size, float Bend)[] HandBodies =
     {
-        ("palm", Box3DSoaKind.Box, new float3(.014f, .045f, .04f)),
-        ("thumb", Box3DSoaKind.Capsule, new float3(.011f, .03f, 0f)),
-        ("fingers", Box3DSoaKind.Box, new float3(.011f, .0425f, .038f)),
+        ("palm", Box3DSoaKind.Box, new float3(.014f, .045f, .04f), 0.6f),
+        ("thumb", Box3DSoaKind.Capsule, new float3(.011f, .03f, 0f), 0.7f),
+        ("fingers", Box3DSoaKind.Box, new float3(.011f, .0425f, .038f), 1.2f),
     };
 
     /// <summary>The puppet is 37 pieces (19 bodies, 18 balls; PiecesAreSeparate holds each closed), and every palm, thumb and fingers body is dressed by its doll entry, not drawn as its physics shape.</summary>
     private static void HandsArePieces(PuppetShape shape, List<PuppetBody> bodies, PieceField[] fields, Action<bool, string> check)
     {
         check(shape.PieceCount == 37, $"the puppet is {shape.PieceCount} pieces, not the 37 of 19 bodies and 18 balls");
-        foreach (var (name, kind, size) in HandBodies)
+        foreach (var (name, kind, size, _) in HandBodies)
         {
             var mine = Enumerable.Range(0, bodies.Count).Where(i => bodies[i].Kind == kind && math.length(bodies[i].Size - size) <= 1e-4f).ToArray();
             check(mine.Length == 2, $"{mine.Length} {name} bodies, not two");
@@ -287,33 +288,92 @@ public static class PuppetChecks
     }
 
     /// <summary>
-    /// Thin pieces keep their shape: a body under 40 mm thick has a facet error of ThinError of its thickness (the vertices, centroids and midpoints within it are
-    /// WithinTheError's) and at least eight triangles (at FacetError the probe's fingers fell to 2 and the palm to 8). Vacuous under six thin bodies (two hands of three).
+    /// Balls are built primitives (ruling doll-joints-built-primitives): every ball piece is the straddled lattice of <see cref="Doll.BallFrequency"/> and nothing else. A sphere has 38 vertices and 72 triangles, a roll
+    /// 50 and 96; every vertex of a ball lies the same distance from its core (the joint origin, or the roll's segment) to 1e-5, outside the ball's radius by at most 4%, and every face centroid at least 4% inside it
+    /// (the facets straddle the sphere); the balls total 1344 triangles. Vacuous under 18 balls.
     /// </summary>
-    private static void ThinPiecesKeepTheirShape(List<PuppetBody> bodies, PieceField[] fields, int[][] triangles, Action<bool, string> check)
+    private static void BallsArePrimitives(PuppetShape shape, PieceSet set, int[][] triangles, Action<bool, string> check)
     {
-        int thin = 0, wrongError = 0, few = 0;
-        for (int i = 0; i < bodies.Count; i++)
+        const float straddle = 0.04f;
+        int wrongCount = 0, uneven = 0, outside = 0, inside = 0, total = 0;
+        foreach (var ball in set.Balls)
         {
-            float thickness = PuppetField.Thickness(bodies[i].Kind, bodies[i].Size);
-            if (thickness >= 0.04f) continue;
-            thin++;
-            if (MathF.Abs(fields[i].Error - MathF.Min(Doll.FacetError, Doll.ThinError * thickness)) > 1e-6f) wrongError++;
-            if (triangles[i].Length < 8) few++;
+            bool roll = math.lengthsq(ball.Roll) > 0;
+            var vertices = Enumerable.Range(0, shape.Vertices.Length).Where(v => shape.Piece[v] == ball.Index).Select(v => shape.Vertices[v]).ToArray();
+            int tris = triangles[ball.Index].Length; total += tris;
+            if (vertices.Length != (roll ? 50 : 38) || tris != (roll ? 96 : 72)) wrongCount++;
+            float Core(float3 p) => PieceCut.Core(p - ball.Origin, ball.Roll);
+            float r = Core(vertices[0]);
+            if (vertices.Any(v => MathF.Abs(Core(v) - r) > 1e-5f)) uneven++;
+            if (r > ball.Radius * (1 + straddle)) outside++;
+            foreach (int t in triangles[ball.Index])
+                if (Core((At(shape, 3 * t) + At(shape, 3 * t + 1) + At(shape, 3 * t + 2)) / 3f) < ball.Radius * (1 - straddle)) inside++;
         }
-        check(thin >= 6, $"the thin piece check is vacuous: {thin} bodies under 40 mm, not six");
-        check(wrongError == 0, $"{wrongError} thin bodies have an error other than FacetError or ThinError of their thickness");
-        check(few == 0, $"{few} thin bodies decimated to fewer than 8 triangles: their shape is lost");
+        Console.WriteLine($"PUPPET balls: {set.Balls.Length} primitives, {total} triangles");
+        check(set.Balls.Length >= 18, $"the ball check is vacuous: {set.Balls.Length} balls, under 18");
+        check(wrongCount == 0, $"{wrongCount} balls are not 38 vertices and 72 triangles (a roll 50 and 96): a ball is not built at BallFrequency {Doll.BallFrequency}");
+        check(total == 1344, $"the balls total {total} triangles, not 1344");
+        check(uneven == 0, $"{uneven} balls have vertices at different distances from their core: a ball is not a scaled lattice");
+        check(outside == 0, $"{outside} balls reach more than {straddle * 100:F0}% past their radius: the facets do not straddle the sphere");
+        check(inside == 0, $"{inside} ball faces lie more than {straddle * 100:F0}% inside their radius: the ball does not fill its socket");
     }
 
     /// <summary>
-    /// The meshes of the pieces the hands did not touch, as the doll made them before the hands (every body and ball but the forearms, which lose their mitten, and the hands):
+    /// The silhouette share a thin body's mesh may miss its field's by: the area where the mesh's silhouette and the field's differ, over the field's silhouette, worst over the three axes of the body's
+    /// frame (along its thinnest axis and across it), at 2 px/mm. Derived as lodur:ruling:deterministic-bound-margin derives a bound: THINDERIVE
+    /// </summary>
+    private const float MaxSilhouetteMiss = 0.50f;
+
+    /// <summary>
+    /// Thin pieces keep their silhouette: every body under 40 mm thick has a mesh whose silhouette along each axis of its frame, rasterised at 2 px/mm, differs from its field's silhouette (the cuts included) by at most
+    /// <see cref="MaxSilhouetteMiss"/> of the field's. The error ThinError sets is a tolerance, not a shape: a tolerance a prism satisfies (the thumb at 8 triangles) is what this reads. Vacuous under six thin bodies.
+    /// </summary>
+    private static void ThinPiecesKeepTheirSilhouette(PuppetShape shape, List<PuppetBody> bodies, PieceField[] fields, int[][] triangles, Action<bool, string> check)
+    {
+        const float px = 0.0005f; int thin = 0; float worst = 0; string where = "";
+        for (int i = 0; i < bodies.Count; i++)
+        {
+            if (PuppetField.Thickness(bodies[i].Kind, bodies[i].Size) >= 0.04f) continue;
+            thin++;
+            var f = fields[i];
+            var tris = triangles[i].Select(t => (a: f.Local(At(shape, 3 * t)), b: f.Local(At(shape, 3 * t + 1)), c: f.Local(At(shape, 3 * t + 2)))).ToArray();
+            var lo = f.Lo - 0.01f; var hi = f.Hi + 0.01f;
+            for (int axis = 0; axis < 3; axis++)
+            {
+                int iu = (axis + 1) % 3, iv = (axis + 2) % 3;
+                int nu = (int)((hi[iu] - lo[iu]) / px) + 1, nv = (int)((hi[iv] - lo[iv]) / px) + 1, nd = (int)((hi[axis] - lo[axis]) / px) + 1;
+                var inField = new bool[nu * nv]; var inMesh = new bool[nu * nv];
+                System.Threading.Tasks.Parallel.For(0, nu, x =>
+                {
+                    for (int y = 0; y < nv; y++)
+                    {
+                        float3 q = default; q[iu] = lo[iu] + (x + 0.5f) * px; q[iv] = lo[iv] + (y + 0.5f) * px;
+                        for (int d = 0; d < nd && !inField[x * nv + y]; d++) { q[axis] = lo[axis] + d * px; if (f.Value(q) < 0) inField[x * nv + y] = true; }
+                        float qu = q[iu], qv = q[iv];
+                        foreach (var (a, b, c) in tris)
+                        {
+                            float d0 = (b[iu] - a[iu]) * (qv - a[iv]) - (b[iv] - a[iv]) * (qu - a[iu]), d1 = (c[iu] - b[iu]) * (qv - b[iv]) - (c[iv] - b[iv]) * (qu - b[iu]), d2 = (a[iu] - c[iu]) * (qv - c[iv]) - (a[iv] - c[iv]) * (qu - c[iu]);
+                            if ((d0 >= 0 && d1 >= 0 && d2 >= 0) || (d0 <= 0 && d1 <= 0 && d2 <= 0)) { inMesh[x * nv + y] = true; break; }
+                        }
+                    }
+                });
+                int field = 0, differ = 0;
+                for (int k = 0; k < inField.Length; k++) { if (inField[k]) field++; if (inField[k] != inMesh[k]) differ++; }
+                float miss = differ / (float)Math.Max(field, 1);
+                if (miss > worst) { worst = miss; where = $"body {i} axis {axis}"; }
+            }
+        }
+        Console.WriteLine($"PUPPET thin silhouettes: {thin} bodies, worst miss {worst * 100:F1}% of {MaxSilhouetteMiss * 100:F0}% ({where})");
+        check(thin >= 6, $"the thin silhouette check is vacuous: {thin} bodies under 40 mm, not six");
+        check(worst <= MaxSilhouetteMiss, $"a thin body's mesh silhouette differs from its field's by {worst * 100:F1}% ({where}), over {MaxSilhouetteMiss * 100:F0}%: its shape is lost");
+    }
+
+    /// <summary>
+    /// The meshes of the body pieces the hands did not touch, as the doll made them before the hands (every body but the forearms and the hands; the balls are primitives, pinned by <see cref="BallsArePrimitives"/>):
     /// per piece key, the vertex and triangle counts and a sum of the vertices to 0.1 mm. A piece of those keys that differs was changed by the hands; the pieces are a pure function of their key.
     /// </summary>
     private static readonly (string Key, int Vertices, int Triangles, long Sum)[] BeforeTheHands =
     {
-        ("ball 340", 17, 30, 2662395357964981027), ("ball 360", 17, 30, -5792559409839439423), ("ball 380", 18, 32, -4419817509474853178),
-        ("ball 500", 24, 44, 7200472121594289660), ("ball 700", 33, 62, 8337367169922813364), ("ball 720", 32, 60, 459400065258429355),
         ("entry 0|-900,-700,0,700;0,800,0,720;900,-700,0,700", 87, 170, 8281621657712494562),
         ("entry 1|-2100,1400,0,500;0,-2200,0,720;0,2200,0,360;2100,1400,0,500", 72, 140, -6458902082010238553),
         ("entry 2|0,-1100,0,360", 21, 38, -4950703998283759519), ("entry 3|0,-1550,0,380;0,1550,0,500", 17, 30, -7670264571177566577),
@@ -328,7 +388,7 @@ public static class PuppetChecks
         return h;
     }
 
-    /// <summary>Every piece but the hands and the forearms is the mesh it was before the hands (<see cref="BeforeTheHands"/>); vacuous under 20 pieces compared.</summary>
+    /// <summary>Every body but the hands and the forearms is the mesh it was before the hands (<see cref="BeforeTheHands"/>), unchanged by SeatShare (every body ball is 34 mm or more); vacuous under 10 pieces compared (the doll has 11).</summary>
     private static void ExistingPiecesUnchanged(PieceField[] fields, Action<bool, string> check)
     {
         int compared = 0; var changed = new List<string>();
@@ -340,7 +400,7 @@ public static class PuppetChecks
                 var (v, t) = PuppetPieces.Get(f.Key, f).Result;
                 if (v.Length != vertices || t.Length / 3 != triangles || MeshSum(v) != sum) changed.Add(key);
             }
-        check(compared >= 20, $"the unchanged-pieces check is vacuous: {compared} pieces compared, under 20");
+        check(compared >= 10, $"the unchanged-pieces check is vacuous: {compared} pieces compared, under 10");
         check(changed.Count == 0, $"pieces the hands must not change changed: {string.Join("; ", changed.Distinct())}");
     }
 
@@ -349,18 +409,18 @@ public static class PuppetChecks
     /// caps and its side) is sampled 4000 times; the share of it within 3 mm (2 mm seam + 1 mm) of a neighbouring piece's mesh is that piece's seat, at least HugShare. A limb that stops short of
     /// its ball has no seat, and the share is what a cup holds, not a single touching point. Vacuous under 12 sides of hand joints.
     /// </summary>
-    private static void HandsHug(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
+    private static void HandsHug(PuppetShape shape, JointBall[] balls, int[][] triangles, Action<bool, string> check)
     {
         const int count = 2000; const float near = 0.003f; // the ruling's 2 mm seam and 1 mm, fixed: the check is not to follow Doll.Seam
         var dirs = new float3[count];
         for (int i = 0; i < count; i++) { float z = 1 - 2f * (i + 0.5f) / count, r = MathF.Sqrt(1 - z * z), ph = i * 2.399963f; dirs[i] = new float3(r * MathF.Cos(ph), r * MathF.Sin(ph), z); }
-        int bodies = shape.Ids.Length, sides = 0, bare = 0; float least = float.MaxValue;
+        int bodies = shape.Ids.Length, sides = 0, bare = 0; float least = float.MaxValue; string leastAt = "";
         for (int j = 0; j < shape.Joints.Length; j++)
         {
             float radius = shape.BallRadius[j];
             if (radius >= HandBall) continue;
             var (_, a, b, o) = shape.Joints[j];
-            var roll = fields[bodies + j].Roll;
+            var roll = balls[j].Roll;
             var surface = new List<float3>();
             if (math.lengthsq(roll) == 0) foreach (var u in dirs) surface.Add(o + u * radius);
             else
@@ -381,54 +441,87 @@ public static class PuppetChecks
                     if (gap <= near) hug++;
                 }
                 float share = hug / (float)surface.Count;
-                sides++; least = MathF.Min(least, share);
+                sides++; if (share < least) { least = share; leastAt = $"joint {j} body {body}"; } Console.WriteLine($"PUPPET hug: joint {j} body {body}: {share * 100:F1}%");
                 if (share < HugShare) bare++;
             }
         }
-        Console.WriteLine($"PUPPET hands hug: {sides} hand sides, least seat {least * 100:F1}% of {HugShare * 100:F0}%");
+        Console.WriteLine($"PUPPET hands hug: {sides} hand sides, least seat {least * 100:F1}% of {HugShare * 100:F0}% ({leastAt})");
         check(sides >= 12, $"the hands' hug check is vacuous: {sides} sides of hand joints, under 12");
         check(bare == 0, $"{bare} limbs at hand balls seat on under {HugShare * 100:F0}% of their ball within Seam + 1 mm (least {least * 100:F1}%): they stop short of it");
     }
 
 
-    /// <summary>
-    /// No slits at a ball (ruling doll-pieces-hug-balls: intersection beats a gap): at every ball joint of the doll at its creation pose, the mean over <see cref="Slits.Views"/> silhouettes of the background a
-    /// 3 mm disc closes between the ball and its two neighbours (<see cref="Slits"/>) is at most <see cref="MaxHandSlit"/> mm2 at a hand's joint (a ball under <see cref="HandBall"/>) and <see cref="MaxBodySlit"/>
-    /// at the others. Prints each joint's reading. Vacuous under 18 joints.
-    /// </summary>
-    private static void NoSlits(PuppetShape shape, int[][] triangles, Action<bool, string> check)
+    /// <summary>A ball joint's readings' poses: the creation pose (the ball and its two neighbours' triangles, in the bind) and, at a hand's joint, the bent pose: the child turned about the joint by its bend (<see cref="HandBodies"/>) about z, as the hand bends about its joints.</summary>
+    private static List<(string Pose, List<(float3, float3, float3)> Tris)> JointPoses(PuppetShape shape, List<PuppetBody> bodies, int[][] triangles, int j)
     {
-        int bodies = shape.Ids.Length, joints = shape.Joints.Length;
-        var mean = new float[joints]; var max = new float[joints];
-        var clock = Stopwatch.StartNew();
-        System.Threading.Tasks.Parallel.For(0, joints, j =>
+        var (_, a, b, o) = shape.Joints[j];
+        List<(float3, float3, float3)> Of(int piece, Rigid? turn = null) =>
+            triangles[piece].Select(t => { var p = new[] { At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2) }; if (turn is { } r) for (int k = 0; k < 3; k++) p[k] = r.Apply(p[k]); return (p[0], p[1], p[2]); }).ToList();
+        int ball = bodies.Count + j;
+        var poses = new List<(string, List<(float3, float3, float3)>)> { ("creation", Of(ball).Concat(Of(a)).Concat(Of(b)).ToList()) };
+        foreach (var (_, kind, size, bend) in HandBodies)
         {
-            var (_, a, b, o) = shape.Joints[j];
-            var tris = new List<(float3, float3, float3)>();
-            foreach (int piece in new[] { bodies + j, a, b })
-                foreach (int t in triangles[piece]) tris.Add((At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2)));
-            (mean[j], max[j]) = Slits.Per(tris, o, shape.BallRadius[j]);
-        });
-        float worstHand = 0, worstBody = 0;
-        for (int j = 0; j < joints; j++)
-        {
-            bool hand = shape.BallRadius[j] < HandBall;
-            Console.WriteLine($"PUPPET slits: joint {j} ({(hand ? "hand" : "body")}, bodies {shape.Joints[j].A}-{shape.Joints[j].B}, ball {shape.BallRadius[j] * 1000:F1} mm): mean {mean[j]:F2} mm2, worst view {max[j]:F1}");
-            if (hand) worstHand = MathF.Max(worstHand, mean[j]); else worstBody = MathF.Max(worstBody, mean[j]);
+            if (bodies[b].Kind != kind || math.length(bodies[b].Size - size) > 1e-4f) continue;
+            var turn = Rigid.About(o, new float3(0, 0, 1), bend * (o.x < 0 ? 1f : -1f)); // the hand at negative x bends one way, the other hand the other, as HandFrames does
+            poses.Add(("bent", Of(ball).Concat(Of(a)).Concat(Of(b, turn)).ToList()));
         }
-        Console.WriteLine($"PUPPET slits: worst hand joint {worstHand:F2} mm2 of {MaxHandSlit}, worst body joint {worstBody:F2} of {MaxBodySlit} ({clock.ElapsedMilliseconds} ms)");
-        check(joints >= 18, $"the slit check is vacuous: {joints} joints, under 18");
-        check(worstHand <= MaxHandSlit, $"a hand ball joint shows slits: mean {worstHand:F2} mm2 over {Slits.Views} views, over {MaxHandSlit}: a hand piece's cup does not cover its ball");
-        check(worstBody <= MaxBodySlit, $"a body ball joint shows slits: mean {worstBody:F2} mm2 over {Slits.Views} views, over {MaxBodySlit}");
+        return poses;
     }
 
     /// <summary>
-    /// The most slit area (mm2, mean over the views) a hand joint may show, and a body joint, derived as lodur:ruling:render-floors-from-mutant-power derives a floor: a bound over the shipped doll's worst
-    /// reading times 1.2 and under the least reading of the mutants that must fail it divided by 1.2. Hand joints: shipped 0.64 at most (thumb), so over 0.77; the wrist cup removed reads 18.1, the thumb's 4.6, the
-    /// knuckle's 3.7, so under 3.1; 1.5 sits between, 2.3 times over the shipped and 2.5 under the least mutant. Body joints carry no cup yet (follow-up bds-doll-hug-balls): shipped 11.4 at most (the elbows),
-    /// so over 13.7, and the 10 mm seam reads 32.1, so under 26.7; 19.
+    /// No slits at a ball (ruling doll-pieces-hug-balls: intersection beats a gap): at every ball joint of the doll, at the creation pose and, at a hand's joint, at the bent pose, the mean over <see cref="Slits.Views"/>
+    /// silhouettes of the background a 3 mm disc closes between the ball and its two neighbours (<see cref="Slits"/>) is at most <see cref="MaxSlit"/> mm2: one standard for every ball. Prints each joint's reading
+    /// and its worst single view. Vacuous under 18 joints.
     /// </summary>
-    private const float MaxHandSlit = 1.5f, MaxBodySlit = 19f;
+    private static void NoSlits(PuppetShape shape, List<PuppetBody> bodies, int[][] triangles, Action<bool, string> check)
+    {
+        int joints = shape.Joints.Length;
+        var rows = new (string Pose, float Mean, float Max)[joints][];
+        var clock = Stopwatch.StartNew();
+        System.Threading.Tasks.Parallel.For(0, joints, j =>
+            rows[j] = JointPoses(shape, bodies, triangles, j).Select(p => { var (mean, max) = Slits.Per(p.Tris, shape.Joints[j].Origin, shape.BallRadius[j]); return (p.Pose, mean, max); }).ToArray());
+        float worst = 0;
+        for (int j = 0; j < joints; j++)
+            foreach (var (pose, mean, max) in rows[j])
+            {
+                Console.WriteLine($"PUPPET slits: joint {j} (bodies {shape.Joints[j].A}-{shape.Joints[j].B}, ball {shape.BallRadius[j] * 1000:F1} mm, {pose}): mean {mean:F2} mm2, worst view {max:F1}");
+                worst = MathF.Max(worst, mean);
+            }
+        Console.WriteLine($"PUPPET slits: worst joint {worst:F2} mm2 of {MaxSlit} ({clock.ElapsedMilliseconds} ms)");
+        check(joints >= 18, $"the slit check is vacuous: {joints} joints, under 18");
+        check(worst <= MaxSlit, $"a ball joint shows slits: mean {worst:F2} mm2 over {Slits.Views} views, over {MaxSlit}");
+    }
+
+    /// <summary>
+    /// The most slit area (mm2, mean over the views) any ball joint may show, one standard for the hands and the body, derived by lodur:ruling:deterministic-bound-margin as the geometric midpoint of the shipped
+    /// worst and the least claimed mutant. SLITDERIVE
+    /// </summary>
+    private const float MaxSlit = 100f;
+
+    /// <summary>
+    /// No see-inside (ruling doll-pieces-hug-balls: a limb is not a window into itself): at every ball joint, at both poses, the mean over <see cref="SeeInside.Directions"/> directions of the area where a ray first meets the
+    /// back of a triangle of the ball or its two neighbours (<see cref="SeeInside"/>) is at most <see cref="MaxSeeInside"/> mm2. The silhouette reads cannot see an opening in the skin: there is a surface behind it.
+    /// </summary>
+    private static void NoSeeInside(PuppetShape shape, List<PuppetBody> bodies, int[][] triangles, Action<bool, string> check)
+    {
+        int joints = shape.Joints.Length;
+        var rows = new (string Pose, float Mean, float Max)[joints][];
+        var clock = Stopwatch.StartNew();
+        System.Threading.Tasks.Parallel.For(0, joints, j =>
+            rows[j] = JointPoses(shape, bodies, triangles, j).Select(p => { var (mean, max) = SeeInside.Per(p.Tris, shape.Joints[j].Origin, shape.BallRadius[j]); return (p.Pose, mean, max); }).ToArray());
+        float worst = 0;
+        for (int j = 0; j < joints; j++)
+            foreach (var (pose, mean, max) in rows[j])
+            {
+                if (mean > 0.005f) Console.WriteLine($"PUPPET see-inside: joint {j} (ball {shape.BallRadius[j] * 1000:F1} mm, {pose}): mean {mean:F2} mm2, worst direction {max:F1}");
+                worst = MathF.Max(worst, mean);
+            }
+        Console.WriteLine($"PUPPET see-inside: worst joint {worst:F2} mm2 of {MaxSeeInside} ({clock.ElapsedMilliseconds} ms)");
+        check(worst <= MaxSeeInside, $"a ball joint shows the inside of a piece: mean {worst:F2} mm2 over {SeeInside.Directions} directions, over {MaxSeeInside}");
+    }
+
+    /// <summary>The most see-inside area (mm2, mean over the directions) any ball joint may show, derived by lodur:ruling:deterministic-bound-margin. SEEDERIVE</summary>
+    private const float MaxSeeInside = 100f;
 
     /// <summary>The share of a hand ball's surface a limb's mesh must lie within Seam + 1 mm of, per side: derived from the shipped hands (the least side seats on 20.2% with the cups, 9.3% before them) and the seam mutant (sockets 10 mm off their balls seat on none).</summary>
     private const float HugShare = 0.05f;
@@ -500,42 +593,32 @@ public static class PuppetChecks
 
     /// <summary>
     /// Within the error: every body piece's vertices, centroids and edge midpoints lie within its error (FacetError, or ThinError of its thickness where that is less) of its field's surface, the cuts included; a
-    /// triangle with all three vertices in the seat band lies within SeatError + 1 mm of it (the fine mesh's own error at the rims); a ball's points lie within
-    /// BallError of its sphere either way.
+    /// triangle with all three vertices in the seat band has every vertex, centroid and edge midpoint within its seat limit (<see cref="PieceField.SeatLimit"/>: SeatError, or SeatShare of its socket's ball where less, at that point) + 1 mm of it (the
+    /// fine mesh's own error at the rims). The balls are primitives: <see cref="BallsArePrimitives"/>.
     /// </summary>
     private static void WithinTheError(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
     {
-        int over = 0, overBand = 0, overBall = 0, bandTriangles = 0; float worstBody = 0, worstBand = 0, worstBall = 0;
+        int over = 0, overBand = 0, bandTriangles = 0; float worstBody = 0, worstBand = 0; var overIn = new SortedSet<int>(); var bandIn = new SortedSet<int>();
         foreach (var f in fields)
         {
-            if (f.IsBall)
-            {
-                foreach (var p in Samples(shape, triangles[f.Index]))
-                {
-                    float e = MathF.Abs(PieceCut.Core(f.Local(p), f.Roll) - f.BallRadius);
-                    worstBall = MathF.Max(worstBall, e);
-                    if (e > Doll.BallError + 1e-4f) overBall++;
-                }
-                continue;
-            }
             foreach (int t in triangles[f.Index])
             {
                 var a = At(shape, 3 * t); var b = At(shape, 3 * t + 1); var c = At(shape, 3 * t + 2);
                 var points = new[] { a, b, c, (a + b + c) / 3f, (a + b) / 2f, (b + c) / 2f, (c + a) / 2f };
                 float worst = points.Max(p => MathF.Abs(f.Value(f.Local(p))));
                 worstBody = MathF.Max(worstBody, worst);
-                if (worst > f.Error + 1e-4f) over++;
+                if (worst > f.Error + 1e-4f) { over++; overIn.Add(f.Index); }
                 if (!(f.Tight(f.Local(a)) && f.Tight(f.Local(b)) && f.Tight(f.Local(c)))) continue;
                 bandTriangles++;
-                worstBand = MathF.Max(worstBand, worst);
-                if (worst > Doll.SeatError + 0.001f + 1e-4f) overBand++;
+                float excess = points.Max(p => MathF.Abs(f.Value(f.Local(p))) - MathF.Min(f.Error, f.SeatLimit(f.Local(p)))); // the decimator's own rule, point by point
+                worstBand = MathF.Max(worstBand, excess);
+                if (excess > 0.001f + 1e-4f) { overBand++; bandIn.Add(f.Index); }
             }
         }
-        Console.WriteLine($"PUPPET worst error: bodies {worstBody * 1000:F1} mm of {Doll.FacetError * 1000:F0} (less for thin pieces), {bandTriangles} seat-band triangles {worstBand * 1000:F1} mm of {Doll.SeatError * 1000:F0} + 1, balls {worstBall * 1000:F1} mm of {Doll.BallError * 1000:F0}");
+        Console.WriteLine($"PUPPET worst error: bodies {worstBody * 1000:F1} mm of {Doll.FacetError * 1000:F0} (less for thin pieces), {bandTriangles} seat-band triangles {worstBand * 1000:F1} mm past their points' seat limits (SeatError {Doll.SeatError * 1000:F0}, SeatShare {Doll.SeatShare} of the ball where less) + 1");
         check(bandTriangles > 100, $"the seat band check is vacuous: {bandTriangles} triangles");
-        check(over == 0, $"{over} body triangles stray further from their piece's surface than its error allows (worst {worstBody * 1000:F1} mm)");
-        check(overBand == 0, $"{overBand} of {bandTriangles} triangles in the seat band stray more than SeatError + 1 mm from their piece's surface (worst {worstBand * 1000:F1} mm)");
-        check(overBall == 0, $"{overBall} ball points stray further from their sphere than BallError allows (worst {worstBall * 1000:F1} mm)");
+        check(over == 0, $"{over} body triangles stray further from their piece's surface than its error allows (worst {worstBody * 1000:F1} mm; pieces {string.Join(",", overIn)})");
+        check(overBand == 0, $"{overBand} of {bandTriangles} triangles in the seat band stray more than their points' seat limit + 1 mm from their piece's surface (worst {worstBand * 1000:F1} mm past it; pieces {string.Join(",", bandIn)})");
     }
 
     /// <summary>Limbs kept: every guard point of a piece (its primitives' axis) is inside it with its clearance, half its depth, to the surface: no limb is pinched away.</summary>

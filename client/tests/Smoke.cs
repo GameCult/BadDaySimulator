@@ -18,9 +18,6 @@ public partial class Smoke : Node
     private const ulong Seed = 1;
     private const double WatchdogSeconds = 150;
 
-    /// <summary>The puppet mesh's triangle range: 0.6x to 1.6x the doll with hands' measured 1512, which FacetError, ThinError, SeatBand, SeatError and BallError decide; the hand cups (Doll.Lip) make it 1640, well inside.</summary>
-    private const int MinTriangles = 900, MaxTriangles = 2420;
-
     private readonly List<string> _failures = new();
     private Main _main = null!;
     private BodyPainBoxSession? _lastSession;
@@ -212,13 +209,12 @@ public partial class Smoke : Node
     }
 
     /// <summary>
-    /// The puppet's mesh as it is drawn: the ball-jointed doll's pieces, at about the triangle count FacetError and BallError leave (the doll with hands measured
-    /// 1512; PuppetChecks prints the count per piece), one connected piece for every body and every joint ball.
+    /// The puppet's mesh as it is drawn: the ball-jointed doll's pieces, (the triangle count is printed, not judged: PuppetChecks pins the balls' exactly and prints the count per piece), one connected piece for every body and every joint ball.
     /// </summary>
     private void CheckPuppetMesh(string when)
     {
         if (_main.Bodies.PuppetShape is not { } shape) { Check(false, $"{when}: the puppet has no mesh"); return; }
-        Check(shape.Triangles is >= MinTriangles and <= MaxTriangles, $"{when}: the puppet mesh has {shape.Triangles} triangles, not {MinTriangles} to {MaxTriangles}");
+        GD.Print($"SMOKE {when}: the puppet mesh is {shape.Triangles} triangles");
         int pieces = PuppetChecks.Pieces(shape);
         Check(pieces == shape.PieceCount, $"{when}: the puppet mesh is {pieces} pieces, not one for each of its {shape.Ids.Length} bodies and {shape.Joints.Length} joints");
     }

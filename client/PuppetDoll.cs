@@ -68,8 +68,8 @@ public sealed record DollPrim(DollShape Shape, float3 A, float3 B, float Ra, flo
 
 /// <summary>
 /// One body of the doll: the physics shape it dresses (the key), the primitives it is made of, and the ball at its joint to its parent. The limb's
-/// radius at its socket end does not exceed its ball's radius (the Mesher check defends it: a limb wrapping its ball past the equator leaves a ring
-/// thinner than the grid). Joint ranges are not doll data: the lanes carry no joint limits (follow-up lodur-joint-ranges-anatomical).
+/// half-width at its socket end is under its ball's radius (a limb wider than its ball meets it with a flat shoulder, which leaves a wedge the background shows through, and a limb
+/// wrapping its ball past the equator leaves a ring thinner than the grid); the hand entries keep it. Joint ranges are not doll data: the lanes carry no joint limits (follow-up lodur-joint-ranges-anatomical).
 /// </summary>
 /// <param name="Kind">The physics shape's kind.</param>
 /// <param name="Size">The physics shape's Size0..2 (matched within 1e-4).</param>
@@ -102,10 +102,17 @@ public static class Doll
     public const float FacetError = 0.02f;
 
     /// <summary>
-    /// A body piece's facet error is at most this fraction of its thickness (<see cref="PuppetField.Thickness"/>): below 40 mm a part cannot afford <see cref="FacetError"/> (at 20 mm
-    /// the probe's fingers, 11 mm thick, decimated to 2 triangles and the palm to 8). Every body of 40 mm or more keeps <see cref="FacetError"/>, so its mesh does not change.
+    /// A thin body piece's facet error is at most this fraction of its thickness (<see cref="PuppetField.Thickness"/>): below <see cref="ThinBelow"/> a part cannot afford <see cref="FacetError"/> (at 20 mm
+    /// the probe's fingers, 11 mm thick, decimated to 2 triangles and the palm to 8). Every body of 40 mm or more keeps <see cref="FacetError"/>, so its mesh does not change. Outside the seat bands
+    /// it decides the thumb (8 triangles at 0.5, a prism; 14 at 0.25) and the fingers' tips; the seat bands cover almost the whole palm and fingers, where it moves little.
     /// </summary>
-    public const float ThinError = 0.5f;
+    public const float ThinError = 0.25f;
+
+    /// <summary>The thickness (m) under which a body is thin: only a body thinner than this has its error cut to <see cref="ThinError"/> of its thickness (<see cref="BodyError"/>); a body of 40 mm or more keeps <see cref="FacetError"/> and its mesh (ruling puppet-look-artdoll-alpha-half).</summary>
+    public const float ThinBelow = 0.04f;
+
+    /// <summary>A body piece's facet error (m) away from the sockets: <see cref="FacetError"/>, or for a thin body (under <see cref="ThinBelow"/>) <see cref="ThinError"/> of its thickness where that is less.</summary>
+    public static float BodyError(float thickness) => thickness < ThinBelow ? MathF.Min(FacetError, ThinError * thickness) : FacetError;
 
     /// <summary>
     /// The seat band (m) beyond a socket's radius: a collapse that touches a vertex within it runs under <see cref="SeatError"/>. A field-value error is blind to a
@@ -117,16 +124,24 @@ public static class Doll
     public const float SeatError = 0.005f;
 
     /// <summary>
-    /// How far (m) a ball's surface may stray from its sphere, two-sided: its facets straddle the sphere and fill the socket; where a facet reaches past the seam it is
-    /// inside the cup (intersection is allowed). An inscribed ball (10 mm in, 0.2 out) opens 10.8 mm.
+    /// The share of a ball's radius a seat may stray by, where that is under <see cref="SeatError"/> (<see cref="PieceField.SeatLimit"/>): the wrist's 26 mm ball seats within 3.9 mm, the knuckle roll's 15 mm within 2.25
+    /// and the CMC's 14 mm within 2.1; every body ball is 34 mm or more, where 0.15 x 34 = 5.1 is over <see cref="SeatError"/>, so no body piece's mesh changes. Measured on the hand chain (slits, mm2, the wrist): off (5 mm
+    /// at every ball) reads the wrist slit 30.6 against 18.7; 0.08 makes 1.5 to 2 times the hand's triangles and a sawtooth along every hand rim.
     /// </summary>
-    public const float BallError = 0.005f;
+    public const float SeatShare = 0.15f;
+
+    /// <summary>
+    /// The octahedral lattice's frequency every joint ball and roll is built at (<see cref="PuppetField.Primitive"/>): 4 x 3 = 12 sides round the axis, 72 triangles and 38 vertices a ball, 96 and 50 a roll, the facets
+    /// straddling the sphere by +-3.9% of its radius (2.0 mm at 50, 0.6 mm at 15). Frequency 2 (8 sides, 32 triangles, +-10%) reads as a cut gem at the shoulder; 4 (128) shows nothing more at play distance. One value, so
+    /// every ball has the same angular look at every scale.
+    /// </summary>
+    public const int BallFrequency = 3;
 
     /// <summary>The radius (m) a fallback box is rounded by (a body with no entry is drawn as its physics shape).</summary>
     public const float FallbackRound = 0.03f;
 
-    /// <summary>The fine grid (m) a body is extracted on before decimation, and a ball: at the probe's 12 and 6 mm the decimator reaches the error with the doll's thinnest parts (30 mm) resolved.</summary>
-    public const float BodyCell = 0.012f, BallCell = 0.006f;
+    /// <summary>The fine grid (m) a body is extracted on before decimation: at the probe's 12 mm the decimator reaches the error with the doll's thinnest parts (30 mm) resolved.</summary>
+    public const float BodyCell = 0.012f;
 
     /// <summary>The decimator's normal-deviation weight k (m^2): the plane distance is in m^4 and the deviation in m^2, so k = (16 mm)^2 sets them on one scale.</summary>
     public const float FacetScale = 0.016f * 0.016f;
@@ -144,16 +159,17 @@ public static class Doll
         }, 0.072f),
         new(Box3DSoaKind.Sphere, V(.11f, 0, 0), new[] { DollPrim.Ellipsoid(V(0, .015f, -.005f), V(.085f, .108f, .095f)), DollPrim.Cone(V(0, -.02f, .015f), .06f, V(0, -.075f, .045f), .033f) }, 0.036f),
         new(Box3DSoaKind.Capsule, V(.045f, .11f, 0), new[] { DollPrim.Cone(V(0, .125f, 0), .05f, V(0, -.12f, 0), .037f) }, 0.05f),
-        new(Box3DSoaKind.Capsule, V(.04f, .10f, 0), new[] { DollPrim.Cone(V(0, .115f, 0), .036f, V(0, -.105f, 0), .027f) }, 0.038f),
+        new(Box3DSoaKind.Capsule, V(.04f, .10f, 0), new[] { DollPrim.Cone(V(0, .115f, 0), .036f, V(0, -.105f, 0), .024f) }, 0.038f),
         new(Box3DSoaKind.Capsule, V(.07f, .18f, 0), new[] { DollPrim.Cone(V(0, .2f, 0), .07f, V(0, -.22f, 0), .05f) }, 0.07f),
         new(Box3DSoaKind.Capsule, V(.06f, .17f, 0), new[] { DollPrim.Cone(V(0, .2f, 0), .05f, V(0, -.2f, 0), .035f), DollPrim.Ellipsoid(V(0, .08f, -.012f), V(.05f, .1f, .055f)) }, 0.05f),
         new(Box3DSoaKind.Box, V(.05f, .04f, .12f), new[] { DollPrim.Ellipsoid(V(0, 0, -.005f), V(.045f, .038f, .105f)), DollPrim.Cone(V(0, .01f, -.08f), .036f, V(0, -.015f, .1f), .02f) }, 0.034f),
         // The hands (ruling puppet-hands-thumb-palm-fingers): the forearm ends at the wrist ball; the palm runs from the wrist (y +.045) to the knuckles (y -.045); the thumb from its
         // CMC ball (y +.05) down its metacarpal; the fingers from the knuckle (y +.0425) down. Sockets only on the hand joints (doll-pieces-hug-balls), and the knuckle ball is a roll
-        // across the hand (doll-knuckle-roll) that palm and fingers hug.
-        new(Box3DSoaKind.Box, V(.014f, .045f, .04f), new[] { DollPrim.Box(V(0, -.004f, 0), V(.0155f, .045f, .04f), .011f), DollPrim.Ellipsoid(V(0, .028f, 0), V(.014f, .022f, .03f)) }, 0.022f),
-        new(Box3DSoaKind.Capsule, V(.011f, .03f, 0), new[] { DollPrim.Cone(V(0, .05f, 0), .0135f, V(0, -.032f, 0), .0105f) }, 0.012f),
-        new(Box3DSoaKind.Box, V(.011f, .0425f, .038f), new[] { DollPrim.Box(V(0, .002f, 0), V(.0115f, .044f, .037f), .0095f) }, 0.0125f, V(0, 0, 1), 0.028f),
+        // across the hand (doll-knuckle-roll) that palm and fingers hug. Each limb ends inside its ball (see DollEntry): the forearm's 24 mm end under the wrist ball's 26, the thumb's 12 mm root under the CMC ball's 14, the palm's
+        // 14 mm half-thickness under the knuckle roll's 15, so the ball shows round where a flat shoulder would leave a wedge; the roll shows a 12 mm band between the palm (ending 6 mm short of the knuckle axis) and the fingers (starting 6 mm past it).
+        new(Box3DSoaKind.Box, V(.014f, .045f, .04f), new[] { DollPrim.Box(V(0, -.0125f, 0), V(.014f, .0265f, .04f), .011f), DollPrim.Ellipsoid(V(0, .028f, 0), V(.0135f, .022f, .027f)) }, 0.026f),
+        new(Box3DSoaKind.Capsule, V(.011f, .03f, 0), new[] { DollPrim.Cone(V(0, .044f, 0), .012f, V(0, -.032f, 0), .0105f) }, 0.014f),
+        new(Box3DSoaKind.Box, V(.011f, .0425f, .038f), new[] { DollPrim.Box(V(0, -.00275f, 0), V(.0115f, .03925f, .037f), .0095f) }, 0.015f, V(0, 0, 1), 0.028f),
     };
 
     /// <summary>The entry that dresses a body of this physics shape, or null.</summary>
