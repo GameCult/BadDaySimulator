@@ -12,8 +12,8 @@ public readonly record struct PuppetJointLane(Box3DSoaJointKind Kind, ulong A, u
 /// <summary>
 /// Owns the puppet's shape and the one rule for when it is rebuilt and published, engine-free so the rule can be tested without a scene. The shape is
 /// rebuilt when the ordered (StableId, Kind, Size0..2) of the shape bodies changes; the joints are fixed at first sight like the bind (lodur:ruling:doll-severed-keeps-socket):
-/// the qualifying joints of the first update, each with its origin in body A's frame, keep their socket in both bodies and their ball in the parent, so severing a joint
-/// changes nothing drawn and a joint that appears later gets no ball or socket; a first-sight joint is drawn while both its bodies are present. A body's bind is its pose
+/// the qualifying joints that come with the first sight of a body they join (the first update's, or a body that appears later with its own joints, a spawned jointed prop), each with its origin in body A's frame, keep their socket in both bodies and their ball in the parent, so severing a joint
+/// changes nothing drawn and a joint between two bodies already seen (a reattach weld) gets no ball or socket; a first-sight joint is drawn while both its bodies are present. A body's bind is its pose
 /// the first time it is seen (the creation pose). Poses and joint origins alone never rebuild.
 /// Nothing here meshes on the caller's thread: a rebuild asks <see cref="PuppetPieces"/> for its pieces (a pure function of their keys, built once) and publishes the
 /// new shape when they are all built, in the same update by assembly alone if they already are; until then the previous shape stays.
@@ -69,11 +69,15 @@ public sealed class PuppetModel
     /// </summary>
     public bool Update(IReadOnlyList<PuppetBody> bodies, IReadOnlyList<PuppetJointLane> joints)
     {
-        foreach (var b in bodies) _bind.TryAdd(b.Id, b.Bind);
-        if (!_signed)
+        var seen = new HashSet<ulong>();
+        foreach (var b in bodies) if (_bind.TryAdd(b.Id, b.Bind)) seen.Add(b.Id);
+        // A joint is fixed with the first sight of a body it joins (lodur:ruling:doll-severed-keeps-socket: a body's sockets and the balls it parents are fixed when the body
+        // is first seen): each origin is body A's, kept in A's frame so it follows A. A joint between two bodies both seen before is a later one and gets nothing.
+        foreach (var j in joints)
         {
-            // The joints are fixed here: each origin is body A's, kept in A's frame so it follows A; the first sight is the creation pose.
-            foreach (var j in joints) _sight.Add((j.Kind, j.A, j.B, _bind[j.A].Inverse().Apply(j.Origin)));
+            if (!seen.Contains(j.A) && !seen.Contains(j.B)) continue;
+            foreach (var a in bodies)
+                if (a.Id == j.A) { _sight.Add((j.Kind, j.A, j.B, a.Bind.Inverse().Apply(j.Origin))); break; }
         }
         if (!_signed || !SignatureHolds(bodies)) Start(bodies);
         if (_pendingSet is not { } set || !_pending.All(t => t.IsCompleted)) return false;

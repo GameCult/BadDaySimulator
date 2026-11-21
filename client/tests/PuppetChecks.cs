@@ -98,6 +98,26 @@ public static class PuppetChecks
             Check(Published(model, b, j) && model.Shape!.Joints.Length == 1, "a body that left kept its joint's ball");
         }
 
+        // A body is first seen with its joints (lodur:ruling:doll-severed-keeps-socket): one that appears later with a joint to a body already seen gets its socket and ball,
+        // by its own first sight; a joint that appears an update after its bodies, or between two bodies already seen, gets none.
+        {
+            var model = Fresh();
+            var (b, j) = Chain();
+            Published(model, b, j);
+            b.Add(Body(13, Box3DSoaKind.Capsule, 0.03f, 0.05f, 0.55f));
+            j.Add(new PuppetJointLane(Box3DSoaJointKind.Revolute, 12, 13, new float3(0, 0.47f, 0)));
+            Check(Published(model, b, j) && model.Shape!.Joints.Length == 3 && model.Shape.PieceCount == 7, $"a body that first appears with its joint has {model.Shape!.Joints.Length} joints and {model.Shape.PieceCount} pieces, not the 3 and 7 of a ball and socket at its first sight");
+            var drawn = model.Shape;
+            j.RemoveAt(2);
+            Check(!model.Update(b, j) && ReferenceEquals(model.Shape, drawn), "severing the joint of a later body changed the drawn shape");
+            var late = Fresh();
+            var (lb, lj) = Chain();
+            lj.RemoveAt(1);
+            Published(late, lb, lj);
+            lj.Add(new PuppetJointLane(Box3DSoaJointKind.Revolute, 11, 12, new float3(0, 0.32f, 0)));
+            Check(!late.Update(lb, lj) && late.Shape!.Joints.Length == 1, "a joint between two bodies already seen got a ball and socket");
+        }
+
         // Pieces are cached by key and built off the tick: a body whose pieces are not built leaves Update false with the previous shape drawn, until they are.
         {
             var model = Fresh();
