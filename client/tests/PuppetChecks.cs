@@ -564,7 +564,7 @@ public static class PuppetChecks
     /// <summary>The most see-inside area (mm2, mean over the directions) any ball joint may show, derived by lodur:ruling:deterministic-bound-margin: shipped worst 0.04 (the shoulder and hip balls), the least claimed mutant palm-top-open (the palm box's top lowered from 14 to 4 mm: a window into the palm) 12.52, bound 0.7.</summary>
     private const float MaxSeeInside = 0.7f;
 
-    /// <summary>The share of a hand ball's surface a limb's mesh must lie within Seam + 1 mm of, per side: derived from the shipped hands (the least side seats on 20.2% with the cups, 9.3% before them) and the seam mutant (sockets 10 mm off their balls seat on none).</summary>
+    /// <summary>The share of a hand ball's surface a limb's mesh must lie within Seam + 1 mm of, per side: set at 3.3%, under the shipped hands' least side (5.2%: the wrist's palm side); no claimed mutant reads a share between that and none (the seam mutant, sockets 10 mm off their balls, seats on 0.0%), so the bound is not derived by deterministic-bound-margin and is a recorded loosening of the earlier 5%.</summary>
     private const float HugShare = 0.033f;
 
     /// <summary>The distance along the ray from <paramref name="o"/> in direction <paramref name="d"/> to the first of the piece's triangles it crosses, or infinity.</summary>
@@ -626,7 +626,7 @@ public static class PuppetChecks
                 if (cosMax >= 0) { worstMax = MathF.Max(worstMax, max); if (max > 15) tooFar++; }
             }
         }
-        Console.WriteLine($"PUPPET seat: {sides} sides, worst median gap {worstMedian:F1} mm, worst largest {worstMax:F1} mm (hemispherical cups)");
+        Console.WriteLine($"PUPPET seat: {sides} sides, worst median gap {worstMedian:F1} mm, worst largest {worstMax:F1} mm (sides whose field lies within a hemisphere)");
         check(sides >= 22, $"the seat check is vacuous: {sides} sides with 50 rays, under 22");
         check(loose == 0, $"{loose} sides of joints have a limb whose median distance from its ball exceeds 7 mm (worst {worstMedian:F1}): the piece floats off its ball");
         check(tooFar == 0, $"{tooFar} sides have a ray that meets the limb more than 15 mm beyond the ball (worst {worstMax:F1})");
