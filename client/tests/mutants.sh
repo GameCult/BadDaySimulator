@@ -44,7 +44,7 @@ P=client/PuppetPieces.cs; M=client/PuppetModel.cs
 mutant no-cache             $P 's/Cache.GetOrAdd(key, _ =>/Cache.GetOrAdd(new PieceKey(System.Guid.NewGuid().ToString()), _ =>/' "piece meshes"
 mutant build-in-update      $M 's/if (_pendingSet is not { } set || !_pending.All(t => t.IsCompleted)) return false;/if (_pendingSet is not { } set) return false; Task.WaitAll(_pending);/' "pieces were not built yet"
 mutant joints-first-update-only $M 's/if (!seen.Contains(j.A) && !seen.Contains(j.B)) continue;/if (_signed) continue;/' "first appears with its joint"
-mutant later-joint-kept     $M 's/if (!seen.Contains(j.A) && !seen.Contains(j.B)) continue;/if (_sight.Exists(s => s.A == j.A \&\& s.B == j.B)) continue;/' "already seen got a ball and socket"
+mutant later-joint-kept     $M 's/if (!seen.Contains(j.A) && !seen.Contains(j.B)) continue;/if (_sight.Exists(s => s.A == j.A \&\& s.B == j.B)) continue;/' "already seen got a ball and socket at the next rebuild"
 
 echo "$ran mutants run, $failed not as expected (logs in $LOG)"
 [ $failed -eq 0 ]

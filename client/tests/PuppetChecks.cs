@@ -115,7 +115,9 @@ public static class PuppetChecks
             lj.RemoveAt(1);
             Published(late, lb, lj);
             lj.Add(new PuppetJointLane(Box3DSoaJointKind.Revolute, 11, 12, new float3(0, 0.32f, 0)));
-            Check(!late.Update(lb, lj) && late.Shape!.Joints.Length == 1, "a joint between two bodies already seen got a ball and socket");
+            Check(!late.Update(lb, lj) && late.Shape!.Joints.Length == 1, "a joint between two bodies already seen rebuilt the puppet");
+            lb[0] = lb[0] with { Size = new float3(0.035f, 0.05f, 0f) };
+            Check(Published(late, lb, lj) && late.Shape!.Joints.Length == 1, "a joint between two bodies already seen got a ball and socket at the next rebuild");
         }
 
         // Pieces are cached by key and built off the tick: a body whose pieces are not built leaves Update false with the previous shape drawn, until they are.
