@@ -45,6 +45,11 @@ mutant no-palm-entry        $D 's/new(Box3DSoaKind.Box, V(.014f, .045f, .04f), n
 mutant thin-error-off       $D 's/ThinError = 0.5f/ThinError = 100f/'           "fewer than 8 triangles"
 mutant roll-clearance-point $F 's/if (c.Off(p) < c.BallRadius + 0.0002f) return false;/if (math.length(p - c.Origin) < c.BallRadius + 0.0002f) return false;/' "inside a joint ball's radius"
 mutant facet-error-19mm     $D 's/FacetError = 0.02f/FacetError = 0.019f/'       "the hands must not change changed"
+# The lips (ruling doll-pieces-hug-balls): a hand piece's cup is what covers its ball's silhouette. Each hand cup removed fails the hand slit bound, and the 10 mm seam fails the body's (its slits grow with the seam).
+mutant wrist-cup-gone       $D 's/, Cup(V(0, .045f, 0), .022f) }/ }/'                      "a hand ball joint shows slits"
+mutant thumb-cup-gone       $D 's/, Cup(V(0, .05f, 0), .012f) }/ }/'                        "a hand ball joint shows slits"
+mutant knuckle-cup-gone     $D 's/, Cup(V(0, .0425f, 0), .0125f, V(0, 0, .028f)) }/ }/'    "a hand ball joint shows slits"
+mutant body-seam-10mm       $D 's/Seam = 0.002f/Seam = 0.010f/'                             "a body ball joint shows slits"
 
 P=client/PuppetPieces.cs; M=client/PuppetModel.cs
 mutant no-cache             $P 's/Cache.GetOrAdd(key, _ =>/Cache.GetOrAdd(new PieceKey(System.Guid.NewGuid().ToString()), _ =>/' "piece meshes"

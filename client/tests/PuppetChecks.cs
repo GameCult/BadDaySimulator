@@ -177,6 +177,7 @@ public static class PuppetChecks
         ThinPiecesKeepTheirShape(real, fields, triangles, Check);
         ExistingPiecesUnchanged(fields, Check);
         HandsHug(puppet, fields, triangles, Check);
+        NoSlits(puppet, triangles, Check);
         WithinTheError(puppet, fields, triangles, Check);
         LimbsKept(puppet, fields, triangles, Check);
         Mesher(puppet, triangles, Check);
@@ -388,6 +389,41 @@ public static class PuppetChecks
         check(sides >= 12, $"the hands' hug check is vacuous: {sides} sides of hand joints, under 12");
         check(bare == 0, $"{bare} limbs at hand balls seat on under {HugShare * 100:F0}% of their ball within Seam + 1 mm (least {least * 100:F1}%): they stop short of it");
     }
+
+
+    /// <summary>
+    /// No slits at a ball (ruling doll-pieces-hug-balls: intersection beats a gap): at every ball joint of the doll at its creation pose, the mean over <see cref="Slits.Views"/> silhouettes of the background a
+    /// 3 mm disc closes between the ball and its two neighbours (<see cref="Slits"/>) is at most <see cref="MaxHandSlit"/> mm2 at a hand's joint (a ball under <see cref="HandBall"/>) and <see cref="MaxBodySlit"/>
+    /// at the others. Prints each joint's reading. Vacuous under 18 joints.
+    /// </summary>
+    private static void NoSlits(PuppetShape shape, int[][] triangles, Action<bool, string> check)
+    {
+        int bodies = shape.Ids.Length, joints = shape.Joints.Length;
+        var mean = new float[joints]; var max = new float[joints];
+        var clock = Stopwatch.StartNew();
+        System.Threading.Tasks.Parallel.For(0, joints, j =>
+        {
+            var (_, a, b, o) = shape.Joints[j];
+            var tris = new List<(float3, float3, float3)>();
+            foreach (int piece in new[] { bodies + j, a, b })
+                foreach (int t in triangles[piece]) tris.Add((At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2)));
+            (mean[j], max[j]) = Slits.Per(tris, o, shape.BallRadius[j]);
+        });
+        float worstHand = 0, worstBody = 0;
+        for (int j = 0; j < joints; j++)
+        {
+            bool hand = shape.BallRadius[j] < HandBall;
+            Console.WriteLine($"PUPPET slits: joint {j} ({(hand ? "hand" : "body")}, bodies {shape.Joints[j].A}-{shape.Joints[j].B}, ball {shape.BallRadius[j] * 1000:F1} mm): mean {mean[j]:F2} mm2, worst view {max[j]:F1}");
+            if (hand) worstHand = MathF.Max(worstHand, mean[j]); else worstBody = MathF.Max(worstBody, mean[j]);
+        }
+        Console.WriteLine($"PUPPET slits: worst hand joint {worstHand:F2} mm2 of {MaxHandSlit}, worst body joint {worstBody:F2} of {MaxBodySlit} ({clock.ElapsedMilliseconds} ms)");
+        check(joints >= 18, $"the slit check is vacuous: {joints} joints, under 18");
+        check(worstHand <= MaxHandSlit, $"a hand ball joint shows slits: mean {worstHand:F2} mm2 over {Slits.Views} views, over {MaxHandSlit}: a hand piece's cup does not cover its ball");
+        check(worstBody <= MaxBodySlit, $"a body ball joint shows slits: mean {worstBody:F2} mm2 over {Slits.Views} views, over {MaxBodySlit}");
+    }
+
+    /// <summary>The most slit area (mm2, mean over the views) a hand joint may show, and a body joint.</summary>
+    private const float MaxHandSlit = 2.5f, MaxBodySlit = 18f;
 
     /// <summary>The share of a hand ball's surface a limb's mesh must lie within Seam + 1 mm of, per side: derived from the shipped hands (the least side seats on 9.3%) and the seam mutant (sockets 10 mm off their balls seat on none).</summary>
     private const float HugShare = 0.05f;
