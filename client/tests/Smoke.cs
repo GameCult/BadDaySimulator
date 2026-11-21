@@ -18,7 +18,7 @@ public partial class Smoke : Node
     private const ulong Seed = 1;
     private const double WatchdogSeconds = 150;
 
-    /// <summary>The puppet mesh's triangle range: 0.6x to 1.6x the doll with hands' measured 1512, which FacetError, ThinError, SeatBand, SeatError and BallError decide.</summary>
+    /// <summary>The puppet mesh's triangle range: 0.6x to 1.6x the doll with hands' measured 1512, which FacetError, ThinError, SeatBand, SeatError and BallError decide; the hand cups (Doll.Lip) make it 1640, well inside.</summary>
     private const int MinTriangles = 900, MaxTriangles = 2420;
 
     private readonly List<string> _failures = new();
