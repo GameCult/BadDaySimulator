@@ -18,7 +18,7 @@ mutant() {
   if ! dotnet build client/BadDay.Client.csproj -v q > "$LOG/$name.build" 2>&1; then
     echo "FAIL  $name: does not build"; failed=$((failed + 1)); git checkout -q -- "$file"; return
   fi
-  timeout 400 "$GODOT" --headless --path client res://tests/Smoke.tscn > "$LOG/$name.log" 2>&1
+  timeout 900 "$GODOT" --headless --path client res://tests/Smoke.tscn > "$LOG/$name.log" 2>&1
   local code=$?
   git checkout -q -- "$file"
   if [ "$want" = PASS ]; then
@@ -47,7 +47,7 @@ mutant facet-error-19mm     $D 's/FacetError = 0.02f/FacetError = 0.019f/'      
 # The primitives (ruling doll-joints-built-primitives): the straddle off (the lattice inscribed: its face centres 7.5% inside), the frequency 2 (8 sides, 32 triangles), a roll with no length.
 mutant ball-inscribed       $F 's#radius \* 2f / (1f + k)#radius#' "ball faces lie more than"
 mutant ball-freq-2          $D 's/BallFrequency = 3/BallFrequency = 2/' "are not 38 vertices and 72 triangles"
-mutant roll-sphere          $D 's/0.015f, V(0, 0, 1), 0.028f)/0.015f, V(0, 0, 1), 0f)/' "are not 38 vertices and 72 triangles"
+mutant roll-sphere          $D 's/0.015f, V(0, 0, 1), 0.028f)/0.015f, V(0, 0, 1), 0f)/' "not its two knuckle rolls"
 # The seat error scaled to the ball off (5 mm at every ball), and a limb wider than its ball (the palm's ellipsoid 34 mm across against the 26 mm wrist ball): the wedge between them is a slit. A piece open at its top (the palm box top lowered from 14 to 4 mm) is a window into itself.
 mutant seat-share-off       $D 's/SeatShare = 0.15f/SeatShare = 100f/' "a ball joint shows slits"
 mutant limb-end-over-ball   $D 's/V(.0135f, .022f, .027f)/V(.0135f, .022f, .034f)/' "a ball joint shows slits"

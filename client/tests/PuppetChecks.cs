@@ -290,7 +290,7 @@ public static class PuppetChecks
     /// <summary>
     /// Balls are built primitives (ruling doll-joints-built-primitives): every ball piece is the straddled lattice of <see cref="Doll.BallFrequency"/> and nothing else. A sphere has 38 vertices and 72 triangles, a roll
     /// 50 and 96; every vertex of a ball lies the same distance from its core (the joint origin, or the roll's segment) to 1e-5, outside the ball's radius by at most 4%, and every face centroid at least 4% inside it
-    /// (the facets straddle the sphere); the balls total 1344 triangles. Vacuous under 18 balls.
+    /// (the facets straddle the sphere); the balls total 1344 triangles. The doll has its two knuckle rolls. Vacuous under 18 balls.
     /// </summary>
     private static void BallsArePrimitives(PuppetShape shape, PieceSet set, int[][] triangles, Action<bool, string> check)
     {
@@ -311,6 +311,8 @@ public static class PuppetChecks
         }
         Console.WriteLine($"PUPPET balls: {set.Balls.Length} primitives, {total} triangles");
         check(set.Balls.Length >= 18, $"the ball check is vacuous: {set.Balls.Length} balls, under 18");
+        int rolls = set.Balls.Count(b => math.lengthsq(b.Roll) > 0);
+        check(rolls == 2, $"the doll has {rolls} rolls, not its two knuckle rolls: a roll's length is gone");
         check(wrongCount == 0, $"{wrongCount} balls are not 38 vertices and 72 triangles (a roll 50 and 96): a ball is not built at BallFrequency {Doll.BallFrequency}");
         check(total == 1344, $"the balls total {total} triangles, not 1344");
         check(uneven == 0, $"{uneven} balls have vertices at different distances from their core: a ball is not a scaled lattice");
