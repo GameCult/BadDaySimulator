@@ -33,11 +33,14 @@ public static class Slits
         return d;
     }
 
-    /// <summary>The mean over the views, and the largest single view, of the slit area (mm2) at a ball at <paramref name="origin"/> with radius <paramref name="radius"/>, of the triangles <paramref name="tris"/> (three points each: the ball's and its two neighbours').</summary>
-    public static (float Mean, float Max) Per(IReadOnlyList<(float3 A, float3 B, float3 C)> tris, float3 origin, float radius)
+    /// <summary>
+    /// The mean over the views, and the largest single view, of the slit area (mm2) at a ball at <paramref name="origin"/> with radius <paramref name="radius"/>, of the triangles <paramref name="tris"/> (three points each: the ball's and its two neighbours').
+    /// A roll (<paramref name="roll"/>, the half-segment from the origin to one end, zero for a sphere) is read along its whole length: the region is what lies within <see cref="Reach"/> of the roll's rim, the ends and the neighbours' ends included.
+    /// </summary>
+    public static (float Mean, float Max) Per(IReadOnlyList<(float3 A, float3 B, float3 C)> tris, float3 origin, float radius, float3 roll = default)
     {
         float roi = radius + Reach;
-        int half = (int)MathF.Ceiling((roi + 2 * Disc) * PixelsPerMetre), n = 2 * half + 1, rad = (int)MathF.Round(Disc * PixelsPerMetre);
+        int half = (int)MathF.Ceiling((roi + math.length(roll) + 2 * Disc) * PixelsPerMetre), n = 2 * half + 1, rad = (int)MathF.Round(Disc * PixelsPerMetre);
         var runs = new int[rad + 1];
         for (int dy = 0; dy <= rad; dy++) runs[dy] = (int)MathF.Floor(MathF.Sqrt(rad * rad - dy * dy) + 1e-3f);
         float total = 0, worst = 0;
@@ -51,11 +54,12 @@ public static class Slits
             Dilate(mask, dil, n, rad, runs, true);
             Dilate(dil, closed, n, rad, runs, false);
             int count = 0;
-            float roiPx = roi * PixelsPerMetre;
+            float roiPx = roi * PixelsPerMetre; var seg = Project(roll, r, u); float sl = math.lengthsq(seg);
             for (int y = 0; y < n; y++)
                 for (int x = 0; x < n; x++)
                 {
                     float dx = x - half, dyy = y - half;
+                    if (sl > 0) { float k = math.clamp((dx * seg.x + dyy * seg.y) / sl, -1f, 1f); dx -= k * seg.x; dyy -= k * seg.y; }
                     if (closed[y * n + x] && !mask[y * n + x] && dx * dx + dyy * dyy <= roiPx * roiPx) count++;
                 }
             float mm2 = count / (PixelsPerMetre / 1000f * PixelsPerMetre / 1000f);

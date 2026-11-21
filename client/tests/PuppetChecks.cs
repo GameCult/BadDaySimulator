@@ -178,8 +178,8 @@ public static class PuppetChecks
         ThinPiecesKeepTheirSilhouette(puppet, real, fields, triangles, Check);
         ExistingPiecesUnchanged(fields, Check);
         HandsHug(puppet, set.Balls, triangles, Check);
-        NoSlits(puppet, real, triangles, Check);
-        NoSeeInside(puppet, real, triangles, Check);
+        NoSlits(puppet, real, set.Balls, triangles, Check);
+        NoSeeInside(puppet, real, set.Balls, triangles, Check);
         WithinTheError(puppet, fields, triangles, Check);
         LimbsKept(puppet, fields, triangles, Check);
         Mesher(puppet, triangles, Check);
@@ -514,13 +514,13 @@ public static class PuppetChecks
     /// silhouettes of the background a 3 mm disc closes between the ball and its two neighbours (<see cref="Slits"/>) is at most <see cref="MaxSlit"/> mm2: one standard for every ball. Prints each joint's reading
     /// and its worst single view. Vacuous under 18 joints.
     /// </summary>
-    private static void NoSlits(PuppetShape shape, List<PuppetBody> bodies, int[][] triangles, Action<bool, string> check)
+    private static void NoSlits(PuppetShape shape, List<PuppetBody> bodies, JointBall[] balls, int[][] triangles, Action<bool, string> check)
     {
         int joints = shape.Joints.Length;
         var rows = new (string Pose, float Mean, float Max)[joints][];
         var clock = Stopwatch.StartNew();
         System.Threading.Tasks.Parallel.For(0, joints, j =>
-            rows[j] = JointPoses(shape, bodies, triangles, j).Select(p => { var (mean, max) = Slits.Per(p.Tris, shape.Joints[j].Origin, shape.BallRadius[j]); return (p.Pose, mean, max); }).ToArray());
+            rows[j] = JointPoses(shape, bodies, triangles, j).Select(p => { var (mean, max) = Slits.Per(p.Tris, shape.Joints[j].Origin, shape.BallRadius[j], balls[j].Roll); return (p.Pose, mean, max); }).ToArray());
         float worst = 0;
         for (int j = 0; j < joints; j++)
             foreach (var (pose, mean, max) in rows[j])
@@ -543,13 +543,13 @@ public static class PuppetChecks
     /// No see-inside (ruling doll-pieces-hug-balls: a limb is not a window into itself): at every ball joint, at both poses, the mean over <see cref="SeeInside.Directions"/> directions of the area where a ray first meets the
     /// back of a triangle of the ball or its two neighbours (<see cref="SeeInside"/>) is at most <see cref="MaxSeeInside"/> mm2. The silhouette reads cannot see an opening in the skin: there is a surface behind it.
     /// </summary>
-    private static void NoSeeInside(PuppetShape shape, List<PuppetBody> bodies, int[][] triangles, Action<bool, string> check)
+    private static void NoSeeInside(PuppetShape shape, List<PuppetBody> bodies, JointBall[] balls, int[][] triangles, Action<bool, string> check)
     {
         int joints = shape.Joints.Length;
         var rows = new (string Pose, float Mean, float Max)[joints][];
         var clock = Stopwatch.StartNew();
         System.Threading.Tasks.Parallel.For(0, joints, j =>
-            rows[j] = JointPoses(shape, bodies, triangles, j).Select(p => { var (mean, max) = SeeInside.Per(p.Tris, shape.Joints[j].Origin, shape.BallRadius[j]); return (p.Pose, mean, max); }).ToArray());
+            rows[j] = JointPoses(shape, bodies, triangles, j).Select(p => { var (mean, max) = SeeInside.Per(p.Tris, shape.Joints[j].Origin, shape.BallRadius[j], balls[j].Roll); return (p.Pose, mean, max); }).ToArray());
         float worst = 0;
         for (int j = 0; j < joints; j++)
             foreach (var (pose, mean, max) in rows[j])

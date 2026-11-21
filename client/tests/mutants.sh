@@ -56,6 +56,13 @@ mutant palm-top-open        $D 's/DollPrim.Box(V(0, -.0125f, 0), V(.014f, .0265f
 mutant fingers-root-lip     $D 's/DollPrim.Box(V(0, -.00575f, 0), V(.0115f, .03625f, .037f), .0095f)/DollPrim.Box(V(0, -.00275f, 0), V(.0115f, .03925f, .037f), .0095f)/' "does not wrap its roll"
 mutant thin-error-half      $D 's/ThinError = 0.25f/ThinError = 0.5f/' "silhouette differs"
 mutant body-seam-10mm       $D 's/Seam = 0.002f/Seam = 0.010f/'                             "a ball joint shows slits"
+# Joints are built primitives, never meshed (ruling doll-joints-built-primitives): a ball routed through the decimator; the thin rule moved onto the bodies of 80 mm (ThinBelow); the seat limit without the thin error (Allowed's minimum); a lower seat share.
+mutant ball-decimated       $F 's#public (float3\[\] V, int\[\] Tris) Mesh() => PuppetField.Primitive(Radius, Axis, math.length(Roll), Doll.BallFrequency);#public (float3[] V, int[] Tris) Mesh() { var (v, t) = PuppetField.Primitive(Radius, Axis, math.length(Roll), Doll.BallFrequency); return PuppetDecimate.Run(v, t, Doll.FacetAlpha, Doll.FacetScale, new DecimateRules((p, tight) => true, p => false, System.Array.Empty<(float3 P, float Clear)>())); }#' "WANT_BALL_DECIMATED"
+mutant thinbelow-8cm        $D 's/ThinBelow = 0.04f/ThinBelow = 0.08f/' "the hands must not change changed"
+mutant allowed-no-min       $F 's/(tight ? MathF.Min(Error, SeatLimit(p)) : Error)/(tight ? SeatLimit(p) : Error)/' "WANT_ALLOWED"
+mutant seat-share-008       $D 's/SeatShare = 0.15f/SeatShare = 0.08f/' "WANT_SEATSHARE"
+# The knuckle roll read along its whole length (slits and see-inside reach the roll's ends and the hands' z ends): the palm 15 mm shorter each end leaves the roll bare.
+mutant palm-short-z         $D 's/DollPrim.Box(V(0, -.0125f, 0), V(.014f, .0265f, .04f), .011f)/DollPrim.Box(V(0, -.0125f, 0), V(.014f, .0265f, .025f), .011f)/' "WANT_PALM_SHORT"
 
 P=client/PuppetPieces.cs; M=client/PuppetModel.cs
 mutant no-cache             $P 's/Cache.GetOrAdd(key, _ =>/Cache.GetOrAdd(new PieceKey(System.Guid.NewGuid().ToString()), _ =>/' "piece meshes"

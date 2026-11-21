@@ -30,11 +30,14 @@ public static class SeeInside
         return d;
     }
 
-    /// <summary>The mean over the directions, and the largest single direction, of the area (mm2) whose first hit is a back face, at a ball at <paramref name="origin"/> with radius <paramref name="radius"/>, of the triangles <paramref name="tris"/> (the ball's and its two neighbours', wound clockwise from outside).</summary>
-    public static (float Mean, float Max) Per(IReadOnlyList<(float3 A, float3 B, float3 C)> tris, float3 origin, float radius)
+    /// <summary>
+    /// The mean over the directions, and the largest single direction, of the area (mm2) whose first hit is a back face, at a ball at <paramref name="origin"/> with radius <paramref name="radius"/>, of the triangles <paramref name="tris"/> (the ball's and its two neighbours', wound clockwise from outside).
+    /// A roll (<paramref name="roll"/>, the half-segment from the origin to one end, zero for a sphere) is read along its whole length: the grid covers what lies within the reach of the roll's segment.
+    /// </summary>
+    public static (float Mean, float Max) Per(IReadOnlyList<(float3 A, float3 B, float3 C)> tris, float3 origin, float radius, float3 roll = default)
     {
         float reach = radius + Reach, far = 0.5f;
-        int n = (int)MathF.Ceiling(reach / Cell);
+        int n = (int)MathF.Ceiling((reach + math.length(roll)) / Cell);
         var tri = new (float3 A, float3 E1, float3 E2, float3 N)[tris.Count];
         for (int i = 0; i < tri.Length; i++)
         {
@@ -45,12 +48,13 @@ public static class SeeInside
         foreach (var d in Dirs)
         {
             var r = math.normalize(math.cross(d, MathF.Abs(d.y) < 0.9f ? new float3(0, 1, 0) : new float3(1, 0, 0))); var u = math.cross(d, r);
-            int back = 0;
+            int back = 0; float sx = math.dot(roll, r), sy = math.dot(roll, u), sl = sx * sx + sy * sy;
             for (int iy = -n; iy < n; iy++)
                 for (int ix = -n; ix < n; ix++)
                 {
-                    float x = (ix + 0.5f) * Cell, y = (iy + 0.5f) * Cell;
-                    if (x * x + y * y > reach * reach) continue;
+                    float x = (ix + 0.5f) * Cell, y = (iy + 0.5f) * Cell, ex = x, ey = y;
+                    if (sl > 0) { float k = math.clamp((x * sx + y * sy) / sl, -1f, 1f); ex -= k * sx; ey -= k * sy; }
+                    if (ex * ex + ey * ey > reach * reach) continue;
                     var o = origin - d * far + r * x + u * y;
                     float best = float.PositiveInfinity; bool isBack = false;
                     foreach (var t in tri)
