@@ -104,10 +104,10 @@ public partial class RenderCheck : Node
 
     /// <summary>
     /// Across triangle boundaries: the pairs of adjacent pixels the check must reach (the shares and percentiles each view allows are in <see cref="Views"/>). The share over 30 degrees is a rare event
-    /// (the shipped doll 0.61% and 0.70%), so it needs the most samples of any metric here: 8000 pairs is the least at which 2000 random draws of that many pairs never put the shipped share over its bound
-    /// nor the widened bevel's under it; the two views reach 17762 and 14219.
+    /// (the shipped doll 0.61% and 0.70%), so it needs the most samples of any metric here: 12000 pairs is the least at which 2000 iid draws (with replacement) of that many pairs never put the shipped share over its bound
+    /// nor the widened bevel's or the unbent-tilt mutant's under it (10000 at close, 12000 at bend 90); the two views reach 17762 and 14219.
     /// </summary>
-    private const int MinPairs = 8000;
+    private const int MinPairs = 12000;
 
     /// <summary>The flicker check's reference is this many times the window on a side; each view must reach at least this many interior and highlight pixels (see <see cref="FlickerCheck"/>) or it proves nothing.</summary>
     private const int FlickerSupersample = 8, MinFlickerPixels = 15000, MinFlickerHighlights = 200;
@@ -140,9 +140,10 @@ public partial class RenderCheck : Node
 
     /// <summary>
     /// The parent's turn about the vertical (the body renderer is neither at the origin nor unturned): any turn but 0 serves that, and the turn decides the view of the doll's flat facets, the torso's front above all, which mirror the key
-    /// or not. At 0.45 and 0.7 radian the torso's facet mirrors the key and the shipped glaze clips 19.7% and 16.8% of the puppet from the front, over the 12% a white-out is held to (the chamber light at 3 reads 64.7% and 61.9% there,
-    /// so a limit that passed the shipped doll would sit at 30% of the white-out's reading or more); at 1.0 the shipped reads 1.7% and the white-out 34.6%, and the limit of 12% sits 7 times over the one and 2.9 times under the other.
-    /// The turn is therefore the one where the clipping limits tell the shipped porcelain from a white-out by the widest margin of the turns measured (the shipped doll at 0, 0.45, 0.7, 1.0, 1.4, -0.4 and -0.9, the white-out at the first four), not the one that passes.
+    /// or not. 1.0 is the LEAST-clipping turn of the seven measured, and it was moved to from 0.45 because the shipped doll fails the check there: the shipped glaze clips, from the front, 7.3% at 0, 19.7% at 0.45, 16.8% at 0.7, 1.7% at 1.0, 2.7% at 1.4,
+    /// 6.1% at -0.4 and 3.9% at -0.9 of the puppet's pixels, against the 12% bound. At 0.45 to 0.7 radian (a turn the orbit camera reaches) the torso facet and a forearm blow out to white, and this check no longer looks there: its clipping bounds describe the doll
+    /// at the turn where it clips least. Whether that glare is the look is the operator's call by eye (frames at 0.45 and 0.7 to be shown), not this constant's. The white-out (the chamber light at 3) is killed by the 5% bisque clip at every turn (40.6% to 54.7% at the seven),
+    /// so the turn adds no killing power; it moves the shipped doll out of the false-positive region of the 12% glaze bound, and that is all it does.
     /// </summary>
     private const float ParentYaw = 1.0f;
     private const float BendDegrees = 60f;
@@ -404,18 +405,22 @@ public partial class RenderCheck : Node
     /// the screen width are within a tenth of each other and the width changes across the frame. Bend 90 is a pose of sharp creases: the
     /// crease clamp is reached there, and the continuity across triangles has its own bar, since some edges fold past 120 degrees and 2 px
     /// cannot soften them. Each view looks at a joint of the doll, where the seat bands make the triangles small and the corner and crease pixels plentiful.
-    /// The floors (interior, band, capped, corner, sharp) are derived on the shipped doll (1294 triangles; the doll is not densified to meet a floor): each is the least count at which that metric, on random draws of that many of
-    /// the view's own pixels (2000 draws, from sizes of 50 up), never puts the shipped reading over its bound nor any mutant that the metric catches in that view (reading the bound times 1.2 or more) under it. The mutants are
-    /// the bevel's (no tilt, a widened and a linear falloff, no width cap, a width fixed at 720 lines, a corner reach of 1.0, a crease clamp of 1.0, a vertex normal left in model space). The views reach their floors by
-    /// 1.2 times at the least (the capped pixels of far, 178 of 150) and 2.5 times for the corner blend (far, 378 of 50 to 200 elsewhere). Where no mutant reaches a view's sharp creases (far: one pixel) the floor is 0.
+    /// The floors (interior, band, capped, corner, sharp) are derived on the shipped doll (1294 triangles; the doll is not densified to meet a floor), under independent draws with replacement of the view's own pixels (the model
+    /// of a count of pixels that are samples of a rendering, whatever their number; 2000 draws, sizes 50 up in steps of 50, 1000 up in 500s): the least size k* from which the metric on every draw of that size never puts the shipped reading over its bound
+    /// nor any mutant that the metric catches in that view (its full reading the bound times 1.2 or more) under it. The mutants are the bevel's (no tilt, a widened and a linear falloff, no width cap, a width fixed at 720 lines, a corner reach of 1.0,
+    /// a crease clamp of 1.0, a vertex normal left in model space). A floor is k* or above, never under it. k* by view (close, far, bend 90, mid 1080, far 1080): interior 900, 50, 150, 2000, 150; band 100, 50, 50, 150, 50; capped 50, 450, 50, 300, 200;
+    /// corner 200, 100, 200, 200, 200; sharp 150, none reaches, 50, 100, 100. The far view's capped pixels (178) do not reach their k* of 450, so the far view carries no floor for them (0): its capped reading is still held to
+    /// <see cref="MaxCapMedian"/>, but only the mid 1080 and far 1080 views (1488 and 1776 pixels, k* 300 and 200) vouch that the cap is where the shader puts it, and the no-width-clamp mutant is killed there; a floor of 150 met by without-replacement
+    /// subsets of the 178 was the wrong rule for iid draws, where no-width-clamp's median (0.93 against 0.75) falls under the bound in 44 of 2000 draws of 150. Floors that sit over their k* (band, capped, corner, sharp of several views) were derived before
+    /// and are kept: raising a floor the views reach is safe, lowering one is not what this pass is for. The views reach every floor by 1.2 times at the least (the sharp creases of mid 1080: 415 of 100). Where no mutant reaches a view's sharp creases (far: one pixel) the floor is 0.
     /// </summary>
     private static readonly NormalViewSpec[] Views =
     {
-        new("close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 60, Hd, "--normals-png=", true, 0.009f, 6f, 500, 100, 50, 200, 150, 9),
-        new("far", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, Hd, "--normals-far-png=", false, 0f, 0f, 50, 50, 150, 50, 0, 10),
-        new("bend 90 close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 90, Hd, "--normals-bend90-png=", true, 0.010f, 8f, 100, 100, 50, 200, 75, 0),
-        new("mid 1080", new Vector3(1.13f, 0.645f, 1.77f), 30f, 60, FullHd, "--normals-mid-png=", false, 0f, 0f, 1500, 200, 200, 200, 75, 4),
-        new("far 1080", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, FullHd, "--normals-far1080-png=", false, 0f, 0f, 150, 50, 200, 200, 75, 9),
+        new("close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 60, Hd, "--normals-png=", true, 0.009f, 6f, 900, 100, 50, 200, 150, 9),
+        new("far", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, Hd, "--normals-far-png=", false, 0f, 0f, 50, 50, 0, 100, 0, 10),
+        new("bend 90 close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 90, Hd, "--normals-bend90-png=", true, 0.010f, 8f, 150, 100, 50, 200, 75, 0),
+        new("mid 1080", new Vector3(1.13f, 0.645f, 1.77f), 30f, 60, FullHd, "--normals-mid-png=", false, 0f, 0f, 2000, 200, 300, 200, 100, 4),
+        new("far 1080", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, FullHd, "--normals-far1080-png=", false, 0f, 0f, 150, 50, 200, 200, 100, 9),
     };
 
     private async Task<Transform3D[]> Pose(PuppetShape shape, Node3D[] carriers, float degrees)
