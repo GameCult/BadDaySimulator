@@ -337,7 +337,7 @@ public static class PuppetChecks
             thin++;
             var f = fields[i];
             var tris = triangles[i].Select(t => (a: f.Local(At(shape, 3 * t)), b: f.Local(At(shape, 3 * t + 1)), c: f.Local(At(shape, 3 * t + 2)))).ToArray();
-            var lo = f.Lo - 0.01f; var hi = f.Hi + 0.01f; var misses = new float[3];
+            var lo = f.Lo - 0.01f; var hi = f.Hi + 0.01f; var misses = new float[3]; var areas = new float[3];
             for (int axis = 0; axis < 3; axis++)
             {
                 int iu = (axis + 1) % 3, iv = (axis + 2) % 3;
@@ -357,12 +357,13 @@ public static class PuppetChecks
                         }
                     }
                 });
-                int field = 0, differ = 0;
-                for (int k = 0; k < inField.Length; k++) { if (inField[k]) field++; if (inField[k] != inMesh[k]) differ++; }
+                int field = 0, differ = 0, meshed = 0;
+                for (int k = 0; k < inField.Length; k++) { if (inField[k]) field++; if (inMesh[k]) meshed++; if (inField[k] != inMesh[k]) differ++; }
+                areas[axis] = (meshed - field) / (float)Math.Max(field, 1);
                 float miss = misses[axis] = differ / (float)Math.Max(field, 1);
                 if (miss > worst) { worst = miss; where = $"body {i} axis {axis}"; }
             }
-            Console.WriteLine($"PUPPET thin silhouette: body {i} ({bodies[i].Kind}, {triangles[i].Length} triangles): miss along x {misses[0] * 100:F1}%, y {misses[1] * 100:F1}%, z {misses[2] * 100:F1}%");
+            Console.WriteLine($"PUPPET thin silhouette: body {i} ({bodies[i].Kind}, {triangles[i].Length} triangles): xor share x {misses[0] * 100:F1}%, y {misses[1] * 100:F1}%, z {misses[2] * 100:F1}%; area share x {areas[0] * 100:F1}%, y {areas[1] * 100:F1}%, z {areas[2] * 100:F1}%");
         }
         Console.WriteLine($"PUPPET thin silhouettes: {thin} bodies, worst miss {worst * 100:F1}% of {MaxSilhouetteMiss * 100:F0}% ({where})");
         check(thin >= 6, $"the thin silhouette check is vacuous: {thin} bodies under 40 mm, not six");
