@@ -390,8 +390,11 @@ public partial class RenderCheck : Node
         return new Frame(w, h, pixels, levels, either == 0 ? 0 : (float)both / either, covered.Count(x => x), drawn.Count(x => x), image);
     }
 
-    /// <summary>The reference surface in the world: the carriers' skin of the shape, welded by position, with its own facets, altitudes, vertex normals and creases.</summary>
-    private sealed record Surface(Vector3[] P, int[] Weld, Vector3[] Facet, float[] Altitude, float[] Smallest, Vector3[] VertexNormal, float[] Crease);
+    /// <summary>
+    /// The reference surface in the world: the carriers' skin of the shape's corners, welded by position, with the bevel the shape stores for each triangle (its source's: <see cref="PuppetShade"/>): the normal posed by the carrier's turn,
+    /// per corner slot the distances to the source's three lines and the posed vertex normal, per triangle the three creases and the cap. A triangle's own corners are not its source, so none of it is derived from them.
+    /// </summary>
+    private sealed record Surface(Vector3[] P, int[] Weld, Vector3[] Facet, Vector3[] Distance, float[] Cap, Vector3[] VertexNormal, float[] Crease);
 
     /// <summary>
     /// One look at the drawn normal: where from (the offset from the joint's origin, an index into the shape's joints, and the field of view), in which pose and at which window size, and
@@ -425,6 +428,7 @@ public partial class RenderCheck : Node
         new("bend 90 close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 90, Hd, "--normals-bend90-png=", true, 0.010f, 8f, 150, 100, 50, 200, 75, 0),
         new("mid 1080", new Vector3(1.13f, 0.645f, 1.77f), 30f, 60, FullHd, "--normals-mid-png=", false, 0f, 0f, 2000, 200, 300, 200, 100, 4),
         new("far 1080", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, FullHd, "--normals-far1080-png=", false, 0f, 0f, 150, 50, 200, 200, 100, 9),
+        new("head", new Vector3(-0.12f, 0.1f, 0.22f), 30f, 60, Hd, "--normals-head-png=", false, 0f, 0f, 0, 0, 0, 0, 0, 1),
     };
 
     private async Task<Transform3D[]> Pose(PuppetShape shape, Node3D[] carriers, float degrees)
@@ -441,8 +445,8 @@ public partial class RenderCheck : Node
 
     /// <summary>
     /// The drawn shading normal against the shader's formula evaluated on the CPU, from this check's own skinning of the shape's vertices
-    /// by the carriers (nothing the puppet computed): its own weld of the corners by position, its own edge match, facets, creases,
-    /// area-weighted vertex normals, altitudes, the screen width and the corner blend. The puppet is seen in the bent pose from the
+    /// by the carriers (nothing the puppet computed per frame): its own weld of the corners by position, the bevel the shape stores for each triangle's source (normals and vertex normals posed by the
+    /// carriers' own turns, the lines' distances at the corners, creases and caps), the lines' gradients on each triangle's plane, the screen width and the corner blend. The puppet is seen in the bent pose from the
     /// torso's front-top in each of the <see cref="Views"/>; the view-space normal is read raw from the frame (n * 0.5 + 0.5, not
     /// sRGB-decoded) and turned to world by the camera's basis.
     /// </summary>
@@ -793,49 +797,26 @@ public partial class RenderCheck : Node
             var key = ((long)Math.Round(P[s].X * 1e5), (long)Math.Round(P[s].Y * 1e5), (long)Math.Round(P[s].Z * 1e5));
             if (!welds.TryGetValue(key, out weld[s])) welds[key] = weld[s] = welds.Count;
         }
-        var facet = new Vector3[triangles]; var altitude = new float[n]; var smallest = new float[triangles];
-        var vertexNormal = new Vector3[welds.Count];
+        var facet = new Vector3[triangles]; var distance = new Vector3[n]; var cap = new float[triangles]; var vertexNormal = new Vector3[n]; var crease = new float[n];
         for (int t = 0; t < triangles; t++)
         {
-            var outward = -(P[3 * t + 1] - P[3 * t]).Cross(P[3 * t + 2] - P[3 * t]);
-            float twiceArea = outward.Length();
-            facet[t] = outward / twiceArea;
-            smallest[t] = float.MaxValue;
+            var turn = world[shape.Bone[shape.Corners[3 * t]]].Basis;
+            facet[t] = turn * new Vector3(shape.Normal[t].x, shape.Normal[t].y, shape.Normal[t].z);
+            cap[t] = shape.Cap[t];
+            crease[3 * t] = shape.Crease[t].x; crease[3 * t + 1] = shape.Crease[t].y; crease[3 * t + 2] = shape.Crease[t].z;
             for (int k = 0; k < 3; k++)
             {
-                vertexNormal[weld[3 * t + k]] += outward;
-                altitude[3 * t + k] = twiceArea / (P[3 * t + (k + 1) % 3] - P[3 * t + (k + 2) % 3]).Length();
-                smallest[t] = Math.Min(smallest[t], altitude[3 * t + k]);
+                var d = shape.Distance[3 * t + k]; distance[3 * t + k] = new Vector3(d.x, d.y, d.z);
+                var vn = shape.VertexNormal[3 * t + k]; vertexNormal[3 * t + k] = turn * new Vector3(vn.x, vn.y, vn.z);
             }
         }
-        for (int v = 0; v < vertexNormal.Length; v++) vertexNormal[v] = vertexNormal[v].Normalized();
-        var sides = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<int>>();
-        for (int s = 0; s < n; s++)
-        {
-            int t = s / 3, k = s % 3, p = weld[3 * t + (k + 1) % 3], q = weld[3 * t + (k + 2) % 3];
-            var key = p < q ? (p, q) : (q, p);
-            if (!sides.TryGetValue(key, out var list)) sides[key] = list = new System.Collections.Generic.List<int>();
-            list.Add(s);
-        }
-        // An edge two triangles share turns by half the angle between their facets, positive where it is convex (the neighbour's far corner
-        // lies behind this facet's plane); a fold, whose sides disagree on that, and an edge with other than two sides turn by nothing.
-        var crease = new float[n];
-        foreach (var list in sides.Values)
-        {
-            if (list.Count != 2) continue;
-            int a = list[0], b = list[1];
-            bool convexA = facet[a / 3].Dot(P[b] - P[3 * (a / 3) + (a % 3 + 1) % 3]) < 0, convexB = facet[b / 3].Dot(P[a] - P[3 * (b / 3) + (b % 3 + 1) % 3]) < 0;
-            if (convexA != convexB) continue;
-            float half = 0.5f * facet[a / 3].AngleTo(facet[b / 3]);
-            crease[a] = crease[b] = convexA ? half : -half;
-        }
-        return new Surface(P, weld, facet, altitude, smallest, vertexNormal, crease);
+        return new Surface(P, weld, facet, distance, cap, vertexNormal, crease);
     }
 
     private bool NormalView(NormalViewSpec spec, Image image, Camera3D camera, Surface surface)
     {
         string label = spec.Label;
-        var (P, weld, facet, altitude, smallest, vertexNormal, crease) = surface;
+        var (P, weld, facet, lineDistance, cap, vertexNormal, crease) = surface;
         int w = image.GetWidth(), h = image.GetHeight(), triangles = P.Length / 3;
 
         // Depth raster: the nearest triangle under each pixel centre, with its barycentrics.
@@ -906,19 +887,27 @@ public partial class RenderCheck : Node
                 var bx = Bary(t, OnPlane(t, Ray(x + 1, y))); var by = Bary(t, OnPlane(t, Ray(x, y + 1)));
                 var tilt = Vector3.Zero; bool inBand = false, wasClamped = false, inSharp = false;
                 var g = new Vector3[3]; var width = new float[3]; var distance = new float[3];
+                // The gradient of each source line's distance on the triangle's plane: the distance is affine there, so it is the corners' distances times the barycentric coordinates' gradients (each 1 over the corner's
+                // distance to the opposite edge's line, along that edge's normal in the plane).
+                var plane = (P[3 * t + 1] - P[3 * t]).Cross(P[3 * t + 2] - P[3 * t]).Normalized();
+                var gradientOf = new Vector3[3];
+                for (int c = 0; c < 3; c++)
+                {
+                    var raw = plane.Cross(P[3 * t + (c + 2) % 3] - P[3 * t + (c + 1) % 3]);
+                    gradientOf[c] = raw / raw.Dot(P[3 * t + c] - P[3 * t + (c + 1) % 3]);
+                }
                 for (int k = 0; k < 3; k++)
                 {
-                    var corner = P[3 * t + k]; var edgeStart = P[3 * t + (k + 1) % 3]; var edge = P[3 * t + (k + 2) % 3] - edgeStart;
-                    g[k] = facet[t].Cross(edge).Normalized();
-                    if (g[k].Dot(corner - edgeStart) < 0) g[k] = -g[k];
-                    float alt = altitude[3 * t + k];
-                    distance[k] = bc[k] * alt;
-                    float mpp = Mathf.Sqrt(Mathf.Pow(bx[k] * alt - distance[k], 2) + Mathf.Pow(by[k] * alt - distance[k], 2));
-                    float wanted = Mathf.Max(Look.BevelScreen * screenHeight * mpp, Look.BevelMin), cap = 0.5f * smallest[t];
-                    width[k] = Mathf.Min(wanted, cap);
+                    float At(Vector3 b, int line) => b.X * lineDistance[3 * t][line] + b.Y * lineDistance[3 * t + 1][line] + b.Z * lineDistance[3 * t + 2][line];
+                    var grad = gradientOf[0] * lineDistance[3 * t][k] + gradientOf[1] * lineDistance[3 * t + 1][k] + gradientOf[2] * lineDistance[3 * t + 2][k];
+                    g[k] = grad.Length() > 1e-12f ? grad.Normalized() : Vector3.Zero;
+                    distance[k] = At(bc, k);
+                    float mpp = Mathf.Sqrt(Mathf.Pow(At(bx, k) - distance[k], 2) + Mathf.Pow(At(by, k) - distance[k], 2));
+                    float wanted = Mathf.Max(Look.BevelScreen * screenHeight * mpp, Look.BevelMin), limit = 0.5f * cap[t];
+                    width[k] = Mathf.Min(wanted, limit);
                     float c = crease[3 * t + k];
                     if (c == 0f) continue;
-                    if (cap < wanted) wasClamped = true;
+                    if (limit < wanted) wasClamped = true;
                     tilt += (1f - Mathf.SmoothStep(0f, width[k], distance[k])) * Mathf.Tan(Mathf.Clamp(c, -1.4f, 1.4f)) * g[k];
                     if (distance[k] < 0.6f * width[k] && Mathf.Abs(c) > 0.1f) inBand = true;
                     if (distance[k] < 0.6f * width[k] && Mathf.Abs(c) > SharpCrease && Mathf.Abs(c) < SharpCreaseTop) inSharp = true;
@@ -934,7 +923,7 @@ public partial class RenderCheck : Node
                     float reach = 1.5f * Mathf.Max(width[i], width[j]);
                     if (reach > 0f) cornerBlend = Mathf.Max(cornerBlend, 1f - Mathf.SmoothStep(0f, reach, r));
                 }
-                var smooth = (vertexNormal[weld[3 * t]] * bc.X + vertexNormal[weld[3 * t + 1]] * bc.Y + vertexNormal[weld[3 * t + 2]] * bc.Z).Normalized();
+                var smooth = (vertexNormal[3 * t] * bc.X + vertexNormal[3 * t + 1] * bc.Y + vertexNormal[3 * t + 2] * bc.Z).Normalized();
                 var reference = (facet[t] - (1f - cornerBlend) * tilt).Normalized().Lerp(smooth, cornerBlend).Normalized();
                 float err = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(drawnNormal[y * w + x].Dot(reference), -1f, 1f)));
                 errors.Add(err);
@@ -965,17 +954,35 @@ public partial class RenderCheck : Node
         if (spec.MinCorner > 0 && effectMedian < MinCornerEffect) { GD.PrintErr($"RENDER FAIL: the {label} corner blend moves the reference normal by {effectMedian:F1} degrees (median), under {MinCornerEffect}; the check cannot see a corner blend that is off"); ok = false; }
         if (spec.MinCorner > 0 && cornerMedian > MaxCornerMedian) { GD.PrintErr($"RENDER FAIL: where the {label} corner blend reaches, the drawn normal is {cornerMedian:F2} degrees from the CPU reference (median), over {MaxCornerMedian}; the vertex normal is in the wrong space or the blend has the wrong radius"); ok = false; }
         if (spec.MinSharp > 0 && sharpMedian > MaxSharpMedian) { GD.PrintErr($"RENDER FAIL: across the {label} band of edges turning by {SharpCrease} to {SharpCreaseTop} rad (half) the drawn normal is {sharpMedian:F2} degrees from the CPU reference (median), over {MaxSharpMedian}; the crease clamp is not where the creases say"); ok = false; }
-        if (spec.Continuity) ok &= Continuity(spec, tri, depth, drawnNormal, weld, w, h);
+        if (spec.Continuity) ok &= Continuity(spec, tri, depth, drawnNormal, surface, w, h);
         return ok;
     }
 
     /// <summary>
     /// The drawn normal across triangle boundaries: horizontally or vertically adjacent pixels on different triangles that share a vertex,
-    /// at depths within 4 mm, must hardly differ, however the bevel falls on the two sides. Compares drawn pixels with drawn pixels.
+    /// at depths within 4 mm, must hardly differ, however the bevel falls on the two sides. Compares drawn pixels with drawn pixels. A rim is not judged: where a socket's wall meets the body's surface the two triangles share an edge
+    /// that neither has a line on, and their normals differ by more than a degree (the doll's rims are hard by construction: lodur:ruling:doll-socket-rims-crisp), so the normal jumps there by design; the pairs across one are counted apart.
     /// </summary>
-    private static bool Continuity(NormalViewSpec spec, int[] tri, float[] depth, Vector3[] drawnNormal, int[] weld, int w, int h)
+    private static bool Continuity(NormalViewSpec spec, int[] tri, float[] depth, Vector3[] drawnNormal, Surface surface, int w, int h)
     {
+        var weld = surface.Weld;
         bool Shares(int t, int u) { for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) if (weld[3 * t + i] == weld[3 * u + j]) return true; return false; }
+        // A line of triangle t through the two corners that are vertices a and b (as the weld numbers them) that carries a crease: the edge is banded from t's side.
+        bool Banded(int t, int a, int b)
+        {
+            int ca = -1, cb = -1;
+            for (int k = 0; k < 3; k++) { if (weld[3 * t + k] == a) ca = 3 * t + k; if (weld[3 * t + k] == b) cb = 3 * t + k; }
+            for (int line = 0; line < 3; line++)
+                if (surface.Crease[3 * t + line] != 0f && Mathf.Abs(surface.Distance[ca][line]) < 1e-6f && Mathf.Abs(surface.Distance[cb][line]) < 1e-6f) return true;
+            return false;
+        }
+        bool Rim(int t, int u)
+        {
+            var common = new System.Collections.Generic.List<int>();
+            for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) if (weld[3 * t + i] == weld[3 * u + j] && !common.Contains(weld[3 * t + i])) common.Add(weld[3 * t + i]);
+            return common.Count == 2 && !Banded(t, common[0], common[1]) && !Banded(u, common[0], common[1]) && surface.Facet[t].AngleTo(surface.Facet[u]) > Mathf.DegToRad(1f);
+        }
+        int rims = 0;
         var angles = new System.Collections.Generic.List<float>();
         for (int y = 0; y < h - 1; y++)
             for (int x = 0; x < w - 1; x++)
@@ -986,6 +993,7 @@ public partial class RenderCheck : Node
                 {
                     int u = tri[j];
                     if (u < 0 || u == t || Math.Abs(depth[i] - depth[j]) > 0.004f || !Shares(t, u)) continue;
+                    if (Rim(t, u)) { rims++; continue; }
                     angles.Add(Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(drawnNormal[i].Dot(drawnNormal[j]), -1f, 1f))));
                 }
             }
@@ -993,7 +1001,7 @@ public partial class RenderCheck : Node
         angles.Sort();
         float over = angles.Count == 0 ? 1f : angles.Count(a => a > 30f) / (float)angles.Count;
         float p90 = angles.Count == 0 ? float.MaxValue : angles[(int)(angles.Count * 0.9f)];
-        GD.Print($"RENDER continuity {label}: {angles.Count} pairs across triangle boundaries, {over:P2} over 30 deg, p90 {p90:F2} deg");
+        GD.Print($"RENDER continuity {label}: {angles.Count} pairs across triangle boundaries ({rims} more across rims, not judged), {over:P2} over 30 deg, p90 {p90:F2} deg");
         bool ok = true;
         if (angles.Count < MinPairs) { GD.PrintErr($"RENDER FAIL: the {label} continuity check reached {angles.Count} pairs, under {MinPairs}; it proves nothing"); ok = false; }
         if (over > spec.MaxAcross30) { GD.PrintErr($"RENDER FAIL: {over:P2} of the {label} pixel pairs across triangle boundaries differ by more than 30 degrees, over {spec.MaxAcross30:P1}"); ok = false; }

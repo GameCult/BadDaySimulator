@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The render check's mutants, literal edits: build the client, run the windowed RenderCheck (it needs a display; about 2.5 minutes a mutant) and require the
 # failure line the mutant must print. The mutants are the ones the sample floors and bounds of RenderCheck.cs were derived against. A "survives" mutant is one the check
-# cannot tell from the shipped doll; it must still pass, so that the list stays true if the check changes: a stale crease (PuppetSkin keeping the first pose's creases: every edge lies inside one
-# rigid piece, so a crease never changes with the pose and the mutant draws the same puppet). A doubled kernel is UNCLAIMED, not a survivor: the kernel is nonzero only in the 2 px bands, so the
+# cannot tell from the shipped doll; it must still pass, so that the list stays true if the check changes. (A stale crease, PuppetSkin keeping the first pose's creases, was one: every edge lies inside one
+# rigid piece, so a crease never changes with the pose. The creases are now the shape's, derived once from each source, and nothing per frame recomputes them: the mutant has no code to edit.) A doubled kernel is UNCLAIMED, not a survivor: the kernel is nonzero only in the 2 px bands, so the
 # whole-interior statistics barely see it, and the check claims nothing about it: its highlight shift (1.06 on the doll of 2258 triangles) is under the bound's margin band, so it passes, and were it ever to read in the band it is unjudged (see below).
 # Refuses a dirty tree; restores every file it edits. Every edit must apply exactly once, by itself (not "the file changed": one edit of a mutant applying does not vouch for its
 # others), whatever the file's line endings (a newline in an old text matches LF or CRLF; a new text takes the file's): an edit that does not aborts the whole run, status 3,
@@ -55,7 +55,7 @@ mutant() {
 }
 restore() { local f; for f in "${EDITED[@]+"${EDITED[@]}"}"; do git checkout -q -- "$f"; done; EDITED=(); }
 
-S=client/puppet.gdshader; L=client/Look.cs; P=client/project.godot; K=client/PuppetSkin.cs
+S=client/puppet.gdshader; L=client/Look.cs; P=client/project.godot
 mutant shipped SHIPPED
 # the glaze's prefilter
 edit $S 'dFdy(n), dFdy(n))), MAX_SPREAD);' 'dFdy(n), dFdy(n))), 0.0);';                     mutant kernel-0 "highlights flicker in the"
@@ -73,8 +73,6 @@ edit $S 'bevel_screen * VIEWPORT_SIZE.y * metres_per_pixel' 'bevel_screen * 720.
 edit $S 'float reach = 1.5 * max(width[i], width[j]);' 'float reach = 1.0 * max(width[i], width[j]);'; mutant corner-reach-1 "corner blend"
 edit $S 'tan(clamp(crease[k], -1.4, 1.4))' 'tan(clamp(crease[k], -1.0, 1.0))';               mutant crease-clamp-1 "the crease clamp is not where"
 edit $S 'vertex_normal = (MODELVIEW_MATRIX * vec4(CUSTOM3.xyz, 0.0)).xyz;' 'vertex_normal = CUSTOM3.xyz;'; mutant vertex-normal-model "vertex normal is in the wrong space"
-edit $K $'            Crease[slot] = Crease[other] = convexHere ? half : -half;\n        }\n    }' $'            if (!_fr) Crease[slot] = Crease[other] = convexHere ? half : -half;\n        }\n        _fr = true;\n    }'
-edit $K '    private static float Altitude3' $'    private bool _fr;\n    private static float Altitude3';  mutant stale-crease SURVIVES
 # the glaze and the lights
 edit $S 'vec3 r = reflect(-VIEW, n);' 'vec3 r = reflect(-VIEW, n) * vec3(-1.0, 1.0, 1.0);'; mutant glaze-mirrored "not one studio"
 edit $S 'vec3 r = reflect(-VIEW, n);' 'vec3 r = (INV_VIEW_MATRIX * vec4(reflect(-VIEW, n), 0.0)).xyz;'; mutant glaze-world "not one studio"
