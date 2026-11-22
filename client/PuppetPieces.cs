@@ -17,7 +17,7 @@ public readonly record struct PieceKey(string Id);
 /// </summary>
 public static class PuppetPieces
 {
-    private static readonly ConcurrentDictionary<PieceKey, Lazy<Task<(float3[] V, int[] Tris)>>> Cache = new();
+    private static readonly ConcurrentDictionary<PieceKey, Lazy<Task<PieceMesh>>> Cache = new();
     private static int _built;
     private static long _ticks;
 
@@ -28,8 +28,8 @@ public static class PuppetPieces
     public static double BuildMilliseconds => Volatile.Read(ref _ticks) * 1000.0 / Stopwatch.Frequency;
 
     /// <summary>The piece's mesh: started on the thread pool the first time its key is asked for, the same task after.</summary>
-    public static Task<(float3[] V, int[] Tris)> Get(PieceKey key, PieceField field) =>
-        Cache.GetOrAdd(key, _ => new Lazy<Task<(float3[] V, int[] Tris)>>(() => Task.Run(() =>
+    public static Task<PieceMesh> Get(PieceKey key, PieceField field) =>
+        Cache.GetOrAdd(key, _ => new Lazy<Task<PieceMesh>>(() => Task.Run(() =>
         {
             long t0 = Stopwatch.GetTimestamp();
             var mesh = PuppetField.Mesh(field);

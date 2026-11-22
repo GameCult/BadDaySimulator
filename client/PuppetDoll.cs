@@ -68,8 +68,8 @@ public sealed record DollPrim(DollShape Shape, float3 A, float3 B, float Ra, flo
 
 /// <summary>
 /// One body of the doll: the physics shape it dresses (the key), the primitives it is made of, and the ball at its joint to its parent. The limb's
-/// half-width at its socket end is under its ball's radius (a limb wider than its ball meets it with a flat shoulder, which leaves a wedge the background shows through, and a limb
-/// wrapping its ball past the equator leaves a ring thinner than the grid); the hand entries keep it. Joint ranges are not doll data: the lanes carry no joint limits (follow-up lodur-joint-ranges-anatomical).
+/// half-width at its socket end is under its ball's radius (a limb wider than its ball meets it with a flat shoulder, which leaves a wedge the background shows through); the hand entries keep it. A
+/// lip, where a limb end is nearly as wide as its socket, is blunted by the countersink (<see cref="Doll.SinkAngle"/>), not by the entry. Joint ranges are not doll data: the lanes carry no joint limits (follow-up lodur-joint-ranges-anatomical).
 /// </summary>
 /// <param name="Kind">The physics shape's kind.</param>
 /// <param name="Size">The physics shape's Size0..2 (matched within 1e-4).</param>
@@ -113,6 +113,16 @@ public static class Doll
 
     /// <summary>A body piece's facet error (m) away from the sockets: <see cref="FacetError"/>, or for a thin body (under <see cref="ThinBelow"/>) <see cref="ThinError"/> of its thickness where that is less.</summary>
     public static float BodyError(float thickness) => thickness < ThinBelow ? MathF.Min(FacetError, ThinError * thickness) : FacetError;
+
+    /// <summary>
+    /// The countersink of a socket's cutter (ruling doll-socket-lip-countersink-35): its ring across the away direction stands (BallRadius + Seam) / cos(SinkAngle) from the core, so a limb end wider than
+    /// cos(SinkAngle) of the socket meets the cutter at no less than about this angle. Measured on the doll (prototype, rim length under 30 degrees at facet level): 0 degrees (a plain ball plus shadow) 1570 mm of
+    /// 9238, 30 degrees 486, 35 degrees 111 (202 at the checks' level), at the cost of about 1.8 x the visible facets (the 12-sided chamfer ring at wide joints); the operator took 35.
+    /// </summary>
+    public const float SinkAngle = 35f * (MathF.PI / 180f);
+
+    /// <summary>The edge (m) under which the boolean's tidy collapses an edge (a curve's near-coincident points), and the edge under which it collapses the shortest edge of a sliver (a triangle under 0.01 mm2).</summary>
+    public const float TidyEdge = 0.0005f, TidySliverEdge = 0.002f;
 
     /// <summary>
     /// The seat band (m) beyond a socket's radius: a collapse that touches a vertex within it runs under <see cref="SeatError"/>. A field-value error is blind to a

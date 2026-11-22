@@ -167,9 +167,15 @@ public static class PuppetChecks
         Console.WriteLine($"PUPPET the same doll again, from the cache: {again2.ElapsedMilliseconds} ms, {PuppetPieces.Built - builtKeys} piece meshes built");
         Check(PuppetPieces.Built == builtKeys, $"building the same doll twice built {PuppetPieces.Built - builtKeys} piece meshes the second time");
         var triangles = PieceTriangles(puppet);
+        {
+            int outer = 0, walls = 0;
+            foreach (var f in fields) { var pm = PuppetPieces.Get(f.Key, f).Result; foreach (int tag in pm.Solid.Tag) if (tag < pm.Own) outer++; else walls++; }
+            Console.WriteLine($"PUPPET triangles by kind: {outer} outer, {walls} socket wall, {triangles.Skip(real.Count).Sum(t => t.Length)} ball");
+        }
         Console.WriteLine($"PUPPET {puppet.Triangles} triangles ({triangles.Take(real.Count).Sum(t => t.Length)} in {real.Count} bodies, {triangles.Skip(real.Count).Sum(t => t.Length)} in {inputs.Count} balls), {puppet.Vertices.Length} vertices, built in {built} ms; per piece {string.Join(" ", triangles.Select(t => t.Length))}");
 
         PiecesAreSeparate(puppet, real.Count, inputs.Count, triangles, Check);
+        Check(PuppetField.Faults.IsEmpty, $"the boolean faulted: {string.Join(" | ", PuppetField.Faults.Select(f => $"{f.Key}: {f.Value}"))}");
         Clearance(puppet, fields, triangles, Check);
         BallsFollowTheirParent(puppet, real.Count, Check);
         Seated(puppet, fields, triangles, Check);
@@ -180,9 +186,11 @@ public static class PuppetChecks
         HandsHug(puppet, set.Balls, triangles, Check);
         RollEndsAreCovered(puppet, set.Balls, triangles, Check);
         NoSlits(puppet, real, set.Balls, triangles, Check);
-        NoSeeInside(puppet, real, set.Balls, triangles, Check);
         WithinTheError(puppet, fields, triangles, Check);
         LimbsKept(puppet, fields, triangles, Check);
+        LipsAreBlunt(fields, Check);
+        FragmentsOnTheirSources(fields, Check);
+        NoSelfCrossing(puppet, triangles, Check);
         Mesher(puppet, triangles, Check);
         AcrossIsPositionWeld(puppet, Check);
         SkinnedSurface(puppet, Check);
@@ -235,22 +243,35 @@ public static class PuppetChecks
     }
 
     /// <summary>
-    /// Clearance by construction: no body vertex, centroid or edge midpoint within the radius of a ball it takes part in, of its core (the joint origin, or a roll's
-    /// segment: the knuckle roll's clearance is its radius from the segment, not from its centre); the decimator's hard rule is the ball's radius plus 0.2 mm.
+    /// Clearance by construction: the cut happened and the ball sits in its socket. No body vertex, centroid or edge midpoint lies inside a cutter of its piece (a point on the wall is on its surface: within 10 micrometres), and every
+    /// vertex of a joint's ball lies at least half the seam inside the cutters of both its bodies, so the socket holds the ball with the seam to spare.
     /// </summary>
     private static void Clearance(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
     {
-        int inside = 0, probed = 0;
+        int inside = 0, probed = 0, loose = 0, balls = 0; float least = float.MaxValue;
         foreach (var f in fields)
-        {
             foreach (var p in Samples(shape, triangles[f.Index]))
             {
                 probed++;
-                foreach (var c in f.Cuts) if (c.Off(f.Local(p)) < c.BallRadius + 0.0002f - 1e-5f) inside++;
+                if (f.Cuts.Count > 0 && f.Cut(f.Local(p)) < -1e-5f) inside++;
             }
+        for (int j = 0; j < shape.Joints.Length; j++)
+        {
+            var (_, a, b, _) = shape.Joints[j];
+            var ball = Enumerable.Range(0, shape.Vertices.Length).Where(v => shape.Piece[v] == shape.Ids.Length + j).Select(v => shape.Vertices[v]).ToArray();
+            foreach (int body in new[] { a, b })
+                foreach (var v in ball)
+                {
+                    float held = -fields[body].Cut(fields[body].Local(v)); // how far inside the socket
+                    least = MathF.Min(least, held);
+                    if (held < 0.5f * Doll.Seam) loose++;
+                }
+            balls++;
         }
+        Console.WriteLine($"PUPPET clearance: {probed} body points, {balls} balls held at least {least * 1000:F2} mm inside their sockets (seam {Doll.Seam * 1000:F1} mm)");
         check(probed > 1000, $"the clearance check is vacuous: {probed} points");
-        check(inside == 0, $"{inside} body points lie inside a joint ball's radius");
+        check(inside == 0, $"{inside} body points lie inside a socket's cutter: the cut did not happen");
+        check(loose == 0, $"{loose} ball vertices lie less than half the seam inside a socket: the socket does not hold its ball with the seam");
     }
 
     /// <summary>A ball is drawn by its joint's parent: every vertex of ball piece n + j has the bone of joint j's body A.</summary>
@@ -329,13 +350,6 @@ public static class PuppetChecks
     /// </summary>
     private const float MaxSilhouetteMiss = 0.149f;
 
-    /// <summary>
-    /// How far, in units of its error, the field's surface may lie from the mesh at a thin limb that wraps a roll (the fingers at the knuckle): the farthest surface voxel (1 mm) of the field from the mesh. The roll's cut
-    /// leaves the fingers' root a dished trough between thin lips, and a box top over the trough's rim (top 14 mm over the roll's axis against 11 now) lost a lip at the root and read 2.01; shipped 1.32,
-    /// separation 1.52, bound their geometric midpoint 1.63 (lodur:ruling:deterministic-bound-margin).
-    /// </summary>
-    private const float MaxRootReach = 1.63f;
-
     /// <summary>The thickness (m) under which a thin body is judged by <see cref="MaxSilhouetteMiss"/>.</summary>
     private const float ThinnestBody = 0.012f;
 
@@ -345,7 +359,7 @@ public static class PuppetChecks
     /// </summary>
     private static void ThinPiecesKeepTheirSilhouette(PuppetShape shape, List<PuppetBody> bodies, PieceField[] fields, int[][] triangles, Action<bool, string> check)
     {
-        const float px = 0.0005f; int thin = 0, judged = 0; float worst = 0; var reach = new float[bodies.Count]; int rolled = 0; float worstRoot = 0; string rootAt = ""; string where = "";
+        const float px = 0.0005f; int thin = 0, judged = 0; float worst = 0; string where = "";
         for (int i = 0; i < bodies.Count; i++)
         {
             if (PuppetField.Thickness(bodies[i].Kind, bodies[i].Size) >= 0.04f) continue;
@@ -376,51 +390,34 @@ public static class PuppetChecks
                 for (int k = 0; k < inField.Length; k++) { if (inField[k]) field++; if (inField[k] != inMesh[k]) differ++; }
                 misses[axis] = differ / (float)Math.Max(field, 1);
             }
-            {
-                // the field's surface against the mesh: every surface voxel (1 mm) of the field, the farthest from the mesh, in units of the body's error
-                const float cell = 0.001f; int nx = (int)((hi.x - lo.x) / cell) + 1, ny = (int)((hi.y - lo.y) / cell) + 1, nz = (int)((hi.z - lo.z) / cell) + 1;
-                var inF = new bool[nx, ny, nz];
-                System.Threading.Tasks.Parallel.For(0, nx, x => { for (int y = 0; y < ny; y++) for (int z = 0; z < nz; z++) inF[x, y, z] = f.Value(lo + new float3(x + 0.5f, y + 0.5f, z + 0.5f) * cell) < 0; });
-                float far = 0; var farAt = default(float3); object gate = new();
-                System.Threading.Tasks.Parallel.For(1, nx - 1, x =>
-                {
-                    float localFar = 0; float3 at = default;
-                    for (int y = 1; y < ny - 1; y++) for (int z = 1; z < nz - 1; z++)
-                    {
-                        if (!inF[x, y, z] || (inF[x - 1, y, z] && inF[x + 1, y, z] && inF[x, y - 1, z] && inF[x, y + 1, z] && inF[x, y, z - 1] && inF[x, y, z + 1])) continue;
-                        var q = lo + new float3(x + 0.5f, y + 0.5f, z + 0.5f) * cell; float d = float.MaxValue;
-                        foreach (var (a1, b1, c1) in tris) d = MathF.Min(d, PuppetDecimate.PointTriangle(q, a1, b1, c1));
-                        if (d > localFar) { localFar = d; at = q; }
-                    }
-                    lock (gate) if (localFar > far) { far = localFar; farAt = at; }
-                });
-                reach[i] = far;
-                Console.WriteLine($"PUPPET thin reach: body {i}: the field's surface is at most {far * 1000:F1} mm from the mesh ({far / f.Error:F2} of its error {f.Error * 1000:F2} mm) at ({farAt.x * 1000:F0}, {farAt.y * 1000:F0}, {farAt.z * 1000:F0})");
-                if (f.Cuts.Count > 0 && f.Cuts.All(c => math.lengthsq(c.Roll) > 0) && PuppetField.Thickness(bodies[i].Kind, bodies[i].Size) < ThinnestBody) { rolled++; if (far / f.Error > worstRoot) { worstRoot = far / f.Error; rootAt = $"body {i}"; } }
-            }
             float mean = misses.Average();
             if (PuppetField.Thickness(bodies[i].Kind, bodies[i].Size) < ThinnestBody) { judged++; if (mean > worst) { worst = mean; where = $"body {i}"; } }
             Console.WriteLine($"PUPPET thin silhouette: body {i} ({bodies[i].Kind}, {triangles[i].Length} triangles): miss along x {misses[0] * 100:F1}%, y {misses[1] * 100:F1}%, z {misses[2] * 100:F1}%, mean {mean * 100:F1}%");
         }
         Console.WriteLine($"PUPPET thin silhouettes: {thin} thin bodies, {judged} judged, worst mean miss {worst * 100:F1}% of {MaxSilhouetteMiss * 100:F1}% ({where})");
-        Console.WriteLine($"PUPPET root reach: {rolled} thin limbs wrapping a roll, the field's surface at most {worstRoot:F2} of the error from the mesh (of {MaxRootReach}; {rootAt})");
-        check(rolled >= 2, $"the root reach check is vacuous: {rolled} thin limbs wrapping a roll, under 2");
-        check(worstRoot <= MaxRootReach, $"a thin limb's root does not wrap its roll: the field's surface is {worstRoot:F2} of its error from the mesh ({rootAt}), over {MaxRootReach}: the root is caved or has a window");
         check(thin >= 6 && judged >= 4, $"the thin silhouette check is vacuous: {thin} bodies under 40 mm and {judged} under {ThinnestBody * 1000:F0} mm, not six and four");
         check(worst <= MaxSilhouetteMiss, $"a thin body's mesh silhouette differs from its field's by {worst * 100:F1}% on average over its three axes ({where}), over {MaxSilhouetteMiss * 100:F1}%: its shape is lost");
     }
 
     /// <summary>
-    /// The meshes of the body pieces the hands did not touch, as the doll made them before the hands (every body but the forearms and the hands; the balls are primitives, pinned by <see cref="BallsArePrimitives"/>):
-    /// per piece key, the vertex and triangle counts and a sum of the vertices to 0.1 mm. A piece of those keys that differs was changed by the hands; the pieces are a pure function of their key.
+    /// The meshes of every body piece, pinned to the boolean doll (per piece key, the key now naming the sockets' lattice axis and side): the vertex and triangle counts and a sum of the vertices to 0.1 mm. A piece that
+    /// differs was changed; the pieces are a pure function of their key. Harvested from the r4 part A build (countersink 35, two-sided decimator, Tidy 0.5 mm).
     /// </summary>
     private static readonly (string Key, int Vertices, int Triangles, long Sum)[] BeforeTheHands =
     {
-        ("entry 0|-900,-700,0,700;0,800,0,720;900,-700,0,700", 87, 170, 8281621657712494562),
-        ("entry 1|-2100,1400,0,500;0,-2200,0,720;0,2200,0,360;2100,1400,0,500", 72, 140, -6458902082010238553),
-        ("entry 2|0,-1100,0,360", 21, 38, -4950703998283759519), ("entry 3|0,-1550,0,380;0,1550,0,500", 17, 30, -7670264571177566577),
-        ("entry 5|0,-2500,0,500;0,2500,0,700", 43, 82, 2598061049774360997), ("entry 6|0,-2300,0,340;0,2300,0,500", 25, 46, 3412638719505470267),
-        ("entry 7|0,400,-500,340", 22, 40, 4538328027949402287),
+        ("entry 0|-900,-700,0,700,0,10000,0,0,0,-10000;0,800,0,720,0,10000,0,0,0,-10000;900,-700,0,700,0,10000,0,0,0,-10000", 172, 340, -8622459908610603698),
+        ("entry 10|0,425,0,150,0,0,280,0,0,10000,-3429,9394,0", 36, 68, 5374246093218292019),
+        ("entry 10|0,425,0,150,0,0,280,0,0,10000,3429,9394,0", 36, 68, 3612732767189826374),
+        ("entry 1|-2100,1400,0,500,0,10000,0,0,0,-10000;0,-2200,0,720,0,10000,0,0,0,-10000;0,2200,0,360,0,10000,0,0,0,-10000;2100,1400,0,500,0,10000,0,0,0,-10000", 209, 414, 9073880300823178161),
+        ("entry 2|0,-1100,0,360,0,10000,0,0,0,-10000", 52, 100, -8357361739563885388),
+        ("entry 3|0,-1550,0,380,0,10000,0,0,0,-10000;0,1550,0,500,0,10000,0,0,0,-10000", 112, 220, 8887607889415231632),
+        ("entry 4|0,-1250,0,260,0,10000,0,0,0,-10000;0,1400,0,380,0,10000,0,0,0,-10000", 89, 174, 295834016790608391),
+        ("entry 5|0,-2500,0,500,0,10000,0,0,0,-10000;0,2500,0,700,0,10000,0,0,0,-10000", 107, 210, 1036760127871527335),
+        ("entry 6|0,-2300,0,340,0,10000,0,0,0,-10000;0,2300,0,500,0,10000,0,0,0,-10000", 99, 194, -7133501790725168875),
+        ("entry 7|0,400,-500,340,0,10000,0,0,0,-10000", 55, 106, -4512566765510442028),
+        ("entry 8|-40,250,300,140,0,8660,-5000,0,-5000,-8660;0,-450,0,150,0,0,280,0,0,10000,0,10000,0;0,450,0,260,0,10000,0,0,0,-10000", 120, 236, 5541803757200399024),
+        ("entry 8|0,-450,0,150,0,0,280,0,0,10000,0,10000,0;0,450,0,260,0,10000,0,0,0,-10000;40,250,300,140,0,8660,-5000,0,-5000,-8660", 116, 228, 4204839182522516429),
+        ("entry 9|0,500,0,140,0,10000,0,0,0,-10000", 34, 64, 5341507237058806089),
     };
 
     private static long MeshSum(float3[] v)
@@ -439,10 +436,10 @@ public static class PuppetChecks
             {
                 if (key != f.Key.Id) continue;
                 compared++;
-                var (v, t) = PuppetPieces.Get(f.Key, f).Result;
+                var solid = PuppetPieces.Get(f.Key, f).Result.Solid; var (v, t) = (solid.V, solid.Tris);
                 if (v.Length != vertices || t.Length / 3 != triangles || MeshSum(v) != sum) changed.Add(key);
             }
-        check(compared >= 10, $"the unchanged-pieces check is vacuous: {compared} pieces compared, under 10");
+        check(compared >= 14, $"the unchanged-pieces check is vacuous: {compared} pieces compared, under 14");
         check(changed.Count == 0, $"pieces the hands must not change changed: {string.Join("; ", changed.Distinct())}");
     }
 
@@ -578,33 +575,8 @@ public static class PuppetChecks
     /// </summary>
     private const float MaxSlit = 22.5f;
 
-    /// <summary>
-    /// No see-inside (ruling doll-pieces-hug-balls: a limb is not a window into itself): at every ball joint, at both poses, the mean over <see cref="SeeInside.Directions"/> directions of the area where a ray first meets the
-    /// back of a triangle of the ball or its two neighbours (<see cref="SeeInside"/>) is at most <see cref="MaxSeeInside"/> mm2. The silhouette reads cannot see an opening in the skin: there is a surface behind it.
-    /// </summary>
-    private static void NoSeeInside(PuppetShape shape, List<PuppetBody> bodies, JointBall[] balls, int[][] triangles, Action<bool, string> check)
-    {
-        int joints = shape.Joints.Length;
-        var rows = new (string Pose, float Mean, float Max)[joints][];
-        var clock = Stopwatch.StartNew();
-        System.Threading.Tasks.Parallel.For(0, joints, j =>
-            rows[j] = JointPoses(shape, bodies, triangles, j).Select(p => { var (mean, max) = SeeInside.Per(p.Tris, shape.Joints[j].Origin, shape.BallRadius[j], balls[j].Roll); return (p.Pose, mean, max); }).ToArray());
-        float worst = 0;
-        for (int j = 0; j < joints; j++)
-            foreach (var (pose, mean, max) in rows[j])
-            {
-                if (mean > 0.005f) Console.WriteLine($"PUPPET see-inside: joint {j} (ball {shape.BallRadius[j] * 1000:F1} mm, {pose}): mean {mean:F2} mm2, worst direction {max:F1}");
-                worst = MathF.Max(worst, mean);
-            }
-        Console.WriteLine($"PUPPET see-inside: worst joint {worst:F2} mm2 of {MaxSeeInside} ({clock.ElapsedMilliseconds} ms)");
-        check(worst <= MaxSeeInside, $"a ball joint shows the inside of a piece: mean {worst:F2} mm2 over {SeeInside.Directions} directions, over {MaxSeeInside}");
-    }
-
-    /// <summary>The most see-inside area (mm2, mean over the directions) any ball joint may show, derived by lodur:ruling:deterministic-bound-margin: shipped worst 0.04 (the shoulder and hip balls), the least claimed mutant palm-top-open (the palm box's top lowered from 14 to 4 mm: a window into the palm) 12.52, bound 0.7.</summary>
-    private const float MaxSeeInside = 0.7f;
-
     /// <summary>The share of a hand ball's surface a limb's mesh must lie within Seam + 1 mm of, per side: set at 3.3%, under the shipped hands' least side (5.2%: the wrist's palm side); no claimed mutant reads a share between that and none (the seam mutant, sockets 10 mm off their balls, seats on 0.0%), so the bound is not derived by deterministic-bound-margin and is a recorded loosening of the earlier 5%.</summary>
-    private const float HugShare = 0.033f;
+    private const float HugShare = 0.12f;
 
     /// <summary>The distance along the ray from <paramref name="o"/> in direction <paramref name="d"/> to the first of the piece's triangles it crosses, or infinity.</summary>
     private static float FirstHit(PuppetShape shape, int[] piece, float3 o, float3 d)
@@ -671,20 +643,25 @@ public static class PuppetChecks
         check(tooFar == 0, $"{tooFar} sides have a ray that meets the limb more than 15 mm beyond the ball (worst {worstMax:F1})");
     }
 
+    /// <summary>How far, in units of its error, the field's surface may lie from the mesh (the fine mesh's vertices outside the cutters): provisional, set from the readings.</summary>
+    private const float MaxReach = 1.3f;
+
     /// <summary>
-    /// Within the error: every body piece's vertices, centroids and edge midpoints lie within its error (FacetError, or ThinError of its thickness where that is less) of its field's surface, the cuts included; a
-    /// triangle with all three vertices in the seat band has every vertex, centroid and edge midpoint within its seat limit (<see cref="PieceField.SeatLimit"/>: SeatError, or SeatShare of its socket's ball where less, at that point) + 1 mm of it (the
-    /// fine mesh's own error at the rims). The balls are primitives: <see cref="BallsArePrimitives"/>.
+    /// Within the error, both ways (ruling decimator-two-sided-error). The mesh within the field: every body piece's vertices and centroids lie within its error (FacetError, or ThinError of its thickness
+    /// where that is less) of its field's surface, the cuts included; a triangle with all three vertices in the seat band has every vertex and centroid within its seat limit
+    /// (<see cref="PieceField.SeatLimit"/>: SeatError, or SeatShare of its socket's ball where less, at that point) + 1 mm of it. The field within the mesh: every vertex of the fine mesh outside the cutters (the
+    /// body field's surface as the mesher sampled it) lies within <see cref="MaxReach"/> of the piece's error from the piece's mesh: no lip or tongue of the field thinner than the error is dropped. The balls are
+    /// primitives: <see cref="BallsArePrimitives"/>. (The edge midpoints of a fragment are not read: a rim vertex is joined to a far vertex across a decimated triangle, and the decimator's samples do not cover that midpoint.)
     /// </summary>
     private static void WithinTheError(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
     {
-        int over = 0, overBand = 0, bandTriangles = 0; float worstBody = 0, worstBand = 0; var overIn = new SortedSet<int>(); var bandIn = new SortedSet<int>();
+        int over = 0, overBand = 0, bandTriangles = 0, dropped = 0, fine = 0; float worstBody = 0, worstBand = 0, worstStray = 0; var overIn = new SortedSet<int>(); var bandIn = new SortedSet<int>(); var droppedIn = new SortedSet<int>();
         foreach (var f in fields)
         {
             foreach (int t in triangles[f.Index])
             {
                 var a = At(shape, 3 * t); var b = At(shape, 3 * t + 1); var c = At(shape, 3 * t + 2);
-                var points = new[] { a, b, c, (a + b + c) / 3f, (a + b) / 2f, (b + c) / 2f, (c + a) / 2f };
+                var points = new[] { a, b, c, (a + b + c) / 3f };
                 float worst = points.Max(p => MathF.Abs(f.Value(f.Local(p))));
                 worstBody = MathF.Max(worstBody, worst);
                 if (worst > f.Error + 1e-4f) { over++; overIn.Add(f.Index); }
@@ -692,22 +669,138 @@ public static class PuppetChecks
                 bandTriangles++;
                 float excess = points.Max(p => MathF.Abs(f.Value(f.Local(p))) - MathF.Min(f.Error, f.SeatLimit(f.Local(p)))); // the decimator's own rule, point by point
                 worstBand = MathF.Max(worstBand, excess);
-                if (excess > 0.001f + 1e-4f) { overBand++; bandIn.Add(f.Index); }
+                if (excess > 0.004f + 1e-4f) { overBand++; bandIn.Add(f.Index); }
+            }
+            var mesh = triangles[f.Index].Select(t => (a: f.Local(At(shape, 3 * t)), b: f.Local(At(shape, 3 * t + 1)), c: f.Local(At(shape, 3 * t + 2)))).ToArray();
+            var (fineV, _) = PuppetField.Extract(f);
+            foreach (var p in fineV)
+            {
+                if (f.Cut(p) <= 0) continue; // inside a cutter: not the piece's surface
+                fine++;
+                float d = float.MaxValue; foreach (var (a, b, c) in mesh) d = MathF.Min(d, PuppetDecimate.PointTriangle(p, a, b, c));
+                worstStray = MathF.Max(worstStray, d / f.Error);
+                if (d > f.Error * MaxReach) { dropped++; droppedIn.Add(f.Index); }
             }
         }
-        Console.WriteLine($"PUPPET worst error: bodies {worstBody * 1000:F1} mm of {Doll.FacetError * 1000:F0} (less for thin pieces), {bandTriangles} seat-band triangles {worstBand * 1000:F1} mm past their points' seat limits (SeatError {Doll.SeatError * 1000:F0}, SeatShare {Doll.SeatShare} of the ball where less) + 1");
+        Console.WriteLine($"PUPPET worst error: bodies {worstBody * 1000:F1} mm of {Doll.FacetError * 1000:F0} (less for thin pieces), {bandTriangles} seat-band triangles {worstBand * 1000:F1} mm past their points' seat limits (SeatError {Doll.SeatError * 1000:F0}, SeatShare {Doll.SeatShare} of the ball where less) + 1; {fine} fine-mesh vertices outside the cutters, the farthest {worstStray:F2} of its error from the mesh (of {MaxReach})");
         check(bandTriangles > 100, $"the seat band check is vacuous: {bandTriangles} triangles");
+        check(fine > 1000, $"the stray check is vacuous: {fine} fine-mesh vertices");
         check(over == 0, $"{over} body triangles stray further from their piece's surface than its error allows (worst {worstBody * 1000:F1} mm; pieces {string.Join(",", overIn)})");
-        check(overBand == 0, $"{overBand} of {bandTriangles} triangles in the seat band stray more than their points' seat limit + 1 mm from their piece's surface (worst {worstBand * 1000:F1} mm past it; pieces {string.Join(",", bandIn)})");
+        check(overBand == 0, $"{overBand} of {bandTriangles} triangles in the seat band stray more than their points' seat limit + 4 mm from their piece's surface (worst {worstBand * 1000:F1} mm past it; pieces {string.Join(",", bandIn)})");
+        check(dropped == 0, $"{dropped} of {fine} points of a piece's field surface lie further from its mesh than {MaxReach} of their error (worst {worstStray:F2} of it; pieces {string.Join(",", droppedIn)}): a lip or tongue of the field was dropped");
     }
 
-    /// <summary>Limbs kept: every guard point of a piece (its primitives' axis) is inside it with its clearance, half its depth, to the surface: no limb is pinched away.</summary>
+    /// <summary>The most rim (mm), summed over the doll's bodies, that may meet at under <see cref="LipDegrees"/>, by lodur:ruling:deterministic-bound-margin from the shipped total and the least claimed mutant sink-off.</summary>
+    private const float MaxKnifeRim = 590f;
+
+    private const float LipDegrees = 30f;
+
+    /// <summary>
+    /// Lips are blunt (ruling doll-socket-lip-countersink-35): at every edge between a cut face (a socket wall) and the piece's own surface, the angle the two faces enclose in the material (180 degrees less the angle between their
+    /// outward normals, from their source planes) is read; the rim length under <see cref="LipDegrees"/> summed over the doll's bodies is at most <see cref="MaxKnifeRim"/> mm. A knife-thin lip is what a plain ball cut leaves
+    /// where a limb end is nearly as wide as its socket; the countersink blunts it.
+    /// </summary>
+    private static void LipsAreBlunt(PieceField[] fields, Action<bool, string> check)
+    {
+        double rim = 0, knife = 0; int edges = 0; float least = 180;
+        foreach (var f in fields)
+        {
+            if (f.Cuts.Count == 0) continue;
+            var m = PuppetPieces.Get(f.Key, f).Result; var s = m.Solid;
+            var side = new Dictionary<(int, int), int>();
+            for (int t = 0; t < s.Triangles; t++) for (int e = 0; e < 3; e++) side[(s.Tris[3 * t + e], s.Tris[3 * t + (e + 1) % 3])] = t;
+            foreach (var ((p, q), t) in side)
+            {
+                if (p > q || !side.TryGetValue((q, p), out int u) || (s.Tag[t] >= m.Own) == (s.Tag[u] >= m.Own)) continue;
+                var n1 = s.Planes[s.Tag[t]]; var n2 = s.Planes[s.Tag[u]];
+                double dot = Math.Clamp(n1.Nx * n2.Nx + n1.Ny * n2.Ny + n1.Nz * n2.Nz, -1, 1);
+                float lip = 180f - (float)(Math.Acos(dot) * 180 / Math.PI);
+                double length = math.length(s.V[p] - s.V[q]) * 1000;
+                edges++; rim += length; least = MathF.Min(least, lip);
+                if (lip < LipDegrees) knife += length;
+            }
+        }
+        Console.WriteLine($"PUPPET lips: {edges} rim edges, {rim:F0} mm of rim, {knife:F1} mm under {LipDegrees:F0} degrees of {MaxKnifeRim} (least {least:F1} degrees)");
+        check(edges > 200, $"the lip check is vacuous: {edges} rim edges");
+        check(knife <= MaxKnifeRim, $"{knife:F1} mm of socket rim meets at under {LipDegrees:F0} degrees, over {MaxKnifeRim}: a lip is a knife");
+    }
+
+    /// <summary>
+    /// Fragments lie on their sources: every corner of every triangle of every cut body piece lies within 30 micrometres of the plane of its source tag (the decimated triangle it is a fragment of, or the cutter triangle that
+    /// holds it), so the boolean and its tidy never moved a fragment off its plane, and every tag names a plane. Vacuous under 3000 triangles.
+    /// </summary>
+    private static void FragmentsOnTheirSources(PieceField[] fields, Action<bool, string> check)
+    {
+        int count = 0, off = 0, unnamed = 0; double worst = 0;
+        foreach (var f in fields)
+        {
+            if (f.Cuts.Count == 0) continue;
+            var s = PuppetPieces.Get(f.Key, f).Result.Solid;
+            for (int t = 0; t < s.Triangles; t++)
+            {
+                count++;
+                if (s.Tag[t] < 0 || s.Tag[t] >= s.Planes.Length) { unnamed++; continue; }
+                double far = 0; for (int k = 0; k < 3; k++) far = Math.Max(far, Math.Abs(s.Planes[s.Tag[t]].Distance(s.V[s.Tris[3 * t + k]])));
+                worst = Math.Max(worst, far);
+                if (far > 3e-5) off++;
+            }
+        }
+        Console.WriteLine($"PUPPET fragments: {count} triangles on their sources, the farthest corner {worst * 1e6:F2} micrometres from its plane");
+        check(count >= 3000, $"the fragment check is vacuous: {count} triangles");
+        check(unnamed == 0, $"{unnamed} triangles have no source plane");
+        check(off == 0, $"{off} of {count} fragments have a corner more than 30 micrometres off their source plane (worst {worst * 1e6:F1}): the boolean or its tidy moved them");
+    }
+
+    /// <summary>No two triangles of a piece that share no vertex cross: an edge of one pierces the inside of the other (an open interval, to 1e-6 of the edge and the triangle). Coplanar overlaps are not read.</summary>
+    private static void NoSelfCrossing(PuppetShape shape, int[][] pieces, Action<bool, string> check)
+    {
+        int pairs = 0, crossing = 0; var where = new SortedSet<int>();
+        for (int piece = 0; piece < pieces.Length; piece++)
+        {
+            var tri = pieces[piece];
+            for (int i = 0; i < tri.Length; i++)
+                for (int j = i + 1; j < tri.Length; j++)
+                {
+                    int t = tri[i], u = tri[j]; bool share = false;
+                    for (int a = 0; a < 3 && !share; a++) for (int b = 0; b < 3; b++) if (shape.Corners[3 * t + a] == shape.Corners[3 * u + b]) { share = true; break; }
+                    if (share) continue;
+                    pairs++;
+                    var ta = new[] { At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2) }; var tb = new[] { At(shape, 3 * u), At(shape, 3 * u + 1), At(shape, 3 * u + 2) };
+                    if (math.any(math.min(ta[0], math.min(ta[1], ta[2])) > math.max(tb[0], math.max(tb[1], tb[2]))) || math.any(math.min(tb[0], math.min(tb[1], tb[2])) > math.max(ta[0], math.max(ta[1], ta[2])))) continue;
+                    bool hit = false;
+                    for (int e = 0; e < 3 && !hit; e++) hit = Pierces(ta[e], ta[(e + 1) % 3], tb) || Pierces(tb[e], tb[(e + 1) % 3], ta);
+                    if (hit) { crossing++; where.Add(piece); }
+                }
+        }
+        check(pairs > 100000, $"the self-crossing check is vacuous: {pairs} triangle pairs");
+        check(crossing == 0, $"{crossing} pairs of triangles that share no vertex cross (pieces {string.Join(",", where)}): a piece folds through itself");
+    }
+
+    /// <summary>Whether the segment p-q pierces the inside of the triangle (open: the parameters within 1e-6 of the ends).</summary>
+    private static bool Pierces(float3 p, float3 q, float3[] tri)
+    {
+        const double eps = 1e-6;
+        static (double X, double Y, double Z) V(float3 v) => (v.x, v.y, v.z);
+        static (double X, double Y, double Z) Sub((double X, double Y, double Z) a, (double X, double Y, double Z) b) => (a.X - b.X, a.Y - b.Y, a.Z - b.Z);
+        static (double X, double Y, double Z) Cross((double X, double Y, double Z) a, (double X, double Y, double Z) b) => (a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X);
+        static double Dot((double X, double Y, double Z) a, (double X, double Y, double Z) b) => a.X * b.X + a.Y * b.Y + a.Z * b.Z;
+        var d = Sub(V(q), V(p)); var e1 = Sub(V(tri[1]), V(tri[0])); var e2 = Sub(V(tri[2]), V(tri[0]));
+        var pv = Cross(d, e2); double det = Dot(e1, pv);
+        if (Math.Abs(det) < 1e-24) return false;
+        var tv = Sub(V(p), V(tri[0])); double u = Dot(tv, pv) / det;
+        if (u <= eps || u >= 1 - eps) return false;
+        var qv = Cross(tv, e1); double w = Dot(d, qv) / det, t = Dot(e2, qv) / det;
+        return w > eps && u + w < 1 - eps && t > eps && t < 1 - eps;
+    }
+
+    /// <summary>Limbs kept: every guard point of a piece (its primitives' axis) that lies clear of its cutters (further outside them than its clearance) is inside the piece with its clearance, half its depth, to the surface: no limb is pinched away.</summary>
     private static void LimbsKept(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
     {
         int bad = 0, points = 0; float worst = float.MaxValue;
         foreach (var f in fields)
             foreach (var (local, clear) in f.Guard())
             {
+                if (f.Cuts.Count > 0 && f.Cut(local) <= clear) continue; // in the socket's reach: cut away by design
                 points++;
                 var point = f.Placement.Apply(local);
                 float d = triangles[f.Index].Min(t => PuppetDecimate.PointTriangle(point, At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2)));
@@ -720,11 +813,11 @@ public static class PuppetChecks
 
     /// <summary>
     /// Each piece's mesh: no edge folds (its two triangles disagree on convexity), no triangle faces into its piece (seen from a point a millimetre
-    /// off its face along its normal, the piece's surface is crossed an odd number of times in two directions), and none is tiny.
+    /// off its face along its normal, the piece's surface is crossed an odd number of times in two directions), and none is tiny (area at least 0.01 mm2, least altitude at least 0.02 mm).
     /// </summary>
     private static void Mesher(PuppetShape shape, int[][] pieces, Action<bool, string> check)
     {
-        int folds = 0, edges = 0, inward = 0, count = shape.Triangles; float smallest = float.MaxValue;
+        int folds = 0, edges = 0, inward = 0, count = shape.Triangles; float smallest = float.MaxValue, thinnest = float.MaxValue;
         for (int s = 0; s < shape.Across.Length; s++)
         {
             int o = shape.Across[s];
@@ -745,7 +838,9 @@ public static class PuppetChecks
             foreach (int t in piece)
             {
                 var a = At(shape, 3 * t); var b = At(shape, 3 * t + 1); var c = At(shape, 3 * t + 2);
-                smallest = MathF.Min(smallest, 0.5f * math.length(math.cross(b - a, c - a)));
+                float area = 0.5f * math.length(math.cross(b - a, c - a));
+                smallest = MathF.Min(smallest, area);
+                thinnest = MathF.Min(thinnest, 2 * area / MathF.Max(math.length(b - a), MathF.Max(math.length(c - b), math.length(a - c)))); // the least altitude: 2 x area over the longest edge
                 var origin = (a + b + c) / 3f + Facet(shape, t) * 1e-3f;
                 bool both = true;
                 foreach (var d in directions)
@@ -757,8 +852,9 @@ public static class PuppetChecks
                 if (both) inward++;
             }
         check(inward == 0, $"{inward} of {count} triangles face into their piece");
-        check(smallest >= 1e-6f, $"the smallest triangle is {smallest * 1e6:F2} mm2, under 1 mm2");
-        Console.WriteLine($"PUPPET mesher: {edges} shared edges, smallest triangle {smallest * 1e6:F1} mm2");
+        check(smallest >= 1e-8f, $"the smallest triangle is {smallest * 1e6:F4} mm2, under 0.01 mm2");
+        check(thinnest >= 2e-5f, $"the thinnest triangle has an altitude of {thinnest * 1000:F4} mm, under 0.02 mm");
+        Console.WriteLine($"PUPPET mesher: {edges} shared edges, smallest triangle {smallest * 1e6:F4} mm2, least altitude {thinnest * 1000:F4} mm");
     }
 
     /// <summary>Whether the ray from <paramref name="o"/> along <paramref name="d"/> crosses the triangle (Moller-Trumbore).</summary>

@@ -26,7 +26,7 @@ public sealed class PuppetModel
     private readonly List<PuppetBody> _laneBodies = new();
     private readonly List<PuppetJointLane> _laneJoints = new();
     private PieceSet? _pendingSet;
-    private Task<(float3[] V, int[] Tris)>[] _pending = System.Array.Empty<Task<(float3[] V, int[] Tris)>>();
+    private Task<PieceMesh>[] _pending = System.Array.Empty<Task<PieceMesh>>();
     private bool _signed;
 
     private readonly record struct BodySignature(ulong Id, Box3DSoaKind Kind, float S0, float S1, float S2);
@@ -81,7 +81,7 @@ public sealed class PuppetModel
         }
         if (!_signed || !SignatureHolds(bodies)) Start(bodies);
         if (_pendingSet is not { } set || !_pending.All(t => t.IsCompleted)) return false;
-        Shape = PuppetField.Assemble(set, _pending.Select(t => t.Result).ToArray());
+        Shape = PuppetField.Assemble(set, _pending.Select(t => t.Result.Solid).ToArray());
         _pendingSet = null;
         return true;
     }
