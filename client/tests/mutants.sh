@@ -28,10 +28,12 @@ mutant() {
   else echo "FAIL  $name: exit $code without '$want' (log $LOG/$name.log)"; failed=$((failed + 1)); fi
 }
 
+# Mutants that report FAIL below fail only ExistingPiecesUnchanged (the pin, which fails on any change) and no semantic check fires: facet-error-40mm, thigh-078, seat-share-off, limb-end-over-ball, fingers-root-lip,
+# seat-share-008, and thin-error-off and thin-error-half (caught by the Mesher floor and the boolean's faults, not by the silhouette line they name). Their wants are left as written: the gap is in the checks, not the want.
 F=client/PuppetField.cs; D=client/PuppetDoll.cs
 mutant seam-10mm            $D 's/Seam = 0.002f/Seam = 0.010f/'                 "from its ball"
-mutant seat-band-0          $D 's/SeatBand = 0.015f/SeatBand = 0f/'             "from its ball"
-mutant seat-error-40mm      $D 's/SeatError = 0.005f/SeatError = 0.040f/'       "from its ball"
+mutant seat-band-0          $D 's/SeatBand = 0.015f/SeatBand = 0f/'             "more than 15 mm beyond the ball"
+mutant seat-error-40mm      $D 's/SeatError = 0.005f/SeatError = 0.040f/'       "a ball joint shows slits"
 # FacetError does not own the seat: at 40 mm the mesher check (an inward face) catches it, and the seat check must not.
 mutant facet-error-40mm     $D 's/FacetError = 0.02f/FacetError = 0.04f/'       "face into their piece" "from its ball"
 mutant ball-bone-child      $F 's/new JointBall(n + j, joint.A, o, /new JointBall(n + j, joint.B, o, /' "do not follow their joint's parent"
@@ -57,15 +59,15 @@ mutant body-seam-10mm       $D 's/Seam = 0.002f/Seam = 0.010f/'                 
 # Joints are built primitives, never meshed (ruling doll-joints-built-primitives): a ball routed through the decimator; the thin rule moved onto the bodies of 80 mm (ThinBelow); the seat limit without the thin error (Allowed's minimum); a lower seat share.
 mutant ball-decimated       $F 's#public (float3\[\] V, int\[\] Tris) Mesh() => PuppetField.Primitive(Radius, Axis, math.length(Roll), Doll.BallFrequency);#public (float3[] V, int[] Tris) Mesh() { var (v, t) = PuppetField.Primitive(Radius, Axis, math.length(Roll), Doll.BallFrequency); return PuppetDecimate.Run(v, t, Doll.FacetAlpha, Doll.FacetScale, new DecimateRules((p, tight) => true, p => false, p => 1f, System.Array.Empty<(float3 P, float Clear)>())); }#' "are not 38 vertices and 72 triangles"
 mutant thinbelow-8cm        $D 's/ThinBelow = 0.04f/ThinBelow = 0.08f/' "the hands must not change changed"
-mutant allowed-no-min       $F 's/(tight ? MathF.Min(Error, SeatLimit(p)) : Error)/(tight ? SeatLimit(p) : Error)/' "stray further from their piece's surface"
+mutant allowed-no-min       $F 's/(tight ? MathF.Min(Error, SeatLimit(p)) : Error)/(tight ? SeatLimit(p) : Error)/' "stray further from their piece's field"
 mutant seat-share-008       $D 's/SeatShare = 0.15f/SeatShare = 0.08f/' "shows the inside of a piece"
 # The decimator bounds the error both ways (ruling decimator-two-sided-error): the one-sided rule drops a lip thinner than the error; a palm 15 mm short leaves a knuckle roll's end bare.
 mutant decimator-one-sided  client/PuppetDecimate.cs 's/ \&\& Hugs(x, fan, u, v))/)/' "of their error (worst"
 mutant palm-short-z         $D 's/V(.014f, .0265f, .04f)/V(.014f, .0265f, .025f)/' "a roll's end is bare"
 # The boolean's cutter and tidy: no countersink (a plain ball plus shadow: knife lips), no shadow ring, the cutter lattice turned 15 degrees about its axis, no tidy, B's inside-ness inverted (an open cut), a collapse onto the midpoint (fragments leave their planes).
 mutant sink-off             $D 's/SinkAngle = 35f \* (MathF.PI \/ 180f)/SinkAngle = 0f/' "of socket rim meets at under"
-mutant shadow-off           $F 's/points.Add(p0); points.Add(p0 + w \* far);/points.Add(p0);/' "of socket rim meets at under"
-mutant cutter-turned        $F 's/Doll.BallFrequency, U);/Doll.BallFrequency, U * 0.9659f + math.cross(Axis, U) * 0.2588f);/' "limbs at hand balls seat on under"
+mutant shadow-off           $F 's/points.Add(p0); points.Add(p0 + w \* far);/points.Add(p0);/' "lie further from its mesh than"
+mutant cutter-turned        $F 's/Doll.BallFrequency, U);/Doll.BallFrequency, U * 0.9659f + math.cross(Axis, U) * 0.2588f);/' "less than half the seam inside a socket"
 mutant tidy-off             $F 's/if (f.Cuts.Count > 0) solid = PuppetBoolean.Tidy/if (false) solid = PuppetBoolean.Tidy/' "wind against their source plane"
 # Tidy's old rule instead of the vote: a sliver's own normal is noise (it does not vote) and a fan triangle may turn 5 degrees: two fragments are left inverted.
 mutant tidy-sliver-exempt   client/PuppetBoolean.cs 's/if (after <= 0 \&\& after < before) return false;/var nb4 = N(t[i]); if (nb4.Len < 2 * sliverArea) continue; var na4 = N(t[i].Select(w => w == m ? x : w).ToArray()); if (na4.Len < 1e-14 || na4.Unit.Dot(nb4.Unit) < Math.Cos(5 * Math.PI \/ 180)) return false;/' "wind against their source plane"

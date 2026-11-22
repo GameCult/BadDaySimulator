@@ -345,8 +345,8 @@ public static class PuppetChecks
     /// <summary>
     /// The silhouette share a thin body's mesh may miss its field's by: the area where the mesh's silhouette and the field's differ, over the field's silhouette, averaged over the three axes of the body's frame (along its
     /// thinnest axis and across it), at 2 px/mm. Derived as lodur:ruling:deterministic-bound-margin derives a bound, over the bodies thinner than <see cref="ThinnestBody"/>, the thumb and the fingers, where ThinError and not the seat band
-    /// decides the error: shipped worst 12.2% (the thumb), the least claimed mutant thin-error-half (ThinError 0.5: the thumb falls from 16 triangles to 8) 18.2%, separation 1.49, bound their geometric midpoint 14.9%. (The palm's
-    /// readings, 14 to 17%, do not move with ThinError, as the seat bands set its error; the dropped films the sockets leave count against every body alike.)
+    /// decides the error: shipped worst 11.1% on the r5 doll (body 14, a capsule), and the value 14.9% is the r4 derivation kept: no mutant now separates by 1.2 on this metric (thin-error-off and thin-error-half read 12.0%, 1.08; both are caught by
+    /// the Mesher floor and the pin instead), so by the rule the bound is unclaimed: recorded as a follow-up, not loosened or tightened.
     /// </summary>
     private const float MaxSilhouetteMiss = 0.149f;
 
@@ -492,10 +492,10 @@ public static class PuppetChecks
 
     /// <summary>
     /// The least share of a roll's end cap (the hemisphere of the knuckle roll's radius beyond its segment) that must lie within 3 mm of the palm or the fingers at rest: a bare roll end, which the whole-ball
-    /// <see cref="HugShare"/> does not see (the fingers cover a palm 15 mm short at each end). Shipped least 16.3%; palm-short-z (the palm's half length 40 to 25 mm) 2.5%; separation 6.5, the bound their geometric
-    /// midpoint 6.4% (lodur:ruling:deterministic-bound-margin).
+    /// <see cref="HugShare"/> does not see (the fingers cover a palm 15 mm short at each end). Shipped least 27.7% (r5 doll); palm-short-z (the palm's half length 40 to 25 mm) 7.7%; separation 3.6, the bound their geometric
+    /// midpoint 14.6% (lodur:ruling:deterministic-bound-margin).
     /// </summary>
-    private const float MinEndCover = 0.064f;
+    private const float MinEndCover = 0.146f;
 
     private static void RollEndsAreCovered(PuppetShape shape, JointBall[] balls, int[][] triangles, Action<bool, string> check)
     {
@@ -571,12 +571,13 @@ public static class PuppetChecks
 
     /// <summary>
     /// The most slit area (mm2, mean over the views) any ball joint may show, one standard for the hands and the body, derived by lodur:ruling:deterministic-bound-margin as the geometric midpoint of the shipped
-    /// worst and the least claimed mutant: shipped worst 19.94 (the wrist, bent), the least claimed mutant seat-share-off (the seat error 5 mm at every ball) 25.51 (limb-end-over-ball 25.72, the 10 mm seam 32.97), separation 1.28, bound 22.5.
+    /// worst and the least claimed mutant: shipped worst 9.25 (the knee, r5 doll), the least claimed mutant seat-error-40mm (the seat error 40 mm: decimated limb ends stray from their balls) 13.68 (body-seam-10mm, the 10 mm seam, 75.77),
+    /// separation 1.48, bound 11.25. seat-share-off and limb-end-over-ball read 9.25: since the sockets are cut exactly no wedge is left for the slit check to see, and only the pin catches them.
     /// </summary>
-    private const float MaxSlit = 22.5f;
+    private const float MaxSlit = 11.25f;
 
-    /// <summary>The share of a hand ball's surface a limb's mesh must lie within Seam + 1 mm of, per side: set at 3.3%, under the shipped hands' least side (5.2%: the wrist's palm side); no claimed mutant reads a share between that and none (the seam mutant, sockets 10 mm off their balls, seats on 0.0%), so the bound is not derived by deterministic-bound-margin and is a recorded loosening of the earlier 5%.</summary>
-    private const float HugShare = 0.12f;
+    /// <summary>The share of a hand ball's surface a limb's mesh must lie within Seam + 1 mm of, per side, by lodur:ruling:deterministic-bound-margin: shipped least 14.4% (the wrist's palm side); the seam mutants (sockets 10 mm off their balls) seat on 0.0%, which has no geometric midpoint, so the least claimed nonzero mutant is ball-freq-2 (8-sided balls) 10.7%, separation 1.35, bound 12.4%. palm-short-z (12.5%) and cutter-turned (14.2%) are not claimed here.</summary>
+    private const float HugShare = 0.124f;
 
     /// <summary>The distance along the ray from <paramref name="o"/> in direction <paramref name="d"/> to the first of the piece's triangles it crosses, or infinity.</summary>
     private static float FirstHit(PuppetShape shape, int[] piece, float3 o, float3 d)
@@ -643,8 +644,8 @@ public static class PuppetChecks
         check(tooFar == 0, $"{tooFar} sides have a ray that meets the limb more than 15 mm beyond the ball (worst {worstMax:F1})");
     }
 
-    /// <summary>How far, in units of its error, the field's surface may lie from the mesh (the fine mesh's vertices outside the cutters): provisional, set from the readings.</summary>
-    private const float MaxReach = 1.3f;
+    /// <summary>How far, in units of its error, the field's surface may lie from the mesh (the fine mesh's vertices outside the cutters), by lodur:ruling:deterministic-bound-margin: shipped worst 1.023, the least claimed mutant decimator-one-sided 2.101 (shadow-off 5.89), separation 2.05, bound 1.47.</summary>
+    private const float MaxReach = 1.47f;
 
     /// <summary>
     /// Within the error, both ways (ruling decimator-two-sided-error). The mesh within the field: every body piece's decimated sources, before the cut, at the decimator's own samples (vertices, fan centroids and
@@ -692,8 +693,8 @@ public static class PuppetChecks
         check(dropped == 0, $"{dropped} of {fine} points of a piece's field surface lie further from its mesh than {MaxReach} of their error (worst {worstStray:F2} of it; pieces {string.Join(",", droppedIn)}): a lip or tongue of the field was dropped");
     }
 
-    /// <summary>The most rim (mm), summed over the doll's bodies, that may meet at under <see cref="LipDegrees"/>, by lodur:ruling:deterministic-bound-margin from the shipped total and the least claimed mutant sink-off.</summary>
-    private const float MaxKnifeRim = 590f;
+    /// <summary>The most rim (mm), summed over the doll's bodies, that may meet at under <see cref="LipDegrees"/>, by lodur:ruling:deterministic-bound-margin from the shipped total 202.7 and the least claimed mutant sink-off 1394.7 (separation 6.9): 532.</summary>
+    private const float MaxKnifeRim = 532f;
 
     private const float LipDegrees = 30f;
 
