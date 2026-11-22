@@ -114,7 +114,7 @@ public sealed record PieceCut(float3 Origin, float BallRadius, float3 Roll = def
     /// (BallRadius + Seam) / cos(<see cref="Doll.SinkAngle"/>); (c) that ring carried 50 mm past the core along <paramref name="away"/> (the shadow). A limb end wider than cos(SinkAngle) of the socket then
     /// meets the cutter at no less than about SinkAngle (ruling doll-socket-lip-countersink-35), and nothing reaches past the ball.
     /// </summary>
-    public Cutter Cutter(float3 away, float turn = 0)
+    public Cutter Cutter(float3 away)
     {
         var (bv, _) = PuppetField.Primitive(SocketRadius, Axis, math.length(Roll), Doll.BallFrequency, U);
         for (int i = 0; i < bv.Length; i++) bv[i] += Origin;
@@ -134,11 +134,6 @@ public sealed record PieceCut(float3 Origin, float BallRadius, float3 Roll = def
             var lat = q - core - w * math.dot(q - core, w);
             var p0 = Origin + core + math.normalize(lat) * rim;
             points.Add(p0); points.Add(p0 + w * far);
-        }
-        if (turn != 0) // the whole cutter turned about the ball's axis through the core (see PuppetField.Mesh)
-        {
-            var k = math.normalize(Axis); float c = MathF.Cos(turn), s = MathF.Sin(turn);
-            for (int i = 0; i < points.Count; i++) { var q = points[i] - Origin; points[i] = Origin + q * c + math.cross(k, q) * s + k * (math.dot(k, q) * (1 - c)); }
         }
         var (hv, ht) = PuppetBoolean.Hull(points);
         return new Cutter(hv, ht);
@@ -166,8 +161,8 @@ public sealed class Cutter
     }
 }
 
-/// <summary>A body piece's mesh as <see cref="PuppetPieces"/> keeps it: the solid with its source tags, the decimated piece's centroid (the sockets' away direction), the turn (rad) its cutters needed to clear a degenerate fragment (0 for nearly every piece: see <see cref="PuppetField.Mesh"/>), and how many of the solid's planes are the decimated piece's own (a tag under it is the piece's surface, a tag from it on is a socket wall).</summary>
-public sealed record PieceMesh(PuppetSolid Solid, float3 Centre, int Own, float Turn);
+/// <summary>A body piece's mesh as <see cref="PuppetPieces"/> keeps it: the solid with its source tags, the decimated piece's centroid (the sockets' away direction), the decimated piece (<c>SourceV</c>, <c>SourceTris</c>: the sources the cut fragments shade as, before the cut, which the checks judge), and how many of the solid's planes are the decimated piece's own (a tag under it is the piece's surface, a tag from it on is a socket wall).</summary>
+public sealed record PieceMesh(PuppetSolid Solid, float3 Centre, int Own, float3[] SourceV, int[] SourceTris);
 
 /// <summary>
 /// One body piece's field, engine-free, in the body's own frame: its primitives smooth-min'd by <see cref="Doll.BodyBlend"/> (within the body only), which the mesher and decimator sample (<see cref="Body"/>), and
@@ -247,9 +242,9 @@ public sealed class PieceField
 
     private Cutter[]? _cutters;
 
-    private Cutter[] CuttersOf(PieceMesh m) => CuttersAt(m.Centre, m.Turn);
+    private Cutter[] CuttersOf(PieceMesh m) => CuttersAt(m.Centre);
 
-    internal Cutter[] CuttersAt(float3 centre, float turn = 0) => _cuts.Select(c => c.Cutter(c.Origin - centre, turn)).ToArray();
+    internal Cutter[] CuttersAt(float3 centre) => _cuts.Select(c => c.Cutter(c.Origin - centre)).ToArray();
 
     /// <summary>The cut: the least over the cutters of the largest plane distance, a bound on the distance outside every cutter, negative inside one.</summary>
     public float Cut(float3 p)
@@ -405,27 +400,13 @@ public static class PuppetField
         var (v, tris) = Extract(f);
         var (dv, dt) = PuppetDecimate.Run(v, tris, Doll.FacetAlpha, Doll.FacetScale, new DecimateRules(f.Allowed, f.Tight, f.Stray, f.Guard()));
         var centre = Centroid(dv, dt);
-        // A cut can leave a fragment under the mesher's floor, or two vertices closer than the weld that share no edge, where a cutter edge passes almost through a vertex of the piece: then its cutters are turned
-        // a quarter degree about their axes, alternately either way and a quarter more each time, until none is left (the first turn that is clean is the mesh; the least defective if none is).
-        PuppetSolid best = null!; var bestStats = new PuppetBoolean.Stats(); int bestDefects = int.MaxValue; float bestTurn = 0;
-        for (int attempt = 0; attempt <= 12 && bestDefects > 0; attempt++)
-        {
-            float turn = (attempt + 1) / 2 * (attempt % 2 == 1 ? 1 : -1) * 0.25f * MathF.PI / 180f;
-            var solid = PuppetBoolean.Solid(dv, dt); var stats = new PuppetBoolean.Stats();
-            foreach (var cutter in f.CuttersAt(centre, turn)) solid = PuppetBoolean.Subtract(solid, cutter.V, cutter.Tris, stats);
-            if (f.Cuts.Count > 0) solid = PuppetBoolean.Tidy(solid, Doll.TidyEdge, Doll.TidySliverEdge, stats);
-            solid = PuppetBoolean.LargestSolid(solid).Solid;
-            int defects = stats.Faults.Count > 0 ? int.MaxValue - 1 : PuppetBoolean.Defects(solid);
-            if (defects < bestDefects) { best = solid; bestStats = stats; bestDefects = defects; bestTurn = turn; }
-            if (f.Cuts.Count == 0) break;
-        }
-        if (bestStats.Faults.Count > 0) Faults[f.Key.Id] = string.Join("; ", bestStats.Faults);
-        if (bestTurn != 0) Turned[f.Key.Id] = bestTurn * 180f / MathF.PI;
-        return new PieceMesh(best, centre, dt.Length / 3, bestTurn);
+        var solid = PuppetBoolean.Solid(dv, dt); var stats = new PuppetBoolean.Stats();
+        foreach (var cutter in f.CuttersAt(centre)) solid = PuppetBoolean.Subtract(solid, cutter.V, cutter.Tris, stats);
+        if (f.Cuts.Count > 0) solid = PuppetBoolean.Tidy(solid, Doll.TidyEdge, Doll.TidySliverEdge, stats);
+        solid = PuppetBoolean.LargestSolid(solid).Solid;
+        if (stats.Faults.Count > 0) Faults[f.Key.Id] = string.Join("; ", stats.Faults);
+        return new PieceMesh(solid, centre, dt.Length / 3, dv, dt);
     }
-
-    /// <summary>The pieces whose cutters had to be turned (degrees) to clear a degenerate fragment, by key: the report names them.</summary>
-    public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, float> Turned = new();
 
     /// <summary>The centroid of a closed mesh (divergence theorem).</summary>
     private static float3 Centroid(float3[] v, int[] t)

@@ -191,7 +191,7 @@ public static class PuppetChecks
         LipsAreBlunt(fields, Check);
         FragmentsOnTheirSources(fields, Check);
         NoSelfCrossing(puppet, triangles, Check);
-        Mesher(puppet, triangles, Check);
+        Mesher(puppet, fields, triangles, Check);
         AcrossIsPositionWeld(puppet, Check);
         SkinnedSurface(puppet, Check);
         FoldHasNoCrease(Check);
@@ -401,19 +401,19 @@ public static class PuppetChecks
 
     /// <summary>
     /// The meshes of every body piece, pinned to the boolean doll (per piece key, the key now naming the sockets' lattice axis and side): the vertex and triangle counts and a sum of the vertices to 0.1 mm. A piece that
-    /// differs was changed; the pieces are a pure function of their key. Harvested from the r4 part A build (countersink 35, two-sided decimator, Tidy 0.5 mm).
+    /// differs was changed; the pieces are a pure function of their key. Harvested from the r5 part A build (countersink 35, two-sided decimator, Tidy 0.5 mm with the source-plane vote, no retry).
     /// </summary>
     private static readonly (string Key, int Vertices, int Triangles, long Sum)[] BeforeTheHands =
     {
         ("entry 0|-900,-700,0,700,0,10000,0,0,0,-10000;0,800,0,720,0,10000,0,0,0,-10000;900,-700,0,700,0,10000,0,0,0,-10000", 172, 340, -8622459908610603698),
         ("entry 10|0,425,0,150,0,0,280,0,0,10000,-3429,9394,0", 36, 68, 5374246093218292019),
         ("entry 10|0,425,0,150,0,0,280,0,0,10000,3429,9394,0", 36, 68, 3612732767189826374),
-        ("entry 1|-2100,1400,0,500,0,10000,0,0,0,-10000;0,-2200,0,720,0,10000,0,0,0,-10000;0,2200,0,360,0,10000,0,0,0,-10000;2100,1400,0,500,0,10000,0,0,0,-10000", 209, 414, 9073880300823178161),
+        ("entry 1|-2100,1400,0,500,0,10000,0,0,0,-10000;0,-2200,0,720,0,10000,0,0,0,-10000;0,2200,0,360,0,10000,0,0,0,-10000;2100,1400,0,500,0,10000,0,0,0,-10000", 209, 414, -8561392607574723537),
         ("entry 2|0,-1100,0,360,0,10000,0,0,0,-10000", 52, 100, -8357361739563885388),
-        ("entry 3|0,-1550,0,380,0,10000,0,0,0,-10000;0,1550,0,500,0,10000,0,0,0,-10000", 112, 220, 8887607889415231632),
-        ("entry 4|0,-1250,0,260,0,10000,0,0,0,-10000;0,1400,0,380,0,10000,0,0,0,-10000", 89, 174, 295834016790608391),
+        ("entry 3|0,-1550,0,380,0,10000,0,0,0,-10000;0,1550,0,500,0,10000,0,0,0,-10000", 110, 216, 4402811087284731902),
+        ("entry 4|0,-1250,0,260,0,10000,0,0,0,-10000;0,1400,0,380,0,10000,0,0,0,-10000", 92, 180, 6079792136206098112),
         ("entry 5|0,-2500,0,500,0,10000,0,0,0,-10000;0,2500,0,700,0,10000,0,0,0,-10000", 107, 210, 1036760127871527335),
-        ("entry 6|0,-2300,0,340,0,10000,0,0,0,-10000;0,2300,0,500,0,10000,0,0,0,-10000", 99, 194, -7133501790725168875),
+        ("entry 6|0,-2300,0,340,0,10000,0,0,0,-10000;0,2300,0,500,0,10000,0,0,0,-10000", 99, 194, 7509529804692523069),
         ("entry 7|0,400,-500,340,0,10000,0,0,0,-10000", 55, 106, -4512566765510442028),
         ("entry 8|-40,250,300,140,0,8660,-5000,0,-5000,-8660;0,-450,0,150,0,0,280,0,0,10000,0,10000,0;0,450,0,260,0,10000,0,0,0,-10000", 120, 236, 5541803757200399024),
         ("entry 8|0,-450,0,150,0,0,280,0,0,10000,0,10000,0;0,450,0,260,0,10000,0,0,0,-10000;40,250,300,140,0,8660,-5000,0,-5000,-8660", 116, 228, 4204839182522516429),
@@ -647,29 +647,31 @@ public static class PuppetChecks
     private const float MaxReach = 1.3f;
 
     /// <summary>
-    /// Within the error, both ways (ruling decimator-two-sided-error). The mesh within the field: every body piece's vertices and centroids lie within its error (FacetError, or ThinError of its thickness
-    /// where that is less) of its field's surface, the cuts included; a triangle with all three vertices in the seat band has every vertex and centroid within its seat limit
-    /// (<see cref="PieceField.SeatLimit"/>: SeatError, or SeatShare of its socket's ball where less, at that point) + 1 mm of it. The field within the mesh: every vertex of the fine mesh outside the cutters (the
-    /// body field's surface as the mesher sampled it) lies within <see cref="MaxReach"/> of the piece's error from the piece's mesh: no lip or tongue of the field thinner than the error is dropped. The balls are
-    /// primitives: <see cref="BallsArePrimitives"/>. (The edge midpoints of a fragment are not read: a rim vertex is joined to a far vertex across a decimated triangle, and the decimator's samples do not cover that midpoint.)
+    /// Within the error, both ways (ruling decimator-two-sided-error). The mesh within the field: every body piece's decimated sources, before the cut, at the decimator's own samples (vertices, fan centroids and
+    /// edge midpoints) lie within the piece's error (FacetError, or ThinError of its thickness where that is less) of its body field's surface, and a source triangle with all three vertices in the seat band has
+    /// every sample within its seat limit (<see cref="PieceField.SeatLimit"/>: SeatError, or SeatShare of its socket's ball where less, at that point) + 0.1 mm (float). A fragment's interior is any point of its
+    /// source, so fragments are tied to their sources by <see cref="FragmentsOnTheirSources"/> and the walls by <see cref="Clearance"/>. The field within the mesh: every vertex of the fine mesh outside the
+    /// cutters (the body field's surface as the mesher sampled it) lies within <see cref="MaxReach"/> of the piece's error from the cut mesh: no lip or tongue of the field thinner than the error is dropped
+    /// (the decimator's carried-point bound is a sampled bound, so this is read in units of the error). The balls are primitives: <see cref="BallsArePrimitives"/>.
     /// </summary>
     private static void WithinTheError(PuppetShape shape, PieceField[] fields, int[][] triangles, Action<bool, string> check)
     {
-        int over = 0, overBand = 0, bandTriangles = 0, dropped = 0, fine = 0; float worstBody = 0, worstBand = 0, worstStray = 0; var overIn = new SortedSet<int>(); var bandIn = new SortedSet<int>(); var droppedIn = new SortedSet<int>();
+        int over = 0, overBand = 0, bandTriangles = 0, dropped = 0, fine = 0; float worstBody = 0, worstBand = float.MinValue, worstStray = 0; var overIn = new SortedSet<int>(); var bandIn = new SortedSet<int>(); var droppedIn = new SortedSet<int>();
         foreach (var f in fields)
         {
-            foreach (int t in triangles[f.Index])
+            var src = PuppetPieces.Get(f.Key, f).Result;
+            for (int k = 0; k < src.SourceTris.Length; k += 3)
             {
-                var a = At(shape, 3 * t); var b = At(shape, 3 * t + 1); var c = At(shape, 3 * t + 2);
-                var points = new[] { a, b, c, (a + b + c) / 3f };
-                float worst = points.Max(p => MathF.Abs(f.Value(f.Local(p))));
+                var a = src.SourceV[src.SourceTris[k]]; var b = src.SourceV[src.SourceTris[k + 1]]; var c = src.SourceV[src.SourceTris[k + 2]];
+                var points = new[] { a, b, c, (a + b + c) / 3f, (a + b) / 2f, (b + c) / 2f, (c + a) / 2f };
+                float worst = points.Max(p => MathF.Abs(f.Body(p)));
                 worstBody = MathF.Max(worstBody, worst);
                 if (worst > f.Error + 1e-4f) { over++; overIn.Add(f.Index); }
-                if (!(f.Tight(f.Local(a)) && f.Tight(f.Local(b)) && f.Tight(f.Local(c)))) continue;
+                if (!(f.Tight(a) && f.Tight(b) && f.Tight(c))) continue;
                 bandTriangles++;
-                float excess = points.Max(p => MathF.Abs(f.Value(f.Local(p))) - MathF.Min(f.Error, f.SeatLimit(f.Local(p)))); // the decimator's own rule, point by point
+                float excess = points.Max(p => MathF.Abs(f.Body(p)) - MathF.Min(f.Error, f.SeatLimit(p))); // the decimator's own rule, point by point
                 worstBand = MathF.Max(worstBand, excess);
-                if (excess > 0.004f + 1e-4f) { overBand++; bandIn.Add(f.Index); }
+                if (excess > 1e-4f) { overBand++; bandIn.Add(f.Index); }
             }
             var mesh = triangles[f.Index].Select(t => (a: f.Local(At(shape, 3 * t)), b: f.Local(At(shape, 3 * t + 1)), c: f.Local(At(shape, 3 * t + 2)))).ToArray();
             var (fineV, _) = PuppetField.Extract(f);
@@ -682,11 +684,11 @@ public static class PuppetChecks
                 if (d > f.Error * MaxReach) { dropped++; droppedIn.Add(f.Index); }
             }
         }
-        Console.WriteLine($"PUPPET worst error: bodies {worstBody * 1000:F1} mm of {Doll.FacetError * 1000:F0} (less for thin pieces), {bandTriangles} seat-band triangles {worstBand * 1000:F1} mm past their points' seat limits (SeatError {Doll.SeatError * 1000:F0}, SeatShare {Doll.SeatShare} of the ball where less) + 1; {fine} fine-mesh vertices outside the cutters, the farthest {worstStray:F2} of its error from the mesh (of {MaxReach})");
+        Console.WriteLine($"PUPPET worst error: decimated sources {worstBody * 1000:F1} mm of {Doll.FacetError * 1000:F0} (less for thin pieces), {bandTriangles} seat-band triangles {worstBand * 1000:F3} mm past their points' seat limits (SeatError {Doll.SeatError * 1000:F0}, SeatShare {Doll.SeatShare} of the ball where less) + 0.1; {fine} fine-mesh vertices outside the cutters, the farthest {worstStray:F3} of its error from the cut mesh (of {MaxReach})");
         check(bandTriangles > 100, $"the seat band check is vacuous: {bandTriangles} triangles");
         check(fine > 1000, $"the stray check is vacuous: {fine} fine-mesh vertices");
-        check(over == 0, $"{over} body triangles stray further from their piece's surface than its error allows (worst {worstBody * 1000:F1} mm; pieces {string.Join(",", overIn)})");
-        check(overBand == 0, $"{overBand} of {bandTriangles} triangles in the seat band stray more than their points' seat limit + 4 mm from their piece's surface (worst {worstBand * 1000:F1} mm past it; pieces {string.Join(",", bandIn)})");
+        check(over == 0, $"{over} decimated triangles stray further from their piece's field than its error allows (worst {worstBody * 1000:F1} mm; pieces {string.Join(",", overIn)})");
+        check(overBand == 0, $"{overBand} of {bandTriangles} decimated triangles in the seat band stray more than their points' seat limit + 0.1 mm from their piece's field (worst {worstBand * 1000:F1} mm past it; pieces {string.Join(",", bandIn)})");
         check(dropped == 0, $"{dropped} of {fine} points of a piece's field surface lie further from its mesh than {MaxReach} of their error (worst {worstStray:F2} of it; pieces {string.Join(",", droppedIn)}): a lip or tongue of the field was dropped");
     }
 
@@ -727,11 +729,12 @@ public static class PuppetChecks
 
     /// <summary>
     /// Fragments lie on their sources: every corner of every triangle of every cut body piece lies within 30 micrometres of the plane of its source tag (the decimated triangle it is a fragment of, or the cutter triangle that
-    /// holds it), so the boolean and its tidy never moved a fragment off its plane, and every tag names a plane. Vacuous under 3000 triangles.
+    /// holds it), so the boolean and its tidy never moved a fragment off its plane, and every tag names a plane; and every fragment's signed area on its source plane is positive (its winding agrees with its source, which Tidy's vote keeps: Subtract alone leaves a few against it).
+    /// Vacuous under 3000 triangles.
     /// </summary>
     private static void FragmentsOnTheirSources(PieceField[] fields, Action<bool, string> check)
     {
-        int count = 0, off = 0, unnamed = 0; double worst = 0;
+        int count = 0, off = 0, unnamed = 0, inverted = 0; double worst = 0, least = double.MaxValue;
         foreach (var f in fields)
         {
             if (f.Cuts.Count == 0) continue;
@@ -743,11 +746,17 @@ public static class PuppetChecks
                 double far = 0; for (int k = 0; k < 3; k++) far = Math.Max(far, Math.Abs(s.Planes[s.Tag[t]].Distance(s.V[s.Tris[3 * t + k]])));
                 worst = Math.Max(worst, far);
                 if (far > 3e-5) off++;
+                var pl = s.Planes[s.Tag[t]]; var a = s.V[s.Tris[3 * t]]; var b = s.V[s.Tris[3 * t + 1]]; var c = s.V[s.Tris[3 * t + 2]];
+                double ux = (double)b.x - a.x, uy = (double)b.y - a.y, uz = (double)b.z - a.z, wx = (double)c.x - a.x, wy = (double)c.y - a.y, wz = (double)c.z - a.z;
+                double signed = 0.5 * (pl.Nx * (uy * wz - uz * wy) + pl.Ny * (uz * wx - ux * wz) + pl.Nz * (ux * wy - uy * wx));
+                least = Math.Min(least, signed);
+                if (signed <= 0) inverted++;
             }
         }
-        Console.WriteLine($"PUPPET fragments: {count} triangles on their sources, the farthest corner {worst * 1e6:F2} micrometres from its plane");
+        Console.WriteLine($"PUPPET fragments: {count} triangles on their sources, the farthest corner {worst * 1e6:F2} micrometres from its plane, the least signed area on its plane {least * 1e6:F4} mm2");
         check(count >= 3000, $"the fragment check is vacuous: {count} triangles");
         check(unnamed == 0, $"{unnamed} triangles have no source plane");
+        check(inverted == 0, $"{inverted} of {count} fragments wind against their source plane (signed area on it <= 0, least {least * 1e6:F4} mm2)");
         check(off == 0, $"{off} of {count} fragments have a corner more than 30 micrometres off their source plane (worst {worst * 1e6:F1}): the boolean or its tidy moved them");
     }
 
@@ -813,9 +822,10 @@ public static class PuppetChecks
 
     /// <summary>
     /// Each piece's mesh: no edge folds (its two triangles disagree on convexity), no triangle faces into its piece (seen from a point a millimetre
-    /// off its face along its normal, the piece's surface is crossed an odd number of times in two directions), and none is tiny (area at least 0.01 mm2, least altitude at least 0.02 mm).
+    /// off its face along its normal, the piece's surface is crossed an odd number of times in two directions). The floor (area at least 0.01 mm2, least altitude at least 0.02 mm) judges sources: the balls, the
+    /// uncut pieces, each cut piece's decimated mesh and its cutters' triangles; a fragment shades as its source (<see cref="FragmentsOnTheirSources"/>) and is exempt.
     /// </summary>
-    private static void Mesher(PuppetShape shape, int[][] pieces, Action<bool, string> check)
+    private static void Mesher(PuppetShape shape, PieceField[] fields, int[][] pieces, Action<bool, string> check)
     {
         int folds = 0, edges = 0, inward = 0, count = shape.Triangles; float smallest = float.MaxValue, thinnest = float.MaxValue;
         for (int s = 0; s < shape.Across.Length; s++)
@@ -834,13 +844,26 @@ public static class PuppetChecks
         check(folds == 0, $"{folds} of {edges} shared edges are folds: their two triangles disagree on convexity");
 
         var directions = new[] { math.normalize(new float3(0.5773f, 0.3011f, 0.7571f)), math.normalize(new float3(-0.2113f, 0.8317f, -0.5129f)) };
+        void Floor(float3 a, float3 b, float3 c)
+        {
+            float area = 0.5f * math.length(math.cross(b - a, c - a));
+            smallest = MathF.Min(smallest, area);
+            thinnest = MathF.Min(thinnest, 2 * area / MathF.Max(math.length(b - a), MathF.Max(math.length(c - b), math.length(a - c)))); // the least altitude: 2 x area over the longest edge
+        }
+        for (int i = 0; i < pieces.Length; i++)
+        {
+            if (i < fields.Length && fields[i].Cuts.Count > 0)
+            {
+                var src = PuppetPieces.Get(fields[i].Key, fields[i]).Result;
+                for (int k = 0; k < src.SourceTris.Length; k += 3) Floor(src.SourceV[src.SourceTris[k]], src.SourceV[src.SourceTris[k + 1]], src.SourceV[src.SourceTris[k + 2]]);
+                foreach (var cutter in fields[i].Cutters) for (int k = 0; k < cutter.Tris.Length; k += 3) Floor(cutter.V[cutter.Tris[k]], cutter.V[cutter.Tris[k + 1]], cutter.V[cutter.Tris[k + 2]]);
+            }
+            else foreach (int t in pieces[i]) Floor(At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2));
+        }
         foreach (var piece in pieces)
             foreach (int t in piece)
             {
                 var a = At(shape, 3 * t); var b = At(shape, 3 * t + 1); var c = At(shape, 3 * t + 2);
-                float area = 0.5f * math.length(math.cross(b - a, c - a));
-                smallest = MathF.Min(smallest, area);
-                thinnest = MathF.Min(thinnest, 2 * area / MathF.Max(math.length(b - a), MathF.Max(math.length(c - b), math.length(a - c)))); // the least altitude: 2 x area over the longest edge
                 var origin = (a + b + c) / 3f + Facet(shape, t) * 1e-3f;
                 bool both = true;
                 foreach (var d in directions)
@@ -852,9 +875,9 @@ public static class PuppetChecks
                 if (both) inward++;
             }
         check(inward == 0, $"{inward} of {count} triangles face into their piece");
-        check(smallest >= 1e-8f, $"the smallest triangle is {smallest * 1e6:F4} mm2, under 0.01 mm2");
-        check(thinnest >= 2e-5f, $"the thinnest triangle has an altitude of {thinnest * 1000:F4} mm, under 0.02 mm");
-        Console.WriteLine($"PUPPET mesher: {edges} shared edges, smallest triangle {smallest * 1e6:F4} mm2, least altitude {thinnest * 1000:F4} mm");
+        check(smallest >= 1e-8f, $"the smallest source triangle is {smallest * 1e6:F4} mm2, under 0.01 mm2");
+        check(thinnest >= 2e-5f, $"the thinnest source triangle has an altitude of {thinnest * 1000:F4} mm, under 0.02 mm");
+        Console.WriteLine($"PUPPET mesher: {edges} shared edges, smallest source triangle {smallest * 1e6:F4} mm2, least altitude {thinnest * 1000:F4} mm");
     }
 
     /// <summary>Whether the ray from <paramref name="o"/> along <paramref name="d"/> crosses the triangle (Moller-Trumbore).</summary>
@@ -872,16 +895,17 @@ public static class PuppetChecks
     /// <summary>
     /// <see cref="PuppetShape.Across"/> is the edge match a weld by position makes: vertices at the same place are one, and an edge joins
     /// the corners opposite it in the two triangles that have it, or nothing where it has other than two. (The pieces' seams are 2 mm apart,
-    /// so a weld by position at 10 micrometres does not join two pieces.)
+    /// so a weld by position at 10 micrometres does not join two pieces.) Each piece is welded alone: two bodies of one joint share the ball's grown lattice in part of their cutters, so where both fields hold
+    /// one facet their walls coincide vertex for vertex, two pieces drawn alike from one source and not a crack; the weld by position is read within a piece, where no two vertices are nearer than the weld.
     /// </summary>
     private static void AcrossIsPositionWeld(PuppetShape shape, Action<bool, string> check)
     {
-        var id = new Dictionary<(long, long, long), int>();
+        var id = new Dictionary<(int, long, long, long), int>();
         var weld = new int[shape.Corners.Length];
         for (int s = 0; s < weld.Length; s++)
         {
             var p = At(shape, s);
-            var key = ((long)Math.Round(p.x * 1e5), (long)Math.Round(p.y * 1e5), (long)Math.Round(p.z * 1e5));
+            var key = (shape.Piece[shape.Corners[s]], (long)Math.Round(p.x * 1e5), (long)Math.Round(p.y * 1e5), (long)Math.Round(p.z * 1e5));
             if (!id.TryGetValue(key, out weld[s])) id[key] = weld[s] = id.Count;
         }
         var sides = new Dictionary<(int, int), List<int>>();

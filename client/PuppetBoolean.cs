@@ -332,7 +332,7 @@ public static class PuppetBoolean
     /// <summary>
     /// The boolean's slivers, tidied without leaving a source plane. An edge under <paramref name="shortEdge"/>, or the shortest edge of a triangle under 0.01 mm2 when it is under <paramref name="sliverEdge"/>, is
     /// collapsed onto one of its endpoints (never a midpoint: the endpoint that lies on every source plane of the other's triangles, so every fragment stays on its source plane; refused if neither does) when
-    /// the link condition holds and no fan triangle of 0.01 mm2 or more turns by more than 5 degrees; then every edge whose two triangles are of one source (coplanar) is flipped when that raises the pair's least
+    /// the link condition holds and the vote passes (no fan triangle's signed area on its own source plane is turned over or flattened, whatever its size); then every edge whose two triangles are of one source (coplanar) is flipped when that raises the pair's least
     /// angle (a planar re-triangulation: nothing moves). Tags are carried, and the planes are the solid's.
     /// </summary>
     public static PuppetSolid Tidy(PuppetSolid s, float shortEdge, float sliverEdge, Stats stats)
@@ -372,11 +372,11 @@ public static class PuppetBoolean
                     foreach (int i in vt[m].Concat(vt[x]).Distinct())
                     {
                         if (!alive[i] || i == ti || i == to) continue;
-                        var f = t[i]; var nb4 = N(f); if (nb4.Len < 2 * sliverArea) continue; // a sliver's own normal is noise: it does not vote
-                        var before = nb4.Unit;
-                        var g = f.Select(w => w == m ? x : w).ToArray();
-                        var after = N(g);
-                        if (after.Len < 1e-14 || after.Unit.Dot(before) < Math.Cos(5 * Math.PI / 180)) return false;
+                        // the vote: every surviving fan triangle judges the collapse by its signed area on its own source plane, which is exact where its own normal is noise;
+                        // it may not be turned over or flattened by the collapse (one that is already against its source may not be made worse)
+                        var q = s.Planes[tag[i]]; var sn = new D3(q.Nx, q.Ny, q.Nz);
+                        double before = sn.Dot(N(t[i])), after = sn.Dot(N(t[i].Select(w => w == m ? x : w).ToArray()));
+                        if (after <= 0 && after < before) return false;
                     }
                     alive[ti] = false; alive[to] = false;
                     foreach (int i in vt[m]) if (alive[i]) for (int k = 0; k < 3; k++) if (t[i][k] == m) t[i][k] = x;
@@ -413,33 +413,6 @@ public static class PuppetBoolean
             otag.Add(tag[i]);
         }
         return new PuppetSolid(ov.ToArray(), ot.ToArray(), otag.ToArray(), s.Planes);
-    }
-
-    /// <summary>
-    /// How many places the solid is under the mesher's floor: triangles under 0.01 mm2 or with a least altitude (twice the area over the longest edge) under 0.02 mm, and vertex pairs under 0.01 mm apart that share no edge
-    /// (the weld by position would join them). A solid with none is clean.
-    /// </summary>
-    public static int Defects(PuppetSolid s)
-    {
-        int defects = 0; var edge = new HashSet<(int, int)>();
-        for (int k = 0; k < s.Tris.Length; k += 3)
-        {
-            var a = s.V[s.Tris[k]]; var b = s.V[s.Tris[k + 1]]; var c = s.V[s.Tris[k + 2]];
-            float area = 0.5f * math.length(math.cross(b - a, c - a));
-            if (area < 1e-8f || 2 * area / MathF.Max(math.length(b - a), MathF.Max(math.length(c - b), math.length(a - c))) < 2e-5f) defects++;
-            for (int e = 0; e < 3; e++) { int p = s.Tris[k + e], q = s.Tris[k + (e + 1) % 3]; edge.Add(p < q ? (p, q) : (q, p)); }
-        }
-        var cell = new Dictionary<(int, int, int), List<int>>();
-        for (int i = 0; i < s.V.Length; i++)
-        {
-            var key = ((int)MathF.Floor(s.V[i].x / 1e-5f), (int)MathF.Floor(s.V[i].y / 1e-5f), (int)MathF.Floor(s.V[i].z / 1e-5f));
-            for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++)
-                if (cell.TryGetValue((key.Item1 + dx, key.Item2 + dy, key.Item3 + dz), out var near))
-                    foreach (int j in near) if (math.length(s.V[i] - s.V[j]) < 1e-5f && !edge.Contains((j, i))) defects++;
-            if (!cell.TryGetValue(key, out var own)) cell[key] = own = new List<int>();
-            own.Add(i);
-        }
-        return defects;
     }
 
     /// <summary>The generalised winding number of the closed mesh at p (Jacobson et al. 2013, solid angles by Van Oosterom and Strackee 1983).</summary>

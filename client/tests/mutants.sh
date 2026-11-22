@@ -66,7 +66,9 @@ mutant palm-short-z         $D 's/V(.014f, .0265f, .04f)/V(.014f, .0265f, .025f)
 mutant sink-off             $D 's/SinkAngle = 35f \* (MathF.PI \/ 180f)/SinkAngle = 0f/' "of socket rim meets at under"
 mutant shadow-off           $F 's/points.Add(p0); points.Add(p0 + w \* far);/points.Add(p0);/' "of socket rim meets at under"
 mutant cutter-turned        $F 's/Doll.BallFrequency, U);/Doll.BallFrequency, U * 0.9659f + math.cross(Axis, U) * 0.2588f);/' "limbs at hand balls seat on under"
-mutant tidy-off             $F 's/if (f.Cuts.Count > 0) solid = PuppetBoolean.Tidy/if (false) solid = PuppetBoolean.Tidy/' "the smallest triangle is"
+mutant tidy-off             $F 's/if (f.Cuts.Count > 0) solid = PuppetBoolean.Tidy/if (false) solid = PuppetBoolean.Tidy/' "wind against their source plane"
+# Tidy's old rule instead of the vote: a sliver's own normal is noise (it does not vote) and a fan triangle may turn 5 degrees: two fragments are left inverted.
+mutant tidy-sliver-exempt   client/PuppetBoolean.cs 's/if (after <= 0 \&\& after < before) return false;/var nb4 = N(t[i]); if (nb4.Len < 2 * sliverArea) continue; var na4 = N(t[i].Select(w => w == m ? x : w).ToArray()); if (na4.Len < 1e-14 || na4.Unit.Dot(nb4.Unit) < Math.Cos(5 * Math.PI \/ 180)) return false;/' "wind against their source plane"
 mutant parity-flip          client/PuppetBoolean.cs 's/Winding(D3.Of(bv\[k\]), A, at) > 0.5/Winding(D3.Of(bv[k]), A, at) < 0.5/' "the boolean faulted"
 mutant tidy-midpoint        client/PuppetBoolean.cs 's/alive\[ti\] = false; alive\[to\] = false;$/alive[ti] = false; alive[to] = false; v[x] = (v[x] + v[m]) * 0.5;/' "off their source plane"
 P=client/PuppetPieces.cs; M=client/PuppetModel.cs
