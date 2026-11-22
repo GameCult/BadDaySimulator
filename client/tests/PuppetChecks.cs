@@ -29,11 +29,13 @@ public static class PuppetChecks
             new(Box3DSoaJointKind.Revolute, 11, 12, new float3(0, 0.32f, 0)),
         });
 
+    /// <summary>The doll's measured count of shared edges (the vacuity floor is half of it), as printed by the first run on the shipped doll: a check that sees fewer proves nothing about the doll.</summary>
+    private const int DollSharedEdges = 1998;
+
     /// <summary>
-    /// The doll's measured counts (the vacuity floors are half of them): shared edges per pose and edges turning more than a hundredth of a radian per pose,
-    /// as printed by the first run on the shipped doll. A check that sees fewer proves nothing about the doll.
+    /// <see cref="SourceShading"/>'s vacuity floors, half of the counts on the shipped doll (1756 edges between fragments of one source, 1185 rim edges, 4052 creased edges of a source).
     /// </summary>
-    private const int DollSharedEdges = 1998, DollCreasedEdges = 1991;
+    private const int FlatEdgesFloor = 878, RimEdgesFloor = 592, CreasedEdgesFloor = 2026;
 
     public static void Run(Action<string> fail, in Box3DSoaView creationView)
     {
@@ -146,7 +148,7 @@ public static class PuppetChecks
         Check(!many.Update(crowd, new List<PuppetJointLane>()), "a crowd reported a change with none");
         var crowdSkin = new PuppetSkin(crowdShape);
         crowdSkin.Update(Enumerable.Repeat(Identity, crowdShape.Ids.Length).ToArray());
-        Check(crowdSkin.Facet.Length * 3 == crowdShape.Corners.Length && crowdSkin.Facet.All(f => math.length(f) > 0.99f), "the crowd's skin has no unit facet for every triangle");
+        Check(crowdSkin.Normal.Length * 3 == crowdShape.Corners.Length && crowdSkin.Normal.All(f => math.length(f) > 0.99f), "the crowd's skin has no unit normal for every triangle");
         Check(Pieces(crowdShape) == 40 && crowdShape.Bone.Distinct().Count() == 40, $"the crowd is {Pieces(crowdShape)} pieces over {crowdShape.Bone.Distinct().Count()} bones, not one closed piece per body");
         Check(crowdShape.Vertices.All(v => MathF.Abs(math.length(v - new float3(0, 0.2f * ((int)MathF.Round(v.y / 0.2f)), 0)) - 0.03f) < Doll.FacetError + 1e-4f), "a fallback sphere is not drawn as its physics shape");
 
@@ -193,7 +195,7 @@ public static class PuppetChecks
         NoSelfCrossing(puppet, triangles, Check);
         Mesher(puppet, fields, triangles, Check);
         AcrossIsPositionWeld(puppet, Check);
-        SkinnedSurface(puppet, Check);
+        SourceShading(puppet, fields, Check);
         FoldHasNoCrease(Check);
     }
 
@@ -929,110 +931,128 @@ public static class PuppetChecks
     }
 
     /// <summary>
-    /// <see cref="PuppetSkin"/> against the geometry it should describe, measured from its own skinned corners and the bones alone, at
-    /// bends of 0, 45 and 90 degrees (seeds 0 to 19): every vertex where its one bone puts it; per edge the same crease on both sides, half
-    /// the angle between the skinned facets with the sign of the edge's convexity there, or 0 on a skinned fold and on an edge with
-    /// no neighbour (a bind-time crease fails this at the bends: Soul counted 1368 sign flips at 90); the altitudes as 2 * area over the
-    /// edge's length; the facet and area-weighted vertex normals.
+    /// Fragments shade as their sources (<see cref="PuppetShade"/>), read from what the shape stores and the skin poses, never from a triangle's own corners. SourceNormal: every triangle's drawn normal is the bone's turn of its
+    /// source's plane normal (a cut piece's from the plane its tag names, which <see cref="PuppetBoolean"/> made; a ball's from its corners, which are its own source), within 1e-4 rad, at the creation pose and in a bent one, and every
+    /// skinned vertex is where its bone puts it. FlatEdgesAgree: across an edge between two fragments of one source the two sides draw the same bevel at both shared corners (the lines within reach, half the cap, with their distances within
+    /// 1e-6 m and creases within 1e-5, and the cap within 1e-6 m). RimIsHard: across a rim (a fragment of the body against a fragment of a wall) neither side has a line through both corners that carries a crease, so no band falls on it.
+    /// CreasesAgree: where both sides of an edge have a line through both its corners (a source's own edge), they carry the same crease.
     /// </summary>
-    private static void SkinnedSurface(PuppetShape shape, Action<bool, string> check)
+    private static void SourceShading(PuppetShape shape, PieceField[] fields, Action<bool, string> check)
     {
+        int slots = shape.Corners.Length, bodies = fields.Length;
+        var tag = new int[shape.Triangles]; var wall = new bool[shape.Triangles]; var normal = new float3[shape.Triangles];
+        Array.Fill(tag, -1);
+        var next = new int[shape.PieceCount];
+        for (int t = 0; t < shape.Triangles; t++)
+        {
+            int piece = shape.Piece[shape.Corners[3 * t]], k = next[piece]++; // a piece's triangles are its solid's, in order
+            if (piece >= bodies) { normal[t] = Facet(shape, t); continue; }
+            var pm = PuppetPieces.Get(fields[piece].Key, fields[piece]).Result; var pl = pm.Solid.Planes[pm.Solid.Tag[k]];
+            tag[t] = pm.Solid.Tag[k]; wall[t] = tag[t] >= pm.Own;
+            normal[t] = math.mul(fields[piece].Placement.R, new float3((float)pl.Nx, (float)pl.Ny, (float)pl.Nz));
+        }
         var skin = new PuppetSkin(shape);
-        int moved = 0, shared = 0, creased = 0, folds = 0, badFold = 0, asymmetric = 0, notHalf = 0, badSign = 0, badLoose = 0, badAltitude = 0, badFacet = 0, badVertexNormal = 0;
-        foreach (float degrees in new[] { 0f, 45f, 90f })
-            for (int seed = 0; seed < 20; seed++)
+        int shaded = 0;
+        for (int t = 0; t < shape.Triangles; t++) if (tag[t] >= 0) shaded++;
+        check(shaded > 2000, $"SourceNormal is vacuous: {shaded} cut-body triangles");
+        foreach (var (name, bones) in new[] { ("creation pose", Enumerable.Repeat(Identity, shape.Ids.Length).ToArray()), ("a bent pose", Bend(shape, 1, 70f * MathF.PI / 180f)) })
+        {
+            skin.Update(bones);
+            int moved = 0, off = 0, badVertexNormal = 0; float worst = 0;
+            for (int v = 0; v < shape.Vertices.Length; v++) if (math.length(skin.Skinned[v] - bones[shape.Bone[v]].Apply(shape.Vertices[v])) > 1e-5f) moved++;
+            for (int t = 0; t < shape.Triangles; t++)
             {
-                var bones = Bend(shape, seed, degrees * MathF.PI / 180f);
-                skin.Update(bones);
-                var at = new float3[shape.Vertices.Length];
-                for (int v = 0; v < at.Length; v++)
+                var r = bones[shape.Bone[shape.Corners[3 * t]]].R;
+                var want = math.mul(r, normal[t]); float angle = MathF.Atan2(math.length(math.cross(want, skin.Normal[t])), math.dot(want, skin.Normal[t])); // not acos: it reads 5e-4 rad for two equal unit vectors rounded
+                worst = MathF.Max(worst, angle);
+                if (angle > 1e-4f) off++;
+                for (int k = 0; k < 3; k++)
                 {
-                    at[v] = bones[shape.Bone[v]].Apply(shape.Vertices[v]);
-                    if (math.length(skin.Skinned[v] - at[v]) > 1e-5f) moved++;
-                }
-                float3 P(int slot) => at[shape.Corners[slot]];
-                float3 Outward(int t) => -math.cross(P(3 * t + 1) - P(3 * t), P(3 * t + 2) - P(3 * t));
-                var normal = new float3[shape.Triangles];
-                var vertexSum = new float3[at.Length];
-                for (int t = 0; t < normal.Length; t++)
-                {
-                    var outward = Outward(t);
-                    normal[t] = outward / math.length(outward);
-                    if (math.length(skin.Facet[t] - normal[t]) > 1e-4f) badFacet++;
-                    for (int k = 0; k < 3; k++) vertexSum[shape.Corners[3 * t + k]] += outward;
-                    for (int k = 0; k < 3; k++)
-                    {
-                        float h = math.length(outward) / math.length(P(3 * t + (k + 1) % 3) - P(3 * t + (k + 2) % 3));
-                        if (MathF.Abs(skin.Altitude[3 * t + k] - h) > 1e-6f) badAltitude++;
-                    }
-                    float smallest = MathF.Min(skin.Altitude[3 * t], MathF.Min(skin.Altitude[3 * t + 1], skin.Altitude[3 * t + 2]));
-                    if (skin.SmallestAltitude[t] != smallest) badAltitude++;
-                }
-                for (int v = 0; v < at.Length; v++) if (math.length(skin.VertexNormal[v] - vertexSum[v] / math.length(vertexSum[v])) > 1e-4f) badVertexNormal++;
-                for (int s = 0; s < shape.Across.Length; s++)
-                {
-                    int o = shape.Across[s];
-                    if (o < 0) { if (skin.Crease[s] != 0) badLoose++; continue; }
-                    if (o < s) continue;
-                    shared++;
-                    if (MathF.Abs(skin.Crease[s] - skin.Crease[o]) > 1e-5f) asymmetric++;
-                    float3 na = normal[s / 3], nb = normal[o / 3];
-                    float angle = MathF.Atan2(math.length(math.cross(na, nb)), math.dot(na, nb));
-                    if (angle < 1e-2f) continue; // a flat edge has no convexity to speak of, and its crease is below the float noise of the sign
-                    bool convexA = math.dot(na, P(o) - P(3 * (s / 3) + (s % 3 + 1) % 3)) < 0;
-                    bool convexB = math.dot(nb, P(s) - P(3 * (o / 3) + (o % 3 + 1) % 3)) < 0;
-                    if (convexA != convexB) { folds++; if (skin.Crease[s] != 0 || skin.Crease[o] != 0) badFold++; continue; }
-                    creased++;
-                    if (MathF.Abs(MathF.Abs(skin.Crease[s]) - 0.5f * angle) > 1e-4f) notHalf++;
-                    if ((skin.Crease[s] > 0) != convexA || (skin.Crease[o] > 0) != convexB) badSign++;
+                    var n = skin.VertexNormal[3 * t + k];
+                    if (!(MathF.Abs(math.length(n) - 1) < 1e-3f) || math.length(n - math.mul(r, shape.VertexNormal[3 * t + k])) > 1e-5f) badVertexNormal++;
                 }
             }
-        Console.WriteLine($"PUPPET skin check: {shared / 60} shared edges and {creased / 60} turning ones per pose");
-        check(shared > 60 * DollSharedEdges / 2 && creased > 60 * DollCreasedEdges / 2, $"the skin check is vacuous: {shared} shared edges, {creased} turning more than a hundredth of a radian, over 60 poses");
-        check(moved == 0, $"{moved} skinned vertices are not where the bones put them");
-        check(badFacet == 0, $"{badFacet} facet normals differ from the skinned corners'");
-        check(badVertexNormal == 0, $"{badVertexNormal} vertex normals differ from the area-weighted sum of their skinned facets");
-        check(badAltitude == 0, $"{badAltitude} altitudes differ from 2 * area / edge length of the skinned triangle");
-        check(asymmetric == 0, $"{asymmetric} of {shared} shared edges carry different creases on their two sides");
-        check(notHalf == 0, $"{notHalf} of {creased} turning edges have a crease that is not half the angle between the skinned facets");
-        check(badSign == 0, $"{badSign} of {creased} turning edges have a crease whose sign does not match the skinned convexity");
-        check(badFold == 0, $"{badFold} of {folds} skinned folds carry a crease");
-        check(badLoose == 0, $"{badLoose} edges without exactly one neighbour carry a crease");
+            Console.WriteLine($"PUPPET source normals, {name}: {off} of {shape.Triangles} off their source's, worst {worst * 180 / MathF.PI:F4} degrees");
+            check(moved == 0, $"{moved} skinned vertices are not where the bones put them ({name})");
+            check(off == 0, $"SourceNormal: {off} of {shape.Triangles} triangles draw a normal off their source's plane normal ({name}, worst {worst * 180 / MathF.PI:F4} degrees)");
+            check(badVertexNormal == 0, $"{badVertexNormal} corner vertex normals are not the unit vertex normal the shape stores, turned by their bone ({name})");
+        }
+
+        // The bevel a corner slot draws: the lines (distance, crease) within half the cap of the corner that carry a crease, and the cap.
+        (List<(float D, float C)> Lines, float Cap) Bevel(int slot)
+        {
+            int t = slot / 3; var d = shape.Distance[slot]; var c = shape.Crease[t]; var lines = new List<(float D, float C)>();
+            for (int j = 0; j < 3; j++) { float dj = j == 0 ? d.x : j == 1 ? d.y : d.z, cj = j == 0 ? c.x : j == 1 ? c.y : c.z; if (cj != 0 && dj < 0.5f * shape.Cap[t] + 1e-7f) lines.Add((dj, cj)); }
+            return (lines.OrderBy(x => x.D).ThenBy(x => x.C).ToList(), shape.Cap[t]);
+        }
+        // The line of triangle t through both corners (slots a and b) of one of its edges, if it has one: its crease.
+        float? Through(int t, int a, int b)
+        {
+            var da = shape.Distance[a]; var db = shape.Distance[b]; var c = shape.Crease[t];
+            if (MathF.Abs(da.x) < 1e-6f && MathF.Abs(db.x) < 1e-6f) return c.x;
+            if (MathF.Abs(da.y) < 1e-6f && MathF.Abs(db.y) < 1e-6f) return c.y;
+            if (MathF.Abs(da.z) < 1e-6f && MathF.Abs(db.z) < 1e-6f) return c.z;
+            return null;
+        }
+        int flat = 0, disagree = 0, rim = 0, banded = 0, own = 0, creased = 0, differ = 0;
+        for (int s = 0; s < slots; s++)
+        {
+            int o = shape.Across[s]; if (o < s) continue;
+            int t = s / 3, u = o / 3;
+            if (shape.Piece[shape.Corners[3 * t]] != shape.Piece[shape.Corners[3 * u]]) continue;
+            // slot s is edge s % 3 of t, between its corners (s % 3) + 1 and (s % 3) + 2; the other side's two slots for the same two vertices
+            int[] ct = { 3 * t + (s % 3 + 1) % 3, 3 * t + (s % 3 + 2) % 3 }, cu = { 3 * u + (o % 3 + 1) % 3, 3 * u + (o % 3 + 2) % 3 };
+            if (shape.Corners[ct[0]] != shape.Corners[cu[0]]) (cu[0], cu[1]) = (cu[1], cu[0]);
+            if (tag[t] >= 0 && tag[t] == tag[u])
+            {
+                flat++; bool same = true;
+                for (int i = 0; i < 2 && same; i++)
+                {
+                    var (x, wx) = Bevel(ct[i]); var (y, wy) = Bevel(cu[i]);
+                    same = MathF.Abs(wx - wy) < 1e-6f && x.Count == y.Count && x.Zip(y).All(z => MathF.Abs(z.First.D - z.Second.D) < 1e-6f && MathF.Abs(z.First.C - z.Second.C) < 1e-5f);
+                }
+                if (!same) disagree++;
+            }
+            else if (tag[t] >= 0 && tag[u] >= 0 && wall[t] != wall[u])
+            {
+                rim++;
+                if ((Through(t, ct[0], ct[1]) is { } a && a != 0) || (Through(u, cu[0], cu[1]) is { } b && b != 0)) banded++;
+            }
+            else if (Through(t, ct[0], ct[1]) is { } c1 && Through(u, cu[0], cu[1]) is { } c2)
+            {
+                own++;
+                if (MathF.Abs(c1) > 1e-2f) creased++;
+                if (MathF.Abs(c1 - c2) > 1e-5f) differ++;
+            }
+        }
+        Console.WriteLine($"PUPPET source shading: {flat} edges between fragments of one source, {disagree} disagree; {rim} rim edges, {banded} banded; {own} edges of a source with a line on both sides, {creased} creased, {differ} with different creases");
+        check(flat > FlatEdgesFloor, $"FlatEdgesAgree is vacuous: {flat} edges between fragments of one source");
+        check(disagree == 0, $"FlatEdgesAgree: on {disagree} of {flat} edges between fragments of one source the two sides draw different bevels");
+        check(rim > RimEdgesFloor, $"RimIsHard is vacuous: {rim} rim edges");
+        check(banded == 0, $"RimIsHard: {banded} of {rim} rim edges carry a line on a side, so a band falls on the rim");
+        check(creased > CreasedEdgesFloor, $"CreasesAgree is vacuous: {creased} creased edges of sources");
+        check(differ == 0, $"CreasesAgree: {differ} of {own} edges of a source carry different creases on their two sides");
     }
 
     /// <summary>
-    /// A skinned fold, two triangles lying over each other so that their sides disagree on which way their shared edge turns, has no edge to
-    /// bevel: both sides carry crease 0. No pose of the real puppet reaches one but a single joint swung 180 degrees, so the rule is held to
-    /// two small shapes of four vertices, both with one bone and no joint: the same four points wound so that the second triangle is
-    /// inconsistent with the first (a fold), and wound consistently with a right angle between the two (a turn, which keeps its crease).
+    /// A fold, two triangles lying over each other so that their sides disagree on which way their shared edge turns, has no edge to bevel: both sides carry crease 0. No pose of the real puppet reaches one but a single joint swung
+    /// 180 degrees, and the creases are a source's own, so the rule is held to two small meshes of four vertices (<see cref="PuppetShade.Of(float3[], int[])"/>): the same four points wound so that the second triangle is inconsistent
+    /// with the first (a fold), and wound consistently with a right angle between the two (a turn, which keeps its crease).
     /// </summary>
     private static void FoldHasNoCrease(Action<bool, string> check)
     {
-        PuppetShape Pair(float3[] vertices, int[] corners, int slotA, int slotB)
+        // Triangle 0 is (0, 1, 2); its edge 1-2 is opposite its corner 0, line 0. The second triangle's edge between vertices 1 and 2 is opposite its corner 3: line 2 of (1, 2, 3), line 1 of (1, 3, 2).
+        var fold = (new[] { new float3(0, 0, 0), new float3(1, 0, 0), new float3(0, 1, 0), new float3(1, 1, 0.1f) }, new[] { 0, 1, 2, 1, 2, 3 }, 2);
+        var turn = (new[] { new float3(0, 0, 0), new float3(1, 0, 0), new float3(0, 1, 0), new float3(0.5f, 0.5f, 0.7f) }, new[] { 0, 1, 2, 1, 3, 2 }, 1);
+        foreach (var (name, (vertices, tris, line), folds) in new[] { ("fold", fold, true), ("turn", turn, false) })
         {
-            var across = Enumerable.Repeat(-1, corners.Length).ToArray();
-            across[slotA] = slotB; across[slotB] = slotA;
-            return new PuppetShape
-            {
-                Ids = new ulong[] { 1 }, Bind = new[] { Identity }, Joints = Array.Empty<(Box3DSoaJointKind, int, int, float3)>(), BallRadius = Array.Empty<float>(),
-                Vertices = vertices, Bone = new int[vertices.Length], Piece = new int[vertices.Length],
-                Corners = corners, Across = across,
-            };
-        }
-        // Triangle A is (0, 1, 2); its edge 1-2 is opposite its corner 0 (slot 0).
-        var fold = Pair(new[] { new float3(0, 0, 0), new float3(1, 0, 0), new float3(0, 1, 0), new float3(1, 1, 0.1f) }, new[] { 0, 1, 2, 1, 2, 3 }, 0, 5);
-        var turn = Pair(new[] { new float3(0, 0, 0), new float3(1, 0, 0), new float3(0, 1, 0), new float3(0.5f, 0.5f, 0.7f) }, new[] { 0, 1, 2, 1, 3, 2 }, 0, 4);
-        foreach (var (name, shape, folds) in new[] { ("fold", fold, true), ("turn", turn, false) })
-        {
-            var skin = new PuppetSkin(shape);
-            skin.Update(new[] { Identity });
-            float3 P(int slot) => shape.Vertices[shape.Corners[slot]];
-            float3 na = skin.Facet[0], nb = skin.Facet[1];
-            bool convexA = math.dot(na, P(shape.Across[0]) - P(1)) < 0, convexB = math.dot(nb, P(0) - P(1)) < 0;
+            var shade = PuppetShade.Of(vertices, tris);
+            float3 na = shade.Normal[0], nb = shade.Normal[1];
+            var ca = shade.Crease[0].x; var cb = line == 1 ? shade.Crease[1].y : shade.Crease[1].z;
+            bool convexA = math.dot(na, vertices[3] - vertices[1]) < 0, convexB = math.dot(nb, vertices[0] - vertices[1]) < 0;
             check((convexA != convexB) == folds, $"the {name} fixture is {(folds ? "not" : "")} a fold: the two sides {(convexA == convexB ? "agree" : "disagree")} on convexity");
-            int other = shape.Across[0];
-            check(skin.Crease[0] == skin.Crease[other], $"the {name} fixture's two sides carry different creases, {skin.Crease[0]} and {skin.Crease[other]}");
-            check(folds ? skin.Crease[0] == 0 : MathF.Abs(skin.Crease[0]) > 0.1f, $"the {name} fixture's crease is {skin.Crease[0]}: a fold has none, a turn keeps its own");
+            check(ca == cb, $"the {name} fixture's two sides carry different creases, {ca} and {cb}");
+            check(folds ? ca == 0 : MathF.Abs(ca) > 0.1f, $"the {name} fixture's crease is {ca}: a fold has none, a turn keeps its own");
         }
     }
 

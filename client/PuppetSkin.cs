@@ -4,10 +4,9 @@ using CultMath;
 namespace BadDay.Client;
 
 /// <summary>
-/// The puppet's drawn surface, engine-free, owned for every frame: <see cref="Update"/> skins the vertices of a <see cref="PuppetShape"/>
-/// by the bodies' transforms, one bone each, and derives from the skinned corners the facet normals, the creases (half the turn between neighbouring
-/// facets, once per edge and the same on both sides), the area-weighted vertex normals and the altitudes that give the bevel its distances.
-/// A crease is a property of the deformed surface, so none of it is kept from the bind. Every array is allocated once, here, and refilled.
+/// The puppet's drawn surface, engine-free, owned for every frame: <see cref="Update"/> skins the vertices of a <see cref="PuppetShape"/> by the bodies' transforms, one bone each, and poses the normals and
+/// vertex normals the shape stores (derived once from each triangle's source: <see cref="PuppetShade"/>) by each corner's bone. A piece is rigid, so a normal, a crease, a line's distance and a cap never change with the pose
+/// but a normal's direction, and nothing here is derived from the skinned corners: a fragment's own corners are not its source. Every array is allocated once, here, and refilled.
 /// </summary>
 public sealed class PuppetSkin
 {
@@ -18,36 +17,19 @@ public sealed class PuppetSkin
     {
         _shape = shape;
         _bones = new float[12 * shape.Ids.Length];
-        int slots = shape.Corners.Length, triangles = slots / 3;
         Skinned = new float3[shape.Vertices.Length];
-        VertexNormal = new float3[shape.Vertices.Length];
-        Facet = new float3[triangles];
-        Crease = new float[slots];
-        Altitude = new float[slots];
-        SmallestAltitude = new float[triangles];
+        Normal = new float3[shape.Triangles];
+        VertexNormal = new float3[shape.Corners.Length];
     }
 
     /// <summary>Every vertex skinned, in the space the bodies' transforms take the bind to.</summary>
     public float3[] Skinned { get; }
 
-    /// <summary>Per triangle: the unit normal seen from outside.</summary>
-    public float3[] Facet { get; }
+    /// <summary>Per triangle: the unit normal of its source seen from outside, posed.</summary>
+    public float3[] Normal { get; }
 
-    /// <summary>
-    /// Per corner slot (3t+k is edge k of triangle t, the edge opposite corner k): half the turn from this facet's normal to the
-    /// neighbour's across that edge, in radians, positive where the edge is convex. Both sides of an edge carry the same value. An edge
-    /// without exactly one neighbour has 0, and so has a fold (the two sides disagree on which way it turns).
-    /// </summary>
-    public float[] Crease { get; }
-
-    /// <summary>Per vertex: the unit sum of its triangles' normals weighted by their areas.</summary>
+    /// <summary>Per corner slot: the unit vertex normal the corner draws, posed.</summary>
     public float3[] VertexNormal { get; }
-
-    /// <summary>Per corner slot: the distance (m) from corner k to the line of edge k, 2 * area / |edge k|.</summary>
-    public float[] Altitude { get; }
-
-    /// <summary>Per triangle: the smallest of its three altitudes.</summary>
-    public float[] SmallestAltitude { get; }
 
     /// <summary>The corners of the box around the skinned vertices.</summary>
     public float3 Lo { get; private set; }
@@ -75,49 +57,22 @@ public sealed class PuppetSkin
                 _bones[a] * p.x + _bones[a + 1] * p.y + _bones[a + 2] * p.z + _bones[a + 9],
                 _bones[a + 3] * p.x + _bones[a + 4] * p.y + _bones[a + 5] * p.z + _bones[a + 10],
                 _bones[a + 6] * p.x + _bones[a + 7] * p.y + _bones[a + 8] * p.z + _bones[a + 11]);
-            Skinned[v] = q; VertexNormal[v] = new float3(0, 0, 0);
+            Skinned[v] = q;
             lo = math.min(lo, q); hi = math.max(hi, q);
         }
         Lo = lo; Hi = hi;
 
         var corners = s.Corners;
-        for (int t = 0; t < Facet.Length; t++)
+        for (int t = 0; t < Normal.Length; t++)
         {
-            int c0 = corners[3 * t], c1 = corners[3 * t + 1], c2 = corners[3 * t + 2];
-            var a = Skinned[c0]; var b = Skinned[c1]; var c = Skinned[c2];
-            // The winding is clockwise from outside, so the counter-clockwise cross points in and its negation is the outward, area-weighted normal.
-            var outward = -math.cross(b - a, c - a);
-            float twiceArea = math.length(outward);
-            Facet[t] = twiceArea > 1e-24f ? outward / twiceArea : new float3(0, 1, 0);
-            VertexNormal[c0] += outward; VertexNormal[c1] += outward; VertexNormal[c2] += outward;
-            float h0 = Altitude3(twiceArea, b, c), h1 = Altitude3(twiceArea, c, a), h2 = Altitude3(twiceArea, a, b);
-            Altitude[3 * t] = h0; Altitude[3 * t + 1] = h1; Altitude[3 * t + 2] = h2;
-            SmallestAltitude[t] = MathF.Min(h0, MathF.Min(h1, h2));
-        }
-        for (int v = 0; v < VertexNormal.Length; v++)
-        {
-            float l = math.length(VertexNormal[v]);
-            VertexNormal[v] = l > 1e-24f ? VertexNormal[v] / l : new float3(0, 1, 0);
-        }
-
-        for (int slot = 0; slot < Crease.Length; slot++)
-        {
-            int other = s.Across[slot];
-            if (other < 0) { Crease[slot] = 0; continue; }
-            if (other < slot) continue; // its pair, lower in the array, set both
-            var fn = Facet[slot / 3]; var fm = Facet[other / 3];
-            // Convex from a side: the neighbour's far corner (the corner opposite the shared edge) lies behind this facet's plane.
-            bool convexHere = math.dot(fn, Skinned[corners[other]] - Skinned[corners[3 * (slot / 3) + (slot % 3 + 1) % 3]]) < 0;
-            bool convexThere = math.dot(fm, Skinned[corners[slot]] - Skinned[corners[3 * (other / 3) + (other % 3 + 1) % 3]]) < 0;
-            if (convexHere != convexThere) { Crease[slot] = Crease[other] = 0; continue; }
-            float half = 0.5f * MathF.Atan2(math.length(math.cross(fn, fm)), math.dot(fn, fm));
-            Crease[slot] = Crease[other] = convexHere ? half : -half;
+            int a = 12 * s.Bone[corners[3 * t]]; // a triangle is one piece's: its three corners follow one bone
+            Normal[t] = Turn(a, s.Normal[t]);
+            for (int k = 0; k < 3; k++) VertexNormal[3 * t + k] = Turn(a, s.VertexNormal[3 * t + k]);
         }
     }
 
-    private static float Altitude3(float twiceArea, float3 p, float3 q)
-    {
-        float length = math.length(p - q);
-        return length > 1e-12f ? twiceArea / length : 0;
-    }
+    private float3 Turn(int a, float3 n) => new(
+        _bones[a] * n.x + _bones[a + 1] * n.y + _bones[a + 2] * n.z,
+        _bones[a + 3] * n.x + _bones[a + 4] * n.y + _bones[a + 5] * n.z,
+        _bones[a + 6] * n.x + _bones[a + 7] * n.y + _bones[a + 8] * n.z);
 }

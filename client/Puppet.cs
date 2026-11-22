@@ -13,7 +13,7 @@ namespace BadDay.Client;
 /// with a soft bevel, built once and rebuilt only when the topology signature (the shape bodies)
 /// changes. Per-StableId Node3D carriers hold the pose lanes so physics interpolation has something to interpolate, and every
 /// frame <see cref="PuppetSkin"/> skins the surface on the CPU by those carriers' interpolated transforms relative to the
-/// bind pose and derives its facets, creases and vertex normals; this class uploads the result into the mesh's two streams in place. Nothing meshes on
+/// bind pose and poses its normals and vertex normals; the bevel's lines, creases and caps are the shape's, derived once from each triangle's source (<see cref="PuppetShade"/>). This class uploads the result into the mesh's two streams in place. Nothing meshes on
 /// the tick: the model publishes a shape when its pieces are built off the physics thread, and until then the previous shape (or none) is drawn.
 /// </summary>
 public partial class Puppet : Node3D
@@ -127,7 +127,7 @@ public partial class Puppet : Node3D
         var toModel = _skin.GetGlobalTransformInterpolated().AffineInverse();
         for (int i = 0; i < _boneNodes.Length; i++) _bones[i] = ToRigid(toModel * _boneNodes[i].GetGlobalTransformInterpolated() * _inverseBind[i]);
         _surface.Update(_bones);
-        Pack(_surface, Shape!.Corners, _vertexStream, _attributeStream);
+        Pack(_surface, Shape!, _vertexStream, _attributeStream);
         var rid = _mesh.GetRid();
         RenderingServer.MeshSurfaceUpdateVertexRegion(rid, 0, 0, _vertexStream);
         RenderingServer.MeshSurfaceUpdateAttributeRegion(rid, 0, 0, _attributeStream);
@@ -177,9 +177,9 @@ public partial class Puppet : Node3D
 
     /// <summary>
     /// A surface of <paramref name="corners"/> vertices that only fixes the layout the frames fill in place (nothing is rebuilt per frame):
-    /// the vertex stream is VERTEX alone, the attribute stream CUSTOM0 (RgbaFloat: component k holds the altitude h_k of corner k, w the
-    /// triangle's smallest altitude), CUSTOM1 (the triangle's three creases), CUSTOM2 (the facet normal) and CUSTOM3 (the corner's vertex
-    /// normal), all in the skin's model space.
+    /// the vertex stream is VERTEX alone, the attribute stream CUSTOM0 (RgbaFloat: component k the corner's distance to line k of its triangle's source, w the
+    /// source's least altitude), CUSTOM1 (the source's three creases), CUSTOM2 (the source's normal) and CUSTOM3 (the corner's vertex
+    /// normal), the normals in the skin's model space.
     /// </summary>
     private static ArrayMesh LayoutOf(int corners)
     {
@@ -200,24 +200,26 @@ public partial class Puppet : Node3D
     }
 
     /// <summary>Writes the skin's surface, one triangle corner after another, into the two streams (no allocation).</summary>
-    private static void Pack(PuppetSkin skin, int[] corners, byte[] vertexStream, byte[] attributeStream)
+    private static void Pack(PuppetSkin skin, PuppetShape shape, byte[] vertexStream, byte[] attributeStream)
     {
         var vertex = MemoryMarshal.Cast<byte, float>(vertexStream);
         var attribute = MemoryMarshal.Cast<byte, float>(attributeStream);
+        var corners = shape.Corners;
         for (int t = 0; t < corners.Length / 3; t++)
         {
-            var facet = skin.Facet[t];
+            var normal = skin.Normal[t]; var crease = shape.Crease[t];
             for (int k = 0; k < 3; k++)
             {
-                int slot = 3 * t + k, c = corners[slot];
-                var p = skin.Skinned[c];
+                int slot = 3 * t + k;
+                var p = skin.Skinned[corners[slot]];
                 vertex[3 * slot] = p.x; vertex[3 * slot + 1] = p.y; vertex[3 * slot + 2] = p.z;
                 int o = AttributeBytes / 4 * slot;
-                attribute[o] = k == 0 ? skin.Altitude[3 * t] : 0; attribute[o + 1] = k == 1 ? skin.Altitude[3 * t + 1] : 0; attribute[o + 2] = k == 2 ? skin.Altitude[3 * t + 2] : 0;
-                attribute[o + 3] = skin.SmallestAltitude[t];
-                attribute[o + 4] = skin.Crease[3 * t]; attribute[o + 5] = skin.Crease[3 * t + 1]; attribute[o + 6] = skin.Crease[3 * t + 2];
-                attribute[o + 7] = facet.x; attribute[o + 8] = facet.y; attribute[o + 9] = facet.z;
-                var n = skin.VertexNormal[c];
+                var d = shape.Distance[slot];
+                attribute[o] = d.x; attribute[o + 1] = d.y; attribute[o + 2] = d.z;
+                attribute[o + 3] = shape.Cap[t];
+                attribute[o + 4] = crease.x; attribute[o + 5] = crease.y; attribute[o + 6] = crease.z;
+                attribute[o + 7] = normal.x; attribute[o + 8] = normal.y; attribute[o + 9] = normal.z;
+                var n = skin.VertexNormal[slot];
                 attribute[o + 10] = n.x; attribute[o + 11] = n.y; attribute[o + 12] = n.z;
             }
         }

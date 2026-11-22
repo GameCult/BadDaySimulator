@@ -2,25 +2,29 @@ shader_type spatial;
 render_mode cull_back;
 #include "res://studio.gdshaderinc"
 
-// The puppet is one mesh that the CPU skins and shapes every frame (PuppetSkin), so the shader draws what it is given and moves
+// The puppet is one mesh that the CPU skins every frame (PuppetSkin), so the shader draws what it is given and moves
 // nothing: VERTEX is already where the body is, and the colour, depth and shadow passes all draw those positions.
 //
-// The soft bevel is the facet normal tilted toward each edge's bisector, within a width of the edge, and blended to the smooth
-// vertex normal where edges meet. Each corner of a triangle carries:
-//   CUSTOM0: corner k holds its own altitude h_k in component k and 0 in the others (so the interpolated component k is the
-//            distance, in metres, to edge k, the edge opposite corner k); w is the triangle's smallest altitude.
-//   CUSTOM1: the triangle's three creases, crease[k] for edge k: half the turn from this facet to the neighbour's across that edge,
+// The soft bevel is the normal tilted toward each edge's bisector, within a width of the edge, and blended to the smooth
+// vertex normal where edges meet. The edges are those of the triangle's source (PuppetShade): the triangle itself where it is its own
+// source (a ball, an uncut body, a decimated triangle the cut left whole), the decimated triangle or the cutter triangle it is a fragment of
+// where a socket was cut, so the bevel does not change from fragment to fragment of one source and a rim, where a body's surface meets a
+// socket's wall, has no edge to band. Each corner of a triangle carries:
+//   CUSTOM0: component k is the corner's distance, in metres along the source's plane and positive inside it, to line k, the line of
+//            the source's edge opposite its corner k (affine on the plane, so the interpolated component is the distance at the pixel);
+//            w is the source's smallest altitude.
+//   CUSTOM1: the source's three creases, crease[k] for line k: half the turn from the source's normal to its neighbour's across that edge,
 //            positive where the edge is convex, the same on both sides of the edge.
-//   CUSTOM2: the facet normal (NORMAL in vertex()).
-//   CUSTOM3: this corner's vertex normal, the area-weighted mean of the facets that meet there; interpolated, it is the same on both
-//            sides of an edge.
-// All of it is in model space and derived from the pose being drawn, never from the bind. The in-plane direction to each edge comes from
-// screen derivatives of the distances, so the shader never evaluates the SDF. At an edge the tilt is exactly the bisector from both
-// sides, so the normal is continuous across it.
+//   CUSTOM2: the source's normal (NORMAL in vertex()).
+//   CUSTOM3: this corner's vertex normal, the source's corner vertex normals interpolated to the corner (area-weighted over a body's
+//            triangles, by angle over a cutter's); interpolated, it is the same on both sides of a source's edge.
+// The normals are posed with their body each frame; the distances, creases and caps are a piece's own and never change, the piece being
+// rigid. The in-plane direction to each line comes from screen derivatives of the distances, so the shader never evaluates the SDF. At an
+// edge the tilt is exactly the bisector from both sides, so the normal is continuous across it.
 //
 // The width is on the screen: bevel_screen is a fraction of the viewport's height and the distance across one pixel (metres per pixel,
-// from the derivatives of the distance to the edge) turns it into metres; bevel_min floors it, and half the triangle's smallest altitude
-// caps it so the bands of one triangle never meet. A world width is bevel_screen 0 and bevel_min the width.
+// from the derivatives of the distance to the edge) turns it into metres; bevel_min floors it, and half the source's smallest altitude
+// caps it so the bands of one source never meet. A world width is bevel_screen 0 and bevel_min the width.
 //
 // The puppet is glazed porcelain. The bisque is the PBR surface (roughness, specular, backlight) lit by Look's studio lights. The glaze
 // is analytic: Fresnel times the studio (studio.gdshaderinc) in the direction the shading normal reflects the view, added as emission, so

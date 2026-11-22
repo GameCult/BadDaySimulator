@@ -52,7 +52,7 @@ public readonly record struct PuppetJoint(Box3DSoaJointKind Kind, int A, int B, 
 
 /// <summary>
 /// What the puppet is made of, read-only: the bodies' creation pose (bone i is body i, and the bind), the joints, and the pieces' meshes welded
-/// per piece: each vertex once, in the bind, with its one bone and its piece, and the triangles as indices into the vertices. Pieces are the dressed
+/// per piece: each vertex once, in the bind, with its one bone and its piece, and the triangles as indices into the vertices, with the bevel each draws (<see cref="PuppetShade"/>, derived once, here). Pieces are the dressed
 /// bodies (piece i is body i) and then the joint balls (piece n + j is joint j's ball); no vertex belongs to two.
 /// </summary>
 public sealed class PuppetShape
@@ -83,6 +83,21 @@ public sealed class PuppetShape
     /// opposite that same edge, or -1 unless exactly two triangles share the edge. Whoever pairs the two sides of an edge reads it here.
     /// </summary>
     public required int[] Across { get; init; }
+
+    /// <summary>Per triangle: the unit normal of its source seen from outside, in the bind (<see cref="PuppetShade"/>).</summary>
+    public required float3[] Normal { get; init; }
+
+    /// <summary>Per triangle: the creases of its source's three edges, component j for line j.</summary>
+    public required float3[] Crease { get; init; }
+
+    /// <summary>Per triangle: its source's least altitude (m), which caps the bevel's width.</summary>
+    public required float[] Cap { get; init; }
+
+    /// <summary>Per corner slot: the distances (m) from the corner to the three lines of its triangle's source.</summary>
+    public required float3[] Distance { get; init; }
+
+    /// <summary>Per corner slot: the unit vertex normal the corner draws (its source's, interpolated), in the bind.</summary>
+    public required float3[] VertexNormal { get; init; }
 
     public int Triangles => Corners.Length / 3;
 
@@ -161,8 +176,8 @@ public sealed class Cutter
     }
 }
 
-/// <summary>A body piece's mesh as <see cref="PuppetPieces"/> keeps it: the solid with its source tags, the decimated piece's centroid (the sockets' away direction), the decimated piece (<c>SourceV</c>, <c>SourceTris</c>: the sources the cut fragments shade as, before the cut, which the checks judge), and how many of the solid's planes are the decimated piece's own (a tag under it is the piece's surface, a tag from it on is a socket wall).</summary>
-public sealed record PieceMesh(PuppetSolid Solid, float3 Centre, int Own, float3[] SourceV, int[] SourceTris);
+/// <summary>A body piece's mesh as <see cref="PuppetPieces"/> keeps it: the solid with its source tags, the decimated piece's centroid (the sockets' away direction), the decimated piece (<c>SourceV</c>, <c>SourceTris</c>: the sources the cut fragments shade as, before the cut, which the checks judge), the cutters (<c>Cutters</c>, whose triangles are the sources of the walls, appended to the planes in this order), and how many of the solid's planes are the decimated piece's own (a tag under it is the piece's surface, a tag from it on is a socket wall).</summary>
+public sealed record PieceMesh(PuppetSolid Solid, float3 Centre, int Own, float3[] SourceV, int[] SourceTris, Cutter[] Cutters);
 
 /// <summary>
 /// One body piece's field, engine-free, in the body's own frame: its primitives smooth-min'd by <see cref="Doll.BodyBlend"/> (within the body only), which the mesher and decimator sample (<see cref="Body"/>), and
@@ -236,13 +251,9 @@ public sealed class PieceField
 
     /// <summary>
     /// The piece's cutters, in its frame: each socket's countersunk cutter, its away direction from the decimated piece's centroid to the core. Needs the piece built (the centroid is part of its
-    /// <see cref="PieceMesh"/>), so it is for the checks; the mesher builds its own cutters from the centroid it has.
+    /// <see cref="PieceMesh"/>, which keeps the cutters), so it is for the checks; the mesher builds its own cutters from the centroid it has.
     /// </summary>
-    public Cutter[] Cutters => _cutters ??= CuttersOf(PuppetPieces.Get(Key, this).Result);
-
-    private Cutter[]? _cutters;
-
-    private Cutter[] CuttersOf(PieceMesh m) => CuttersAt(m.Centre);
+    public Cutter[] Cutters => PuppetPieces.Get(Key, this).Result.Cutters;
 
     internal Cutter[] CuttersAt(float3 centre) => _cuts.Select(c => c.Cutter(c.Origin - centre)).ToArray();
 
@@ -401,11 +412,12 @@ public static class PuppetField
         var (dv, dt) = PuppetDecimate.Run(v, tris, Doll.FacetAlpha, Doll.FacetScale, new DecimateRules(f.Allowed, f.Tight, f.Stray, f.Guard()));
         var centre = Centroid(dv, dt);
         var solid = PuppetBoolean.Solid(dv, dt); var stats = new PuppetBoolean.Stats();
-        foreach (var cutter in f.CuttersAt(centre)) solid = PuppetBoolean.Subtract(solid, cutter.V, cutter.Tris, stats);
+        var cutters = f.CuttersAt(centre);
+        foreach (var cutter in cutters) solid = PuppetBoolean.Subtract(solid, cutter.V, cutter.Tris, stats);
         if (f.Cuts.Count > 0) solid = PuppetBoolean.Tidy(solid, Doll.TidyEdge, Doll.TidySliverEdge, stats);
         solid = PuppetBoolean.LargestSolid(solid).Solid;
         if (stats.Faults.Count > 0) Faults[f.Key.Id] = string.Join("; ", stats.Faults);
-        return new PieceMesh(solid, centre, dt.Length / 3, dv, dt);
+        return new PieceMesh(solid, centre, dt.Length / 3, dv, dt, cutters);
     }
 
     /// <summary>The centroid of a closed mesh (divergence theorem).</summary>
@@ -426,30 +438,37 @@ public static class PuppetField
         var set = Pieces(bodies, joints);
         var tasks = set.Fields.Select(f => PuppetPieces.Get(f.Key, f)).ToArray(); // all asked for before any is waited on: the keys build side by side
         Task.WaitAll(tasks);
-        return Assemble(set, tasks.Select(t => t.Result.Solid).ToArray());
+        return Assemble(set, tasks.Select(t => t.Result).ToArray());
     }
 
     /// <summary>
     /// Places the pieces' meshes in the bind and welds them into one shape (no vertex is shared across pieces): <paramref name="bodyMeshes"/> are the body fields' (piece i), and each
-    /// <see cref="JointBall"/> builds its own (piece n + j); a body's vertex is its bind applied, a ball's the joint origin plus it.
+    /// <see cref="JointBall"/> builds its own (piece n + j); a body's vertex is its bind applied, a ball's the joint origin plus it. Each piece's bevel is <see cref="PuppetShade"/>'s, from its sources: a body's
+    /// fragments from the decimated piece and its cutters, a ball as its own.
     /// </summary>
-    public static PuppetShape Assemble(PieceSet set, IReadOnlyList<PuppetSolid> bodyMeshes)
+    public static PuppetShape Assemble(PieceSet set, IReadOnlyList<PieceMesh> bodyMeshes)
     {
         var bodies = set.Bodies; var joints = set.Joints; var balls = set.Balls;
         int n = bodies.Count;
         var vertices = new List<float3>(); var bone = new List<int>(); var piece = new List<int>();
         var corners = new List<int>();
-        void Place(int index, (float3[] V, int[] Tris) mesh, Rigid placement, int bodyBone)
+        var normal = new List<float3>(); var crease = new List<float3>(); var cap = new List<float>(); var distance = new List<float3>(); var vertexNormal = new List<float3>();
+        void Place(int index, (float3[] V, int[] Tris) mesh, PuppetShade shade, Rigid placement, int bodyBone)
         {
-            // The meshes wind every triangle counter-clockwise seen from outside; Godot's front face is clockwise, so each triangle is emitted reversed.
+            // The meshes wind every triangle counter-clockwise seen from outside; Godot's front face is clockwise, so each triangle is emitted reversed (corners 0, 2, 1), and its corners' attributes with it.
             var (v, tris) = mesh;
             int first = vertices.Count;
             foreach (var q in v) vertices.Add(placement.Apply(q));
             for (int k = 0; k < v.Length; k++) { bone.Add(bodyBone); piece.Add(index); }
-            for (int k = 0; k < tris.Length; k += 3) { corners.Add(first + tris[k]); corners.Add(first + tris[k + 2]); corners.Add(first + tris[k + 1]); }
+            for (int k = 0; k < tris.Length; k += 3)
+            {
+                corners.Add(first + tris[k]); corners.Add(first + tris[k + 2]); corners.Add(first + tris[k + 1]);
+                normal.Add(math.mul(placement.R, shade.Normal[k / 3])); crease.Add(shade.Crease[k / 3]); cap.Add(shade.Cap[k / 3]);
+                foreach (int e in new[] { 0, 2, 1 }) { distance.Add(shade.Distance[k + e]); vertexNormal.Add(math.mul(placement.R, shade.VertexNormal[k + e])); }
+            }
         }
-        for (int i = 0; i < n; i++) Place(i, (bodyMeshes[i].V, bodyMeshes[i].Tris), set.Fields[i].Placement, set.Fields[i].Bone);
-        foreach (var ball in balls) Place(ball.Index, ball.Mesh(), ball.Placement, ball.Bone);
+        for (int i = 0; i < n; i++) Place(i, (bodyMeshes[i].Solid.V, bodyMeshes[i].Solid.Tris), PuppetShade.Of(bodyMeshes[i]), set.Fields[i].Placement, set.Fields[i].Bone);
+        foreach (var ball in balls) { var mesh = ball.Mesh(); Place(ball.Index, mesh, PuppetShade.Of(mesh.V, mesh.Tris), ball.Placement, ball.Bone); }
         var cornerArray = corners.ToArray();
 
         var ids = new ulong[n]; var bind = new Rigid[n];
@@ -464,6 +483,7 @@ public static class PuppetField
         {
             Ids = ids, Bind = bind, Joints = js, BallRadius = radii,
             Vertices = vertices.ToArray(), Bone = bone.ToArray(), Piece = piece.ToArray(), Corners = cornerArray, Across = Across(cornerArray),
+            Normal = normal.ToArray(), Crease = crease.ToArray(), Cap = cap.ToArray(), Distance = distance.ToArray(), VertexNormal = vertexNormal.ToArray(),
         };
     }
 

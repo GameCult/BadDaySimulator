@@ -81,7 +81,7 @@ public sealed class PuppetModel
         }
         if (!_signed || !SignatureHolds(bodies)) Start(bodies);
         if (_pendingSet is not { } set || !_pending.All(t => t.IsCompleted)) return false;
-        Shape = PuppetField.Assemble(set, _pending.Select(t => t.Result.Solid).ToArray());
+        Shape = PuppetField.Assemble(set, _pending.Select(t => t.Result).ToArray());
         _pendingSet = null;
         return true;
     }

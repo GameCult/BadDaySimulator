@@ -8,9 +8,9 @@ GODOT="${GODOT:-F:/Applications/Godot_v4.7.2-stable_mono_win64/Godot_v4.7.2-stab
 [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "refusing: the tree is dirty"; exit 2; }
 LOG="${LOG:-$(mktemp -d)}"; failed=0; ran=0
 
-# mutant <name> <file> <sed expression> <substring the smoke must print, or PASS> [substring it must not print]
+# mutant <name> <file> <sed expression> <substring the smoke must print, or PASS> [substring it must not print] [a second substring it must print]
 mutant() {
-  local name="$1" file="$2" expr="$3" want="$4" absent="${5:-}"
+  local name="$1" file="$2" expr="$3" want="$4" absent="${5:-}" also="${6:-}"
   if [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $name "* ]]; then return; fi
   ran=$((ran + 1))
   sed -i "$expr" "$file"
@@ -24,6 +24,7 @@ mutant() {
   if [ "$want" = PASS ]; then
     if [ $code -eq 0 ]; then echo "ok    $name: passes, as it must"; else echo "FAIL  $name: must pass and exited $code"; failed=$((failed + 1)); fi
   elif [ -n "$absent" ] && grep -qF -- "$absent" "$LOG/$name.log"; then echo "FAIL  $name: printed '$absent', which it must not (log $LOG/$name.log)"; failed=$((failed + 1))
+  elif [ -n "$also" ] && ! grep -qF -- "$also" "$LOG/$name.log"; then echo "FAIL  $name: did not print '$also' (log $LOG/$name.log)"; failed=$((failed + 1))
   elif [ $code -ne 0 ] && grep -qF -- "$want" "$LOG/$name.log"; then echo "ok    $name: caught ($want)"
   else echo "FAIL  $name: exit $code without '$want' (log $LOG/$name.log)"; failed=$((failed + 1)); fi
 }
@@ -73,6 +74,11 @@ mutant tidy-off             $F 's/if (f.Cuts.Count > 0) solid = PuppetBoolean.Ti
 mutant tidy-sliver-exempt   client/PuppetBoolean.cs 's/if (after <= 0 \&\& after < before) return false;/var nb4 = N(t[i]); if (nb4.Len < 2 * sliverArea) continue; var na4 = N(t[i].Select(w => w == m ? x : w).ToArray()); if (na4.Len < 1e-14 || na4.Unit.Dot(nb4.Unit) < Math.Cos(5 * Math.PI \/ 180)) return false;/' "wind against their source plane"
 mutant parity-flip          client/PuppetBoolean.cs 's/Winding(D3.Of(bv\[k\]), A, at) > 0.5/Winding(D3.Of(bv[k]), A, at) < 0.5/' "the boolean faulted"
 mutant tidy-midpoint        client/PuppetBoolean.cs 's/alive\[ti\] = false; alive\[to\] = false;$/alive[ti] = false; alive[to] = false; v[x] = (v[x] + v[m]) * 0.5;/' "off their source plane"
+# The bevel of a cut piece is its source's (PuppetShade): a fragment's normal from its own corners (the float corners of a sliver are off its plane), and a fragment's lines, creases and cap from its own edges (the bevel then
+# changes from fragment to fragment of one source and bands the rim).
+H=client/PuppetShade.cs
+mutant facet-from-corners   $H 's/normal\[k\] = s.N;/normal[k] = Unit(math.cross(v[tris[3 * k + 1]] - v[tris[3 * k]], v[tris[3 * k + 2]] - v[tris[3 * k]]));/' "SourceNormal:"
+mutant own-edges            $H 's/var s = sources\[tag\[k\]\];/var s = Sources(v, tris, false)[k];/' "FlatEdgesAgree:" "" "RimIsHard:"
 P=client/PuppetPieces.cs; M=client/PuppetModel.cs
 mutant no-cache             $P 's/Cache.GetOrAdd(key, _ =>/Cache.GetOrAdd(new PieceKey(System.Guid.NewGuid().ToString()), _ =>/' "piece meshes"
 mutant build-in-update      $M 's/if (_pendingSet is not { } set || !_pending.All(t => t.IsCompleted)) return false;/if (_pendingSet is not { } set) return false; Task.WaitAll(_pending);/' "pieces were not built yet"
