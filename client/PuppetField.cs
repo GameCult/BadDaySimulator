@@ -253,7 +253,9 @@ public sealed class PieceField
     /// The piece's cutters, in its frame: each socket's countersunk cutter, its away direction from the decimated piece's centroid to the core. Needs the piece built (the centroid is part of its
     /// <see cref="PieceMesh"/>, which keeps the cutters), so it is for the checks; the mesher builds its own cutters from the centroid it has.
     /// </summary>
-    public Cutter[] Cutters => PuppetPieces.Get(Key, this).Result.Cutters;
+    public Cutter[] Cutters => _cutters ??= PuppetPieces.Get(Key, this).Result.Cutters;
+
+    private Cutter[]? _cutters;
 
     internal Cutter[] CuttersAt(float3 centre) => _cuts.Select(c => c.Cutter(c.Origin - centre)).ToArray();
 
