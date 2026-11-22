@@ -34,23 +34,22 @@ public partial class RenderCheck : Node
     private const float MinIou = 0.999f;
 
     /// <summary>
-    /// The bisque's lit faces (the glaze off): at most this share of its pixels may be at 250 or more of 255. The doll's flat facets clip together when one mirrors the key, so the share moves with the view: the shipped bisque
-    /// reads 0.0% to 3.1% over seven parent yaws and 0.8% to 1.6% over repeated runs at <see cref="ParentYaw"/> (the chamber's glow differs a little from run to run), a white-out (the chamber light at 3, the scar in Look) 12.5% to 54.1%
-    /// in the same views; 5% sits between at 1.6 times the shipped worst of the sweep and 2.5 times under the white-out's least.
+    /// The bisque's lit faces (the glaze off): at most this share of its pixels may be at 250 or more of 255. Re-derived by lodur:ruling:deterministic-bound-margin on the shipped doll of 4738 triangles (the check's own readings, run to run
+    /// identical): the shipped worst of the three views that read it (the lit puppet, the glaze views from the front and from behind) is 1.8%, the white-out (the chamber light at 3, the scar in Look) reads at least 20.2% in them
+    /// (43.7%, 30.0% and 20.2%), and 6% is the geometric midpoint, 3.3 times over the shipped and 3.4 times under the white-out.
     /// </summary>
-    private const float MaxClipped = 0.05f;
+    private const float MaxClipped = 0.06f;
 
     /// <summary>
     /// The glaze must show: with it on, at least this share of the puppet's pixels differ from the bisque's by <see cref="GlazeDifference"/> levels or more (it runs under
     /// gl_compatibility, whose clearcoat sees punctual lights only), and at most <see cref="MaxGlazedClipped"/> of them are clipped: the glaze's highlights are meant to
-    /// clip, a puppet white from head to foot is not. Measured at the close view from the front and from behind. The share moves with the parent yaw as the clip does: the shipped glaze changes 3.2% from the front and
-    /// 10.2% from behind at <see cref="ParentYaw"/>, 2.7% from behind at 0.7 radian and 21.3% from behind at -0.4, so a bound of 3% was over the shipped doll in a view the check does not draw; a glaze at strength 0 changes 0%,
-    /// so the bound is 1.5%, 1.8 times under the shipped least of seven yaws and both sides.
+    /// clip, a puppet white from head to foot is not. Measured at the close view from the front and from behind. A glaze at strength 0 changes 0% (the shipped doll 13.3% from the front and 8.5% from behind), so the floor of 1.5% stands, 5.7 times under the
+    /// shipped least. The clip bound is the geometric midpoint of the shipped glaze's 12.1% from the front and the white-out's 39.3% 1.8 times over the shipped and 1.8 under the white-out, 22%.
     /// </summary>
-    private const float MinGlazeShare = 0.015f, MaxGlazedClipped = 0.12f;
+    private const float MinGlazeShare = 0.015f, MaxGlazedClipped = 0.22f;
 
-    /// <summary>From behind the torso's back is one broad face that mirrors the key, so the glaze clips 20.4% there (measured): the bound has margin over that and fails a white-out.</summary>
-    private const float MaxGlazedClippedBehind = 0.24f;
+    /// <summary>From behind the torso's back is a broad face that mirrors the key, but the shipped glaze clips 7.9% there and the white-out 25.0%: the geometric midpoint is 14%.</summary>
+    private const float MaxGlazedClippedBehind = 0.14f;
 
     /// <summary>
     /// The glaze and the lights are one studio: the pixels the glaze lights most (<see cref="HighlightLevels"/> or more above the bisque) must reflect a direction that Look's studio
@@ -62,8 +61,11 @@ public partial class RenderCheck : Node
 
     private const int MinHighlights = 1000;
 
-    /// <summary>The crease pooling must show: with it off, at least this share of the bisque's pixels differ by <see cref="PoolDifference"/> levels or more at the close view from the front.</summary>
-    private const float MinPoolShare = 0.03f, PoolDifference = 3f;
+    /// <summary>
+    /// The crease pooling must show: with it off, at least this share of the bisque's pixels differ by <see cref="PoolDifference"/> levels or more at the close view from the front. The shipped doll reads 2.86%
+    /// and the pooling off 0.00%; the floor is 1.5%, 1.9 times under the shipped and above the mutant's zero by every margin there is.
+    /// </summary>
+    private const float MinPoolShare = 0.015f, PoolDifference = 3f;
 
     private const float GlazeDifference = 8f;
 
@@ -80,8 +82,8 @@ public partial class RenderCheck : Node
     private const float MaxBandMedian = 0.6f;
 
     /// <summary>
-    /// The median angular error (degrees) over the pixels of triangles whose bevel width the smallest altitude caps. The shipped cap reads at most 0.57 in the five views and a cap removed 0.93 to 1.12
-    /// in the three it reaches (far, mid, far 1080); 1.5 let it through on the doll, so the bound sits between them, 1.3 times over the shipped and 1.2 under the removed cap's least.
+    /// The median angular error (degrees) over the pixels of triangles whose bevel width the smallest altitude caps (a source's, which is large, so only the far views and the head reach any). The shipped cap reads at most 0.51 in the six views
+    /// and a cap removed 0.93 to 1.00 in the two it reaches (mid 1080, far 1080); 0.75 is 1.5 times over the shipped and 1.24 under the removed cap's least. Where a view has no such pixel the median is not judged.
     /// </summary>
     private const float MaxCapMedian = 0.75f;
 
@@ -103,9 +105,9 @@ public partial class RenderCheck : Node
     private const float CornerBlendFloor = 0.05f, MaxCornerMedian = 0.7f, MinCornerEffect = 0.8f, SharpCrease = 1.0f, SharpCreaseTop = 1.2f, MaxSharpMedian = 1.5f;
 
     /// <summary>
-    /// Across triangle boundaries: the pairs of adjacent pixels the check must reach (the shares and percentiles each view allows are in <see cref="Views"/>). The share over 30 degrees is a rare event
-    /// (the shipped doll 0.61% and 0.70%), so it needs the most samples of any metric here: 12000 pairs is the least at which 2000 iid draws (with replacement) of that many pairs never put the shipped share over its bound
-    /// nor the widened bevel's or the unbent-tilt mutant's under it (10000 at close, 12000 at bend 90); the two views reach 17762 and 14219.
+    /// Across triangle boundaries: the pairs of adjacent pixels the check must reach, rims apart (the shares and percentiles each view allows are in <see cref="Views"/>). The shipped doll reads 0.08% over 30 degrees (p90 4.43) at close and 1.06% (5.01) at bend 90, the
+    /// unbent-tilt mutant 9.49% (29.64) and 13.97% (36.75); each bar is the geometric midpoint of the two (0.87% and 11.5 degrees, 3.85% and 13.6). The share is a rare event, so it needs the most samples of any metric here: 12000 pairs was the least at which 2000 iid
+    /// draws of that many never put the shipped share over its bound nor the widened bevel's or the unbent-tilt mutant's under it on the doll before the cut was exact, and is kept (raising a floor the views reach is safe): the two views reach 35245 and 24758.
     /// </summary>
     private const int MinPairs = 12000;
 
@@ -115,16 +117,15 @@ public partial class RenderCheck : Node
     private const float HighlightLuma = 245f;
 
     /// <summary>
-    /// The bounds on the flicker views, derived by lodur:ruling:deterministic-bound-margin on the shipped doll (2258 triangles: 914 in its bodies and 1344 in its primitive balls; the session pose in seven framings, the puppet
+    /// The bounds on the flicker views, derived by lodur:ruling:deterministic-bound-margin on the shipped doll (4738 triangles: 3394 in its bodies and 1344 in its primitive balls; the session pose in seven framings, the puppet
     /// bent 30 and 60 degrees in three each), every reading identical run to run (lodur:ruling:render-check-deterministic-first): each bound is the geometric midpoint of the shipped worst and the least claimed
-    /// mutant's worst view, and that mutant must read at least 1.2 times the shipped worst. The p99 flicker ratio: shipped worst 1.33 (the close hold views, the bent 30 one too), kernel 0 (the glaze's prefilter off) worst 1.93,
-    /// separation 1.45, bound 1.60. The silhouette ring, where MSAA works and the interior pixels do not look, mean |shown - reference| in levels of luma: shipped worst 21.54, no MSAA 32.80, separation 1.52, bound 26.6.
-    /// The highlight shift in levels of 255: shipped worst 0.65, the paper's pixel variance 1/(2 pi) 2.75 and the glaze at four times 4.66, separation 4.2 against the least, bound 1.34. The orbit's crawl, the halo's mean
-    /// error second difference: shipped 3.18, kernel 0 5.32 (no MSAA 3.70, the glaze at four times higher still), separation 1.67, bound 4.1. Not claimed: the kernel doubled (1/12), which reads the ratio 1.29 at most, the shift
-    /// 1.06 (under the shift bound's margin band, 1.12 to 1.61: it passes in render-mutants.sh) and the crawl 2.72, inside the shipped numbers; the kernel is nonzero only where the shading normal changes across a pixel, the 2 px bands, and
-    /// doubling it moves the p99 of the whole interior by less than the shipped views differ among themselves. No bound here fails it, and none could without failing the shipped doll.
+    /// mutant's worst view, and that mutant must read at least 1.2 times the shipped worst. The p99 flicker ratio: shipped worst 1.29 (play, bent 30 play), kernel 0 (the glaze's prefilter off) worst 1.80,
+    /// separation 1.40, bound 1.52. The silhouette ring, where MSAA works and the interior pixels do not look, mean |shown - reference| in levels of luma: shipped worst 20.48, no MSAA 32.16, separation 1.57, bound 25.7.
+    /// The highlight shift in levels of 255: shipped worst 0.98, the paper's pixel variance 1/(2 pi) 4.11 and the glaze at four times 5.22, separation 4.19 against the least, bound 2.01. The orbit's crawl, the halo's mean
+    /// error second difference: shipped 4.62, kernel 0 8.53 (the glaze at four times 8.82), separation 1.85, bound 6.3. Not claimed: the kernel doubled (1/12), which reads the ratio 1.17, the crawl 4.04 and the shift 2.27, which lies in the shift bound's
+    /// margin band (1.67 to 2.41): render-mutants.sh calls it unjudged, neither a pass nor a fail; the kernel is nonzero only where the shading normal changes across a pixel, the 2 px bands, and no bound here could fail it without failing the shipped doll.
     /// </summary>
-    private const float MaxFlickerRatio = 1.60f, MaxHighlightShift = 1.34f, MaxSilhouetteError = 26.6f, MaxOrbitCrawl = 4.1f;
+    private const float MaxFlickerRatio = 1.52f, MaxHighlightShift = 2.01f, MaxSilhouetteError = 25.7f, MaxOrbitCrawl = 6.3f;
 
     private const int OrbitFrames = 30, MinOrbitSamples = 1000;
 
@@ -274,7 +275,7 @@ public partial class RenderCheck : Node
                 puppet.Glazed = true;
                 float pooled = (float)bisque.Pixels.Count(i => Math.Abs(Level(flat.Image, i) - Level(bisque.Image, i)) >= PoolDifference) / Math.Max(1, bisque.Pixels.Count);
                 GD.Print($"RENDER glaze pooling: {pooled:P2} of the bisque's pixels differ with it off");
-                if (pooled < MinPoolShare) { GD.PrintErr($"RENDER FAIL: the crease pooling changes {pooled:P2} of the bisque's pixels, under {MinPoolShare:P0}; there is no pooling"); ok = false; }
+                if (pooled < MinPoolShare) { GD.PrintErr($"RENDER FAIL: the crease pooling changes {pooled:P2} of the bisque's pixels, under {MinPoolShare:P1}; there is no pooling"); ok = false; }
             }
 
             // The agreement: the normal view of the same frame gives the reflected direction at each pixel the glaze lights most.
@@ -412,23 +413,23 @@ public partial class RenderCheck : Node
     /// the screen width are within a tenth of each other and the width changes across the frame. Bend 90 is a pose of sharp creases: the
     /// crease clamp is reached there, and the continuity across triangles has its own bar, since some edges fold past 120 degrees and 2 px
     /// cannot soften them. Each view looks at a joint of the doll, where the seat bands make the triangles small and the corner and crease pixels plentiful.
-    /// The floors (interior, band, capped, corner, sharp) were derived on the doll of 1294 triangles and are NOT yet re-derived on the shipped doll of 2258 (lodur:ruling:render-floors-from-mutant-power asks it; every floor's mutant still fails on the shipped doll: render-mutants.sh), under independent draws with replacement of the view's own pixels (the model
-    /// of a count of pixels that are samples of a rendering, whatever their number; 2000 draws, sizes 50 up in steps of 50, 1000 up in 500s): the least size k* from which the metric on every draw of that size never puts the shipped reading over its bound
+    /// The floors (interior, band, capped, corner, sharp) were re-derived on the shipped doll of 4738 triangles (lodur:ruling:render-floors-from-mutant-power), under independent draws with replacement of the view's own pixels (the model
+    /// of a count of pixels that are samples of a rendering, whatever their number; 2000 draws, sizes 50 up in steps of 50, 1000 up in 500s, 3000 and then 4000 up to 50000): the least size k* from which the metric on every draw of that size never puts the shipped reading over its bound
     /// nor any mutant that the metric catches in that view (its full reading the bound times 1.2 or more) under it. The mutants are the bevel's (no tilt, a widened and a linear falloff, no width cap, a width fixed at 720 lines, a corner reach of 1.0,
-    /// a crease clamp of 1.0, a vertex normal left in model space). A floor is k* or above, never under it. k* by view (close, far, bend 90, mid 1080, far 1080): interior 900, 50, 150, 2000, 150; band 100, 50, 50, 150, 50; capped 50, 450, 50, 300, 200;
-    /// corner 200, 100, 200, 200, 200; sharp 150, none reaches, 50, 100, 100. The far view's capped pixels (178) do not reach their k* of 450, so the far view carries no floor for them (0): its capped reading is still held to
-    /// <see cref="MaxCapMedian"/>, but only the mid 1080 and far 1080 views (1488 and 1776 pixels, k* 300 and 200) vouch that the cap is where the shader puts it, and the no-width-clamp mutant is killed there; a floor of 150 met by without-replacement
-    /// subsets of the 178 was the wrong rule for iid draws, where no-width-clamp's median (0.93 against 0.75) falls under the bound in 44 of 2000 draws of 150. Floors that sit over their k* (band, capped, corner, sharp of several views) were derived before
-    /// and are kept: raising a floor the views reach is safe, lowering one is not what this pass is for. The views reach every floor by 1.2 times at the least (the sharp creases of mid 1080: 415 of 100). Where no mutant reaches a view's sharp creases (far: one pixel) the floor is 0.
+    /// a crease clamp of 1.0, a vertex normal left in model space). A floor is k* or above, never under it, and where the floor of the doll before the sockets were cut exactly was higher it is kept (raising a floor the views reach is safe). k* by view
+    /// (close, far, bend 90, mid 1080, far 1080, head): interior 1500, 50, 100, 7500, 300, 150; band 50, 50, 50, 400, 50, 150; capped none reaches, 100, 50, 150, 200, 100; corner 50, 150, 50, 100, 100, 50; sharp none reaches except the head's 350. The doll's creases are
+    /// soft: of 14000 edges only 14 turn by more than 0.9 rad (half), all of them on the head (body 102), so the views the seat bands once made crease-rich reach no sharp crease (the bend 90 view read 3577 before) and a view of the head was added for the crease clamp
+    /// (1444 band pixels, the crease-clamp mutant reads 12.58 against the shipped 0.21). Where a view's pixels do not reach k* (far's 74 capped, bend 90's 10, the head's 21, close's 0) the view carries no floor for them (0): a metric is held to its bound
+    /// where it has pixels (<see cref="MaxCapMedian"/>), but only the views that reach their k* vouch for it. The views reach every floor by 1.2 times at the least.
     /// </summary>
     private static readonly NormalViewSpec[] Views =
     {
-        new("close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 60, Hd, "--normals-png=", true, 0.009f, 6f, 900, 100, 50, 200, 150, 9),
-        new("far", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, Hd, "--normals-far-png=", false, 0f, 0f, 50, 50, 0, 100, 0, 10),
-        new("bend 90 close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 90, Hd, "--normals-bend90-png=", true, 0.010f, 8f, 150, 100, 50, 200, 75, 0),
-        new("mid 1080", new Vector3(1.13f, 0.645f, 1.77f), 30f, 60, FullHd, "--normals-mid-png=", false, 0f, 0f, 2000, 200, 300, 200, 100, 4),
-        new("far 1080", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, FullHd, "--normals-far1080-png=", false, 0f, 0f, 150, 50, 200, 200, 100, 9),
-        new("head", new Vector3(-0.12f, 0.1f, 0.22f), 30f, 60, Hd, "--normals-head-png=", false, 0f, 0f, 0, 0, 0, 0, 0, 1),
+        new("close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 60, Hd, "--normals-png=", true, 0.0087f, 11.5f, 1500, 100, 0, 200, 0, 9),
+        new("far", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, Hd, "--normals-far-png=", false, 0f, 0f, 50, 50, 0, 150, 0, 10),
+        new("bend 90 close", new Vector3(0.35f, 0.2f, 0.55f), 30f, 90, Hd, "--normals-bend90-png=", true, 0.0385f, 13.6f, 150, 100, 0, 200, 0, 0),
+        new("mid 1080", new Vector3(1.13f, 0.645f, 1.77f), 30f, 60, FullHd, "--normals-mid-png=", false, 0f, 0f, 7500, 400, 300, 200, 0, 4),
+        new("far 1080", new Vector3(1.9f, 1.1f, 3.0f), 30f, 60, FullHd, "--normals-far1080-png=", false, 0f, 0f, 300, 50, 200, 200, 0, 9),
+        new("head", new Vector3(-0.12f, 0.1f, 0.22f), 30f, 60, Hd, "--normals-head-png=", false, 0f, 0f, 150, 150, 0, 50, 350, 1),
     };
 
     private async Task<Transform3D[]> Pose(PuppetShape shape, Node3D[] carriers, float degrees)
@@ -949,7 +950,7 @@ public partial class RenderCheck : Node
         if (tiltMedian < MinBandTilt) { GD.PrintErr($"RENDER FAIL: the {label} bevel band's reference normal is {tiltMedian:F1} degrees from the facet's, under {MinBandTilt}; the check cannot see a bevel"); ok = false; }
         if (p90 > MaxNormalP90) { GD.PrintErr($"RENDER FAIL: the {label} drawn shading normal is {p90:F2} degrees from the CPU reference at the 90th percentile, over {MaxNormalP90}"); ok = false; }
         if (bandMedian > MaxBandMedian) { GD.PrintErr($"RENDER FAIL: across the {label} bevel band the drawn normal is {bandMedian:F2} degrees from the CPU reference (median), over {MaxBandMedian}; the bevel is not where or as large as the creases say"); ok = false; }
-        if (clampedMedian > MaxCapMedian) { GD.PrintErr($"RENDER FAIL: on the {label} triangles whose width the smallest altitude caps the drawn normal is {clampedMedian:F2} degrees from the CPU reference (median), over {MaxCapMedian}; the cap is not where the shader puts it"); ok = false; }
+        if (clamped.Count > 0 && clampedMedian > MaxCapMedian) { GD.PrintErr($"RENDER FAIL: on the {label} triangles whose width the smallest altitude caps the drawn normal is {clampedMedian:F2} degrees from the CPU reference (median), over {MaxCapMedian}; the cap is not where the shader puts it"); ok = false; }
         if (cornerErr.Count < spec.MinCorner || sharp.Count < spec.MinSharp) { GD.PrintErr($"RENDER FAIL: the {label} normal check reached {cornerErr.Count} corner-blend and {sharp.Count} sharp-crease pixels, under {spec.MinCorner} and {spec.MinSharp}; it proves nothing about them"); ok = false; }
         if (spec.MinCorner > 0 && effectMedian < MinCornerEffect) { GD.PrintErr($"RENDER FAIL: the {label} corner blend moves the reference normal by {effectMedian:F1} degrees (median), under {MinCornerEffect}; the check cannot see a corner blend that is off"); ok = false; }
         if (spec.MinCorner > 0 && cornerMedian > MaxCornerMedian) { GD.PrintErr($"RENDER FAIL: where the {label} corner blend reaches, the drawn normal is {cornerMedian:F2} degrees from the CPU reference (median), over {MaxCornerMedian}; the vertex normal is in the wrong space or the blend has the wrong radius"); ok = false; }
