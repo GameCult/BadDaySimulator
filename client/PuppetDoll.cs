@@ -77,7 +77,9 @@ public sealed record DollPrim(DollShape Shape, float3 A, float3 B, float Ra, flo
 /// <param name="BallRadius">The radius (m) of the ball at the joint to the parent, or 0 for a body with no joint to a parent of its own.</param>
 /// <param name="RollAxis">A hinge ball stretched along the hinge axis into a roll (ruling doll-knuckle-roll), as a unit vector in this body's own frame, or zero for a sphere.</param>
 /// <param name="RollHalf">Half the roll's length (m) between its two end centres; the ball is the segment of this half-length about the joint origin, swept by <paramref name="BallRadius"/>.</param>
-public sealed record DollEntry(Box3DSoaKind Kind, float3 Size, DollPrim[] Prims, float BallRadius = 0, float3 RollAxis = default, float RollHalf = 0)
+/// <param name="Line">The line out of this body through its socket at its parent joint, in its own frame (<see cref="Doll.Away"/>); zero: the line from the body's centre through the joint origin.</param>
+/// <param name="ParentLine">The parent's line out through this body's socket, in the parent's frame, for a socket at x &gt;= 0 (x is negated for a socket at x &lt; 0); zero: the line from the parent's centre through the joint origin.</param>
+public sealed record DollEntry(Box3DSoaKind Kind, float3 Size, DollPrim[] Prims, float BallRadius = 0, float3 RollAxis = default, float RollHalf = 0, float3 Line = default, float3 ParentLine = default)
 {
     public bool Matches(Box3DSoaKind kind, float3 size) => kind == Kind && math.length(size - Size) <= 1e-4f;
 }
@@ -120,6 +122,20 @@ public static class Doll
     /// 9238, 30 degrees 486, 35 degrees 111 (202 at the checks' level), at the cost of about 1.8 x the visible facets (the 12-sided chamfer ring at wide joints); the operator took 35.
     /// </summary>
     public const float SinkAngle = 35f * (MathF.PI / 180f);
+
+    /// <summary>
+    /// A socket's away line (unit, in the piece's own frame; ruling doll-socket-away-authored): the line out of the piece through its socket, from the doll's authored joint geometry and never from the decimated mesh. It is
+    /// <paramref name="authored"/> (an entry's <see cref="DollEntry.Line"/> or <see cref="DollEntry.ParentLine"/>, x negated for a socket at x &lt; 0), else the line from the piece's centre through the joint
+    /// <paramref name="origin"/>; for a roll, with its component along the roll removed. A zero line throws: author one.
+    /// </summary>
+    public static float3 Away(float3 authored, float3 origin, float3 roll)
+    {
+        if (authored.x != 0 && MathF.Abs(origin.x) < 0.001f) throw new InvalidOperationException("an authored line with an x component needs a socket off the midline to say its side");
+        var a = math.lengthsq(authored) == 0 ? origin : origin.x < 0 ? new float3(-authored.x, authored.y, authored.z) : authored;
+        if (math.lengthsq(roll) > 0) a -= math.normalize(roll) * math.dot(a, math.normalize(roll)); // across the roll
+        if (math.lengthsq(a) < 1e-10f) throw new InvalidOperationException("a socket has no away line: author one on its entry");
+        return math.normalize(a);
+    }
 
     /// <summary>The edge (m) under which the boolean's tidy collapses an edge (a curve's near-coincident points), and the edge under which it collapses the shortest edge of a sliver (a triangle under 0.01 mm2).</summary>
     public const float TidyEdge = 0.0005f, TidySliverEdge = 0.002f;
@@ -168,11 +184,14 @@ public static class Doll
             DollPrim.Cone(V(-.205f, .14f, 0), .045f, V(.205f, .14f, 0), .045f), DollPrim.Cone(V(0, .17f, 0), .042f, V(0, .20f, 0), .038f),
         }, 0.072f),
         new(Box3DSoaKind.Sphere, V(.11f, 0, 0), new[] { DollPrim.Ellipsoid(V(0, .015f, -.005f), V(.085f, .108f, .095f)), DollPrim.Cone(V(0, -.02f, .015f), .06f, V(0, -.075f, .045f), .033f) }, 0.036f),
-        new(Box3DSoaKind.Capsule, V(.045f, .11f, 0), new[] { DollPrim.Cone(V(0, .125f, 0), .05f, V(0, -.12f, 0), .037f) }, 0.05f),
+        // The shoulder opens along the shoulder bar (the torso's line out through the socket), not along the bone from the torso's centre (33.7 degrees up it): the torso's knife rim 0.0 mm against 85.4 from its centre, and 137.9 along the arm's bind line.
+        new(Box3DSoaKind.Capsule, V(.045f, .11f, 0), new[] { DollPrim.Cone(V(0, .125f, 0), .05f, V(0, -.12f, 0), .037f) }, 0.05f, ParentLine: V(1, 0, 0)),
         new(Box3DSoaKind.Capsule, V(.04f, .10f, 0), new[] { DollPrim.Cone(V(0, .115f, 0), .036f, V(0, -.105f, 0), .024f) }, 0.038f),
-        new(Box3DSoaKind.Capsule, V(.07f, .18f, 0), new[] { DollPrim.Cone(V(0, .2f, 0), .07f, V(0, -.22f, 0), .05f) }, 0.07f),
+        // The hip opens straight down the thigh, not along the line from the pelvis's centre (37.9 degrees off it): the pelvis's knife rim 0.0 mm.
+        new(Box3DSoaKind.Capsule, V(.07f, .18f, 0), new[] { DollPrim.Cone(V(0, .2f, 0), .07f, V(0, -.22f, 0), .05f) }, 0.07f, ParentLine: V(0, -1, 0)),
         new(Box3DSoaKind.Capsule, V(.06f, .17f, 0), new[] { DollPrim.Cone(V(0, .2f, 0), .05f, V(0, -.2f, 0), .035f), DollPrim.Ellipsoid(V(0, .08f, -.012f), V(.05f, .1f, .055f)) }, 0.05f),
-        new(Box3DSoaKind.Box, V(.05f, .04f, .12f), new[] { DollPrim.Ellipsoid(V(0, 0, -.005f), V(.045f, .038f, .105f)), DollPrim.Cone(V(0, .01f, -.08f), .036f, V(0, -.015f, .1f), .02f) }, 0.034f),
+        // The ankle opens up the shin, not along the line from the foot's centre (51 degrees back): each foot's knife rim 0.0 mm against 10.8.
+        new(Box3DSoaKind.Box, V(.05f, .04f, .12f), new[] { DollPrim.Ellipsoid(V(0, 0, -.005f), V(.045f, .038f, .105f)), DollPrim.Cone(V(0, .01f, -.08f), .036f, V(0, -.015f, .1f), .02f) }, 0.034f, Line: V(0, 1, 0)),
         // The hands (ruling puppet-hands-thumb-palm-fingers): the forearm ends at the wrist ball; the palm runs from the wrist (y +.045) to the knuckles (y -.045); the thumb from its
         // CMC ball (y +.05) down its metacarpal; the fingers from the knuckle (y +.0425) down. Sockets only on the hand joints (doll-pieces-hug-balls), and the knuckle ball is a roll
         // across the hand (doll-knuckle-roll) that palm and fingers hug. Each limb ends inside its ball (see DollEntry): the forearm's 24 mm end under the wrist ball's 26, the thumb's 12 mm root under the CMC ball's 14, the palm's

@@ -107,9 +107,10 @@ public sealed class PuppetShape
 
 /// <summary>
 /// A cut on a body piece at a joint: the socket the ball fills. A roll (<see cref="DollEntry.RollAxis"/>) is the segment Origin +- Roll swept by the ball's radius; no roll is a sphere. <see cref="Axis"/> and
-/// <see cref="U"/> are the ball lattice's axis and first side in the piece's frame (<see cref="PuppetField.Primitive"/>), so the cutter's facets face the ball's.
+/// <see cref="U"/> are the ball lattice's axis and first side in the piece's frame (<see cref="PuppetField.Primitive"/>), so the cutter's facets face the ball's. <see cref="Away"/> is the unit line out of the piece
+/// through the socket, in its frame (<see cref="Doll.Away"/>, ruling doll-socket-away-authored).
 /// </summary>
-public sealed record PieceCut(float3 Origin, float BallRadius, float3 Roll = default, float3 Axis = default, float3 U = default)
+public sealed record PieceCut(float3 Origin, float BallRadius, float3 Away, float3 Roll = default, float3 Axis = default, float3 U = default)
 {
     public float SocketRadius => BallRadius + Doll.Seam;
 
@@ -125,15 +126,15 @@ public sealed record PieceCut(float3 Origin, float BallRadius, float3 Roll = def
 
     /// <summary>
     /// The countersunk cutter, in the piece's frame: the convex hull of (a) the ball grown by the seam, in the ball's own lattice orientation, so the socket's facets face the ball's and the clearance is the seam at the
-    /// creation pose; (b) the ball's sides on the plane through the core across <paramref name="away"/> (the cutter's vertices within 2% of that plane, 12 even sides if fewer than 8), pushed out to
-    /// (BallRadius + Seam) / cos(<see cref="Doll.SinkAngle"/>); (c) that ring carried 50 mm past the core along <paramref name="away"/> (the shadow). A limb end wider than cos(SinkAngle) of the socket then
+    /// creation pose; (b) the ball's sides on the plane through the core across <see cref="Away"/> (the cutter's vertices within 2% of that plane, 12 even sides if fewer than 8), pushed out to
+    /// (BallRadius + Seam) / cos(<see cref="Doll.SinkAngle"/>); (c) that ring carried 50 mm past the core along <see cref="Away"/> (the shadow). A limb end wider than cos(SinkAngle) of the socket then
     /// meets the cutter at no less than about SinkAngle (ruling doll-socket-lip-countersink-35), and nothing reaches past the ball.
     /// </summary>
-    public Cutter Cutter(float3 away)
+    public Cutter Cutter()
     {
         var (bv, _) = PuppetField.Primitive(SocketRadius, Axis, math.length(Roll), Doll.BallFrequency, U);
         for (int i = 0; i < bv.Length; i++) bv[i] += Origin;
-        var w = math.normalize(away); float rho = SocketRadius, rim = rho / MathF.Cos(Doll.SinkAngle), far = rim + 0.05f;
+        var w = Away; float rho = SocketRadius, rim = rho / MathF.Cos(Doll.SinkAngle), far = rim + 0.05f;
         bool rolled = math.lengthsq(Roll) > 0;
         float3 Core0(float3 q) => rolled ? Roll * math.clamp(math.dot(q, Roll) / math.lengthsq(Roll), -1f, 1f) : default;
         var ring = bv.Where(v => { var q = v - Origin; return MathF.Abs(math.dot(q, w)) < 0.02f * rho && math.length(q - w * math.dot(q, w) - Core0(q)) > 0.5f * rho; }).ToList();
@@ -176,8 +177,8 @@ public sealed class Cutter
     }
 }
 
-/// <summary>A body piece's mesh as <see cref="PuppetPieces"/> keeps it: the solid with its source tags, the decimated piece's centroid (the sockets' away direction), the decimated piece (<c>SourceV</c>, <c>SourceTris</c>: the sources the cut fragments shade as, before the cut, which the checks judge), the cutters (<c>Cutters</c>, whose triangles are the sources of the walls, appended to the planes in this order), and how many of the solid's planes are the decimated piece's own (a tag under it is the piece's surface, a tag from it on is a socket wall).</summary>
-public sealed record PieceMesh(PuppetSolid Solid, float3 Centre, int Own, float3[] SourceV, int[] SourceTris, Cutter[] Cutters);
+/// <summary>A body piece's mesh as <see cref="PuppetPieces"/> keeps it: the solid with its source tags, the decimated piece (<c>SourceV</c>, <c>SourceTris</c>: the sources the cut fragments shade as, before the cut, which the checks judge), the cutters (<c>Cutters</c>, whose triangles are the sources of the walls, appended to the planes in this order), and how many of the solid's planes are the decimated piece's own (a tag under it is the piece's surface, a tag from it on is a socket wall).</summary>
+public sealed record PieceMesh(PuppetSolid Solid, int Own, float3[] SourceV, int[] SourceTris, Cutter[] Cutters);
 
 /// <summary>
 /// One body piece's field, engine-free, in the body's own frame: its primitives smooth-min'd by <see cref="Doll.BodyBlend"/> (within the body only), which the mesher and decimator sample (<see cref="Body"/>), and
@@ -250,14 +251,12 @@ public sealed class PieceField
     }
 
     /// <summary>
-    /// The piece's cutters, in its frame: each socket's countersunk cutter, its away direction from the decimated piece's centroid to the core. Needs the piece built (the centroid is part of its
-    /// <see cref="PieceMesh"/>, which keeps the cutters), so it is for the checks; the mesher builds its own cutters from the centroid it has.
+    /// The piece's cutters, in its frame: each socket's countersunk cutter along its <see cref="PieceCut.Away"/> (<see cref="PieceCut.Cutter"/>). The one record of the cut made, read off the built piece's
+    /// <see cref="PieceMesh"/>, so it is for the checks.
     /// </summary>
     public Cutter[] Cutters => _cutters ??= PuppetPieces.Get(Key, this).Result.Cutters;
 
     private Cutter[]? _cutters;
-
-    internal Cutter[] CuttersAt(float3 centre) => _cuts.Select(c => c.Cutter(c.Origin - centre)).ToArray();
 
     /// <summary>The cut: the least over the cutters of the largest plane distance, a bound on the distance outside every cutter, negative inside one.</summary>
     public float Cut(float3 p)
@@ -370,7 +369,7 @@ public static class PuppetField
 
     /// <summary>
     /// The pieces: a field per body (piece i is body i) from its <see cref="Doll"/> entry or its physics shape, in the body's frame (placed by its bind), and one
-    /// <see cref="JointBall"/> per joint (piece n + j) of the child's entry radius (or the child's thickness) about the joint origin, kept by the parent; at each joint both bodies get the socket (ball radius + <see cref="Doll.Seam"/>, about the origin or a roll's segment, in the ball's lattice orientation) in their frame, and nothing else.
+    /// <see cref="JointBall"/> per joint (piece n + j) of the child's entry radius (or the child's thickness) about the joint origin, kept by the parent; at each joint both bodies get the socket (ball radius + <see cref="Doll.Seam"/>, about the origin or a roll's segment, in the ball's lattice orientation) and its line (<see cref="Doll.Away"/>) in their frame, and nothing else.
     /// </summary>
     public static PieceSet Pieces(IReadOnlyList<PuppetBody> bodies, IReadOnlyList<PuppetJoint> joints)
     {
@@ -394,8 +393,9 @@ public static class PuppetField
             balls[j] = new JointBall(n + j, joint.A, o, radius, inBind, math.lengthsq(inBind) > 0 ? math.normalize(inBind) : math.mul(bodies[joint.B].Bind.R, new float3(0, 1, 0)));
             var axis = balls[j].Axis; var side = Unit(math.cross(axis, MathF.Abs(axis.x) < 0.9f ? new float3(1, 0, 0) : new float3(0, 1, 0))); // the ball lattice's axis and first side (Lattice picks it), in the bind's axes
             var toA = bodies[joint.A].Bind.Inverse().R; var toB = bodies[joint.B].Bind.Inverse().R;
-            fields[joint.A].Socket(new PieceCut(joint.LocalOrigin, radius, math.mul(toA, inBind), math.mul(toA, axis), math.mul(toA, side)));
-            fields[joint.B].Socket(new PieceCut(bodies[joint.B].Bind.Inverse().Apply(o), radius, inChild, math.mul(toB, axis), math.mul(toB, side)));
+            var originB = bodies[joint.B].Bind.Inverse().Apply(o); var rollA = math.mul(toA, inBind);
+            fields[joint.A].Socket(new PieceCut(joint.LocalOrigin, radius, Doll.Away(child?.ParentLine ?? default, joint.LocalOrigin, rollA), rollA, math.mul(toA, axis), math.mul(toA, side)));
+            fields[joint.B].Socket(new PieceCut(originB, radius, Doll.Away(child?.Line ?? default, originB, inChild), inChild, math.mul(toB, axis), math.mul(toB, side)));
         }
         return new PieceSet(bodies, joints, fields, balls);
     }
@@ -405,33 +405,20 @@ public static class PuppetField
 
     /// <summary>
     /// One body piece's mesh in its frame, a pure function of its key (<see cref="PuppetPieces"/> caches it): the body field extracted fine and decimated to what <see cref="PieceField.Allowed"/> says, then each
-    /// socket's cutter (<see cref="PieceCut.Cutter"/>, away from the decimated piece's centroid) subtracted from it by <see cref="PuppetBoolean.Subtract"/>, tidied and reduced to its largest solid. Every
+    /// socket's cutter (<see cref="PieceCut.Cutter"/>) subtracted from it by <see cref="PuppetBoolean.Subtract"/>, tidied and reduced to its largest solid. Every
     /// triangle carries its source (<see cref="PuppetSolid"/>).
     /// </summary>
     internal static PieceMesh Mesh(PieceField f)
     {
         var (v, tris) = Extract(f);
         var (dv, dt) = PuppetDecimate.Run(v, tris, Doll.FacetAlpha, Doll.FacetScale, new DecimateRules(f.Allowed, f.Tight, f.Stray, f.Guard()));
-        var centre = Centroid(dv, dt);
         var solid = PuppetBoolean.Solid(dv, dt); var stats = new PuppetBoolean.Stats();
-        var cutters = f.CuttersAt(centre);
+        var cutters = f.Cuts.Select(c => c.Cutter()).ToArray();
         foreach (var cutter in cutters) solid = PuppetBoolean.Subtract(solid, cutter.V, cutter.Tris, stats);
         if (f.Cuts.Count > 0) solid = PuppetBoolean.Tidy(solid, Doll.TidyEdge, Doll.TidySliverEdge, stats);
         solid = PuppetBoolean.LargestSolid(solid).Solid;
         if (stats.Faults.Count > 0) Faults[f.Key.Id] = string.Join("; ", stats.Faults);
-        return new PieceMesh(solid, centre, dt.Length / 3, dv, dt, cutters);
-    }
-
-    /// <summary>The centroid of a closed mesh (divergence theorem).</summary>
-    private static float3 Centroid(float3[] v, int[] t)
-    {
-        double vol = 0, x = 0, y = 0, z = 0;
-        for (int k = 0; k < t.Length; k += 3)
-        {
-            var a = v[t[k]]; var b = v[t[k + 1]]; var c = v[t[k + 2]];
-            double d = math.dot(a, math.cross(b, c)) / 6.0; vol += d; var m = (a + b + c) / 4f; x += d * m.x; y += d * m.y; z += d * m.z;
-        }
-        return new float3((float)(x / vol), (float)(y / vol), (float)(z / vol));
+        return new PieceMesh(solid, dt.Length / 3, dv, dt, cutters);
     }
 
     /// <summary>Builds the shape and waits for it: the bodies' meshes come from <see cref="PuppetPieces"/> (built once per key), so a second build of the same doll builds nothing; the balls are built inline.</summary>

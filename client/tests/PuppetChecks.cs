@@ -434,22 +434,22 @@ public static class PuppetChecks
 
     /// <summary>
     /// The meshes of every body piece, pinned to the boolean doll (per piece key, the key now naming the sockets' lattice axis and side): the vertex and triangle counts and a sum of the vertices to 0.1 mm. A piece that
-    /// differs was changed; the pieces are a pure function of their key. Harvested from the r5 part A build (countersink 35, two-sided decimator, Tidy 0.5 mm with the source-plane vote, no retry).
+    /// differs was changed; the pieces are a pure function of their key. Harvested from the r7 build (authored socket lines; countersink 35, two-sided decimator, Tidy 0.5 mm with the source-plane vote, no retry).
     /// </summary>
     private static readonly (string Key, int Vertices, int Triangles, long Sum)[] BeforeTheHands =
     {
-        ("entry 0|-900,-700,0,700,0,10000,0,0,0,-10000;0,800,0,720,0,10000,0,0,0,-10000;900,-700,0,700,0,10000,0,0,0,-10000", 172, 340, -8622459908610603698),
+        ("entry 0|-900,-700,0,700,0,10000,0,0,0,-10000;0,800,0,720,0,10000,0,0,0,-10000;900,-700,0,700,0,10000,0,0,0,-10000", 168, 332, 2310464389898888395),
         ("entry 10|0,425,0,150,0,0,280,0,0,10000,-3429,9394,0", 36, 68, 5374246093218292019),
         ("entry 10|0,425,0,150,0,0,280,0,0,10000,3429,9394,0", 36, 68, 3612732767189826374),
-        ("entry 1|-2100,1400,0,500,0,10000,0,0,0,-10000;0,-2200,0,720,0,10000,0,0,0,-10000;0,2200,0,360,0,10000,0,0,0,-10000;2100,1400,0,500,0,10000,0,0,0,-10000", 209, 414, -8561392607574723537),
-        ("entry 2|0,-1100,0,360,0,10000,0,0,0,-10000", 52, 100, -8357361739563885388),
-        ("entry 3|0,-1550,0,380,0,10000,0,0,0,-10000;0,1550,0,500,0,10000,0,0,0,-10000", 110, 216, 4402811087284731902),
-        ("entry 4|0,-1250,0,260,0,10000,0,0,0,-10000;0,1400,0,380,0,10000,0,0,0,-10000", 92, 180, 6079792136206098112),
-        ("entry 5|0,-2500,0,500,0,10000,0,0,0,-10000;0,2500,0,700,0,10000,0,0,0,-10000", 107, 210, 1036760127871527335),
-        ("entry 6|0,-2300,0,340,0,10000,0,0,0,-10000;0,2300,0,500,0,10000,0,0,0,-10000", 99, 194, 7509529804692523069),
-        ("entry 7|0,400,-500,340,0,10000,0,0,0,-10000", 55, 106, -4512566765510442028),
-        ("entry 8|-40,250,300,140,0,8660,-5000,0,-5000,-8660;0,-450,0,150,0,0,280,0,0,10000,0,10000,0;0,450,0,260,0,10000,0,0,0,-10000", 120, 236, 5541803757200399024),
-        ("entry 8|0,-450,0,150,0,0,280,0,0,10000,0,10000,0;0,450,0,260,0,10000,0,0,0,-10000;40,250,300,140,0,8660,-5000,0,-5000,-8660", 116, 228, 4204839182522516429),
+        ("entry 1|-2100,1400,0,500,0,10000,0,0,0,-10000;0,-2200,0,720,0,10000,0,0,0,-10000;0,2200,0,360,0,10000,0,0,0,-10000;2100,1400,0,500,0,10000,0,0,0,-10000", 202, 400, -3206282977425751583),
+        ("entry 2|0,-1100,0,360,0,10000,0,0,0,-10000", 49, 94, -2901365870107128578),
+        ("entry 3|0,-1550,0,380,0,10000,0,0,0,-10000;0,1550,0,500,0,10000,0,0,0,-10000", 110, 216, 4682044857324174111),
+        ("entry 4|0,-1250,0,260,0,10000,0,0,0,-10000;0,1400,0,380,0,10000,0,0,0,-10000", 92, 180, -1531368262611522867),
+        ("entry 5|0,-2500,0,500,0,10000,0,0,0,-10000;0,2500,0,700,0,10000,0,0,0,-10000", 107, 210, -4700445461788012823),
+        ("entry 6|0,-2300,0,340,0,10000,0,0,0,-10000;0,2300,0,500,0,10000,0,0,0,-10000", 101, 198, -2802247154891651506),
+        ("entry 7|0,400,-500,340,0,10000,0,0,0,-10000", 56, 108, -1934187891361242542),
+        ("entry 8|-40,250,300,140,0,8660,-5000,0,-5000,-8660;0,-450,0,150,0,0,280,0,0,10000,0,10000,0;0,450,0,260,0,10000,0,0,0,-10000", 118, 232, 1160398313489352996),
+        ("entry 8|0,-450,0,150,0,0,280,0,0,10000,0,10000,0;0,450,0,260,0,10000,0,0,0,-10000;40,250,300,140,0,8660,-5000,0,-5000,-8660", 116, 228, 2175616125561461488),
         ("entry 9|0,500,0,140,0,10000,0,0,0,-10000", 34, 64, 5341507237058806089),
     };
 
@@ -460,7 +460,7 @@ public static class PuppetChecks
         return h;
     }
 
-    /// <summary>Every body piece is the mesh the r5 build made (<see cref="BeforeTheHands"/>, every key, the hands included); a knob change fails it, and only facet-error-19mm and thinbelow-8cm claim it. Vacuous under 10 pieces compared (the doll has 11).</summary>
+    /// <summary>Every body piece is the mesh the r7 build made (<see cref="BeforeTheHands"/>, every key, the hands included); a knob change fails it, and only facet-error-19mm and thinbelow-8cm claim it. Vacuous under 10 pieces compared (the doll has 11).</summary>
     private static void ExistingPiecesUnchanged(PieceField[] fields, Action<bool, string> check)
     {
         int compared = 0; var changed = new List<string>();
@@ -726,8 +726,8 @@ public static class PuppetChecks
         check(dropped == 0, $"{dropped} of {fine} points of a piece's field surface lie further from its mesh than {MaxReach} of their error (worst {worstStray:F2} of it; pieces {string.Join(",", droppedIn)}): a lip or tongue of the field was dropped");
     }
 
-    /// <summary>The most rim (mm), summed over the doll's bodies, that may meet at under <see cref="LipDegrees"/>, by lodur:ruling:deterministic-bound-margin from the shipped total 202.7 and the least claimed mutant sink-off 1394.7 (separation 6.9): 532.</summary>
-    private const float MaxKnifeRim = 532f;
+    /// <summary>The most rim (mm), summed over the doll's bodies, that may meet at under <see cref="LipDegrees"/>, by lodur:ruling:deterministic-bound-margin from the shipped total 97.6 (r7) and the least claimed mutant sink-off 1520.4 (separation 15.6): 385.</summary>
+    private const float MaxKnifeRim = 385f;
 
     private const float LipDegrees = 30f;
 

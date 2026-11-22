@@ -59,6 +59,9 @@ mutant palm-short-z         $D 's/V(.014f, .0265f, .04f)/V(.014f, .0265f, .025f)
 mutant sink-off             $D 's/SinkAngle = 35f \* (MathF.PI \/ 180f)/SinkAngle = 0f/' "of socket rim meets at under"
 mutant shadow-off           $F 's/points.Add(p0); points.Add(p0 + w \* far);/points.Add(p0);/' "lie further from its mesh than"
 mutant cutter-turned        $F 's/Doll.BallFrequency, U);/Doll.BallFrequency, U * 0.9659f + math.cross(Axis, U) * 0.2588f);/' "less than half the seam inside a socket"
+# A socket's line is the piece's own, authored (ruling doll-socket-away-authored): not the arm's line in the bind; a roll's across the roll
+mutant shoulder-line-bind   $D 's/ParentLine: V(1, 0, 0)/ParentLine: V(0, -1, 0)/' "more than 15 mm beyond the ball"
+mutant roll-line-tilted     $D '/across the roll/d;s/0.015f, V(0, 0, 1), 0.028f)/0.015f, V(0, 0, 1), 0.028f, Line: V(0, 1, 0.0524f))/' "the thinnest source triangle has an altitude of"
 mutant tidy-off             $F 's/if (f.Cuts.Count > 0) solid = PuppetBoolean.Tidy/if (false) solid = PuppetBoolean.Tidy/' "wind against their source plane"
 # Tidy's old rule instead of the vote: a sliver's own normal is noise (it does not vote) and a fan triangle may turn 5 degrees: two fragments are left inverted.
 mutant tidy-sliver-exempt   client/PuppetBoolean.cs 's/if (after <= 0 \&\& after < before) return false;/var nb4 = N(t[i]); if (nb4.Len < 2 * sliverArea) continue; var na4 = N(t[i].Select(w => w == m ? x : w).ToArray()); if (na4.Len < 1e-14 || na4.Unit.Dot(nb4.Unit) < Math.Cos(5 * Math.PI \/ 180)) return false;/' "wind against their source plane"
