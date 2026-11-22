@@ -345,30 +345,30 @@ public static class PuppetChecks
     }
 
     /// <summary>
-    /// The silhouette share a thin body's mesh may miss its field's by: the area where the mesh's silhouette and the field's differ, over the field's silhouette, averaged over the three axes of the body's frame (along its
-    /// thinnest axis and across it), at 2 px/mm. Derived as lodur:ruling:deterministic-bound-margin derives a bound, over the bodies thinner than <see cref="ThinnestBody"/>, the thumb and the fingers, where ThinError and not the seat band
-    /// decides the error: shipped worst 11.1% on the r5 doll (body 14, a capsule), and the value 14.9% is the r4 derivation kept: no mutant now separates by 1.2 on this metric (thin-error-off and thin-error-half read 12.0%, 1.08; both are caught by
-    /// the Mesher floor and the pin instead), so by the rule the bound is unclaimed: recorded as a follow-up, not loosened or tightened.
+    /// The farthest (mm) a thin body's mesh silhouette may depart from its field's: the largest distance from any pixel where the two silhouettes differ to the outline of the field's silhouette, over the three axes of the body's
+    /// frame, at 2 px/mm. Derived as lodur:ruling:deterministic-bound-margin derives a bound, over the bodies thinner than <see cref="ThinnestBody"/>, the thumbs and the fingers: shipped worst 2.06 mm (the thumb), the least claimed mutant
+    /// thin-error-off 5.83 (the fingers' tip, x), separation 2.83, bound the geometric mean 3.47. It reads no error, so a ThinError change cannot move its standard (the area share it replaces was dominated by the thumb's faceting, 11.1% shipped,
+    /// and masked a loss of the fingers').
     /// </summary>
-    private const float MaxSilhouetteMiss = 0.149f;
+    private const float MaxSilhouetteDeparture = 3.47f;
 
-    /// <summary>The thickness (m) under which a thin body is judged by <see cref="MaxSilhouetteMiss"/>.</summary>
+    /// <summary>The thickness (m) under which a thin body is judged by <see cref="MaxSilhouetteDeparture"/>.</summary>
     private const float ThinnestBody = 0.012f;
 
     /// <summary>
-    /// Thin pieces keep their silhouette: every body under <see cref="ThinnestBody"/> thick has a mesh whose silhouette along the three axes of its frame, rasterised at 2 px/mm, differs from its field's silhouette (the cuts included) by at most
-    /// <see cref="MaxSilhouetteMiss"/> of the field's on average; every body under 40 mm is printed. The error ThinError sets is a tolerance, not a shape: a tolerance a prism satisfies (the thumb at 8 triangles) is what this reads. Vacuous under six thin bodies or four judged.
+    /// Thin pieces keep their silhouette: every body under <see cref="ThinnestBody"/> thick has a mesh whose silhouette along the three axes of its frame, rasterised at 2 px/mm, departs from its field's silhouette (the cuts included) by at most
+    /// <see cref="MaxSilhouetteDeparture"/> mm (<see cref="MaxSilhouetteDeparture"/> reads where); every body under 40 mm is printed. The error ThinError sets is a tolerance, not a shape: a tolerance a prism satisfies (the thumb at 8 triangles) is what this reads. Vacuous under six thin bodies or four judged.
     /// </summary>
     private static void ThinPiecesKeepTheirSilhouette(PuppetShape shape, List<PuppetBody> bodies, PieceField[] fields, int[][] triangles, Action<bool, string> check)
     {
-        const float px = 0.0005f; int thin = 0, judged = 0; float worst = 0; string where = "";
+        const float px = 0.0005f; int thin = 0, judged = 0; float worst = 0; string where = ""; var sw = System.Diagnostics.Stopwatch.StartNew();
         for (int i = 0; i < bodies.Count; i++)
         {
             if (PuppetField.Thickness(bodies[i].Kind, bodies[i].Size) >= 0.04f) continue;
             thin++;
             var f = fields[i];
             var tris = triangles[i].Select(t => (a: f.Local(At(shape, 3 * t)), b: f.Local(At(shape, 3 * t + 1)), c: f.Local(At(shape, 3 * t + 2)))).ToArray();
-            var lo = f.Lo - 0.01f; var hi = f.Hi + 0.01f; var misses = new float[3];
+            var lo = f.Lo - 0.01f; var hi = f.Hi + 0.01f; var departs = new float[3];
             for (int axis = 0; axis < 3; axis++)
             {
                 int iu = (axis + 1) % 3, iv = (axis + 2) % 3;
@@ -388,17 +388,48 @@ public static class PuppetChecks
                         }
                     }
                 });
-                int field = 0, differ = 0;
-                for (int k = 0; k < inField.Length; k++) { if (inField[k]) field++; if (inField[k] != inMesh[k]) differ++; }
-                misses[axis] = differ / (float)Math.Max(field, 1);
+                var near = new float[nu * nv]; // squared pixels to the outline of the field's silhouette: a field pixel with a 4-neighbour outside it, or on the raster's edge
+                for (int x = 0; x < nu; x++)
+                    for (int y = 0; y < nv; y++)
+                        near[x * nv + y] = inField[x * nv + y] && (x == 0 || y == 0 || x == nu - 1 || y == nv - 1 || !inField[(x - 1) * nv + y] || !inField[(x + 1) * nv + y] || !inField[x * nv + y - 1] || !inField[x * nv + y + 1]) ? 0 : 1e20f;
+                DistanceTransform(near, nu, nv);
+                float far = 0;
+                for (int k = 0; k < near.Length; k++) if (inField[k] != inMesh[k]) far = MathF.Max(far, near[k]);
+                departs[axis] = MathF.Sqrt(far) * px * 1000f;
             }
-            float mean = misses.Average();
-            if (PuppetField.Thickness(bodies[i].Kind, bodies[i].Size) < ThinnestBody) { judged++; if (mean > worst) { worst = mean; where = $"body {i}"; } }
-            Console.WriteLine($"PUPPET thin silhouette: body {i} ({bodies[i].Kind}, {triangles[i].Length} triangles): miss along x {misses[0] * 100:F1}%, y {misses[1] * 100:F1}%, z {misses[2] * 100:F1}%, mean {mean * 100:F1}%");
+            float depart = departs.Max();
+            if (PuppetField.Thickness(bodies[i].Kind, bodies[i].Size) < ThinnestBody) { judged++; if (depart > worst) { worst = depart; where = $"body {i}"; } }
+            Console.WriteLine($"PUPPET thin silhouette: body {i} ({bodies[i].Kind}, {triangles[i].Length} triangles): departs x {departs[0]:F2}, y {departs[1]:F2}, z {departs[2]:F2} mm");
         }
-        Console.WriteLine($"PUPPET thin silhouettes: {thin} thin bodies, {judged} judged, worst mean miss {worst * 100:F1}% of {MaxSilhouetteMiss * 100:F1}% ({where})");
+        Console.WriteLine($"PUPPET thin silhouettes: {thin} thin bodies, {judged} judged, worst departure {worst:F2} mm of {MaxSilhouetteDeparture} ({where}), {sw.ElapsedMilliseconds} ms");
         check(thin >= 6 && judged >= 4, $"the thin silhouette check is vacuous: {thin} bodies under 40 mm and {judged} under {ThinnestBody * 1000:F0} mm, not six and four");
-        check(worst <= MaxSilhouetteMiss, $"a thin body's mesh silhouette differs from its field's by {worst * 100:F1}% on average over its three axes ({where}), over {MaxSilhouetteMiss * 100:F1}%: its shape is lost");
+        check(worst <= MaxSilhouetteDeparture, $"a thin body's mesh silhouette differs from its field's by up to {worst:F2} mm ({where}), over {MaxSilhouetteDeparture}: its shape is lost");
+    }
+
+    /// <summary>The squared Euclidean distance transform of a grid (Felzenszwalb and Huttenlocher 2012) in place: 0 at the sources, 1e20 elsewhere on entry; the squared distance to the nearest source on exit.</summary>
+    private static void DistanceTransform(float[] g, int nu, int nv)
+    {
+        var f = new float[Math.Max(nu, nv)]; var d = new float[f.Length]; var v = new int[f.Length]; var z = new float[f.Length + 1];
+        void Line(int start, int step, int n)
+        {
+            for (int q = 0; q < n; q++) f[q] = g[start + q * step];
+            int k = 0; v[0] = 0; z[0] = float.NegativeInfinity; z[1] = float.PositiveInfinity;
+            for (int q = 1; q < n; q++)
+            {
+                float s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2f * q - 2f * v[k]);
+                while (s <= z[k]) { k--; s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2f * q - 2f * v[k]); }
+                k++; v[k] = q; z[k] = s; z[k + 1] = float.PositiveInfinity;
+            }
+            k = 0;
+            for (int q = 0; q < n; q++)
+            {
+                while (z[k + 1] < q) k++;
+                d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
+            }
+            for (int q = 0; q < n; q++) g[start + q * step] = d[q];
+        }
+        for (int x = 0; x < nu; x++) Line(x * nv, 1, nv);
+        for (int y = 0; y < nv; y++) Line(y, nv, nu);
     }
 
     /// <summary>
@@ -429,7 +460,7 @@ public static class PuppetChecks
         return h;
     }
 
-    /// <summary>Every body but the hands and the forearms is the mesh it was before the hands (<see cref="BeforeTheHands"/>), unchanged by SeatShare (every body ball is 34 mm or more); vacuous under 10 pieces compared (the doll has 11).</summary>
+    /// <summary>Every body piece is the mesh the r5 build made (<see cref="BeforeTheHands"/>, every key, the hands included); a knob change fails it, and only facet-error-19mm and thinbelow-8cm claim it. Vacuous under 10 pieces compared (the doll has 11).</summary>
     private static void ExistingPiecesUnchanged(PieceField[] fields, Action<bool, string> check)
     {
         int compared = 0; var changed = new List<string>();
@@ -574,7 +605,7 @@ public static class PuppetChecks
     /// <summary>
     /// The most slit area (mm2, mean over the views) any ball joint may show, one standard for the hands and the body, derived by lodur:ruling:deterministic-bound-margin as the geometric midpoint of the shipped
     /// worst and the least claimed mutant: shipped worst 9.25 (the knee, r5 doll), the least claimed mutant seat-error-40mm (the seat error 40 mm: decimated limb ends stray from their balls) 13.68 (body-seam-10mm, the 10 mm seam, 75.77),
-    /// separation 1.48, bound 11.25. seat-share-off and limb-end-over-ball read 9.25: since the sockets are cut exactly no wedge is left for the slit check to see, and only the pin catches them.
+    /// separation 1.48, bound 11.25.
     /// </summary>
     private const float MaxSlit = 11.25f;
 

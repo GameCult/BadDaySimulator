@@ -68,8 +68,8 @@ public sealed record DollPrim(DollShape Shape, float3 A, float3 B, float Ra, flo
 
 /// <summary>
 /// One body of the doll: the physics shape it dresses (the key), the primitives it is made of, and the ball at its joint to its parent. The limb's
-/// half-width at its socket end is under its ball's radius (a limb wider than its ball meets it with a flat shoulder, which leaves a wedge the background shows through); the hand entries keep it. A
-/// lip, where a limb end is nearly as wide as its socket, is blunted by the countersink (<see cref="Doll.SinkAngle"/>), not by the entry. Joint ranges are not doll data: the lanes carry no joint limits (follow-up lodur-joint-ranges-anatomical).
+/// half-width at its socket end is under its ball's radius, as the look and not as a guard: a limb end of any width is cut by its socket's countersunk cutter (thigh at 78 mm over its 70 mm ball and a palm 34 mm across over the 26 mm wrist
+/// ball: slits within the slit check's bound, no knife rim added). A lip, where a limb end is nearly as wide as its socket, is blunted by the countersink (<see cref="Doll.SinkAngle"/>), not by the entry. Joint ranges are not doll data: the lanes carry no joint limits (follow-up lodur-joint-ranges-anatomical).
 /// </summary>
 /// <param name="Kind">The physics shape's kind.</param>
 /// <param name="Size">The physics shape's Size0..2 (matched within 1e-4).</param>
@@ -104,7 +104,7 @@ public static class Doll
     /// <summary>
     /// A thin body piece's facet error is at most this fraction of its thickness (<see cref="PuppetField.Thickness"/>): below <see cref="ThinBelow"/> a part cannot afford <see cref="FacetError"/> (at 20 mm
     /// the probe's fingers, 11 mm thick, decimated to 2 triangles and the palm to 8). Every body of 40 mm or more keeps <see cref="FacetError"/>, so its mesh does not change. Outside the seat bands
-    /// it decides the thumb (8 triangles at 0.5, a prism; 14 at 0.25) and the fingers' tips; the seat bands cover almost the whole palm and fingers, where it moves little.
+    /// it decides the thin bodies' free ends; off, the fingers' tip departs 5.83 mm from its silhouette against 2.06 shipped (ThinPiecesKeepTheirSilhouette).
     /// </summary>
     public const float ThinError = 0.25f;
 
@@ -135,8 +135,8 @@ public static class Doll
 
     /// <summary>
     /// The share of a ball's radius a seat may stray by, where that is under <see cref="SeatError"/> (<see cref="PieceField.SeatLimit"/>): the wrist's 26 mm ball seats within 3.9 mm, the knuckle roll's 15 mm within 2.25
-    /// and the CMC's 14 mm within 2.1; every body ball is 34 mm or more, where 0.15 x 34 = 5.1 is over <see cref="SeatError"/>, so no body piece's mesh changes. Measured on the hand chain (slits, mm2, the wrist): off (5 mm
-    /// at every ball) reads the wrist slit 30.6 against 18.7; 0.08 makes 1.5 to 2 times the hand's triangles and a sawtooth along every hand rim.
+    /// and the CMC's 14 mm within 2.1; every body ball is 34 mm or more, where 0.15 x 34 = 5.1 is over <see cref="SeatError"/>, so no body piece's mesh changes. Since the sockets are cut after decimation it sets the hands' density near
+    /// their sockets, not their seat: off reads the hands 680 triangles against 728 and the wrist slit 7.06 against 7.35; 0.08 changes every body (0.08 x 34 is under SeatError), 5006 triangles.
     /// </summary>
     public const float SeatShare = 0.15f;
 

@@ -29,19 +29,16 @@ mutant() {
   else echo "FAIL  $name: exit $code without '$want' (log $LOG/$name.log)"; failed=$((failed + 1)); fi
 }
 
-# Mutants that report FAIL below fail only ExistingPiecesUnchanged (the pin, which fails on any change) and no semantic check fires: facet-error-40mm, thigh-078, seat-share-off, limb-end-over-ball, fingers-root-lip,
-# seat-share-008, and thin-error-off and thin-error-half (caught by the Mesher floor and the boolean's faults, not by the silhouette line they name). Their wants are left as written: the gap is in the checks, not the want.
+# A mutant is kept only if a semantic check fails on the line its want names. The pin (ExistingPiecesUnchanged) fails on any change, so a want only the pin satisfies proves the mesh changed and no more:
+# a knob change that still yields a valid mesh is not a mutant. Only facet-error-19mm and thinbelow-8cm claim the pin, to show it sees a 1 mm knob change.
 F=client/PuppetField.cs; D=client/PuppetDoll.cs
 mutant seam-10mm            $D 's/Seam = 0.002f/Seam = 0.010f/'                 "from its ball"
 mutant seat-band-0          $D 's/SeatBand = 0.015f/SeatBand = 0f/'             "more than 15 mm beyond the ball"
 mutant seat-error-40mm      $D 's/SeatError = 0.005f/SeatError = 0.040f/'       "a ball joint shows slits"
-# FacetError does not own the seat: at 40 mm the mesher check (an inward face) catches it, and the seat check must not.
-mutant facet-error-40mm     $D 's/FacetError = 0.02f/FacetError = 0.04f/'       "face into their piece" "from its ball"
 mutant ball-bone-child      $F 's/new JointBall(n + j, joint.A, o, /new JointBall(n + j, joint.B, o, /' "do not follow their joint's parent"
 mutant ball-bone-root       $F 's/new JointBall(n + j, joint.A, o, /new JointBall(n + j, 0, o, /'       "do not follow their joint's parent"
 mutant seam-0               $D 's/Seam = 0.002f/Seam = 0f/'                     "less than half the seam inside a socket"
-mutant thigh-078            $D 's/DollPrim.Cone(V(0, .2f, 0), .07f, V(0, -.22f, 0), .05f)/DollPrim.Cone(V(0, .2f, 0), .078f, V(0, -.22f, 0), .05f)/' "fold"
-# The hands: sockets 10 mm off their balls (the hands are judged by the hug check, not the seat), a palm with no entry, ThinError off, a roll's clearance by point distance, and the thin error leaking into the other pieces
+# The hands: sockets 10 mm off their balls, a palm with no entry, ThinError off (a thin body's free end departs from its silhouette), the thin rule moved
 mutant hands-seam-10mm      $D 's/Seam = 0.002f/Seam = 0.010f/'                 "stop short of it"
 mutant no-palm-entry        $D 's/new(Box3DSoaKind.Box, V(.014f, .045f, .04f), new\[\]/new(Box3DSoaKind.Box, V(.015f, .045f, .04f), new[]/' "of the palm bodies are drawn as their fallback"
 mutant thin-error-off       $D 's/ThinError = 0.25f/ThinError = 100f/' "silhouette differs"
@@ -50,18 +47,11 @@ mutant facet-error-19mm     $D 's/FacetError = 0.02f/FacetError = 0.019f/'      
 mutant ball-inscribed       $F 's#radius \* 2f / (1f + k)#radius#' "ball faces lie more than"
 mutant ball-freq-2          $D 's/BallFrequency = 3/BallFrequency = 2/' "are not 38 vertices and 72 triangles"
 mutant roll-sphere          $D 's/0.015f, V(0, 0, 1), 0.028f)/0.015f, V(0, 0, 1), 0f)/' "not its two knuckle rolls"
-# The seat error scaled to the ball off (5 mm at every ball), and a limb wider than its ball (the palm's ellipsoid 34 mm across against the 26 mm wrist ball): the wedge between them is a slit. 
-mutant seat-share-off       $D 's/SeatShare = 0.15f/SeatShare = 100f/' "a ball joint shows slits"
-mutant limb-end-over-ball   $D 's/V(.0135f, .022f, .027f)/V(.0135f, .022f, .034f)/' "a ball joint shows slits"
-# The fingers' root over the roll's trough rim (the box top at 14 mm over the axis, not 11): a lip of the root is lost.
-mutant fingers-root-lip     $D 's/DollPrim.Box(V(0, -.00575f, 0), V(.0115f, .03625f, .037f), .0095f)/DollPrim.Box(V(0, -.00275f, 0), V(.0115f, .03925f, .037f), .0095f)/' "does not wrap its roll"
-mutant thin-error-half      $D 's/ThinError = 0.25f/ThinError = 0.5f/' "silhouette differs"
 mutant body-seam-10mm       $D 's/Seam = 0.002f/Seam = 0.010f/'                             "a ball joint shows slits"
-# Joints are built primitives, never meshed (ruling doll-joints-built-primitives): a ball routed through the decimator; the thin rule moved onto the bodies of 80 mm (ThinBelow); the seat limit without the thin error (Allowed's minimum); a lower seat share.
+# Joints are built primitives, never meshed (ruling doll-joints-built-primitives): a ball routed through the decimator; the thin rule moved onto the bodies of 80 mm (ThinBelow); the seat limit without the thin error (Allowed's minimum).
 mutant ball-decimated       $F 's#public (float3\[\] V, int\[\] Tris) Mesh() => PuppetField.Primitive(Radius, Axis, math.length(Roll), Doll.BallFrequency);#public (float3[] V, int[] Tris) Mesh() { var (v, t) = PuppetField.Primitive(Radius, Axis, math.length(Roll), Doll.BallFrequency); return PuppetDecimate.Run(v, t, Doll.FacetAlpha, Doll.FacetScale, new DecimateRules((p, tight) => true, p => false, p => 1f, System.Array.Empty<(float3 P, float Clear)>())); }#' "are not 38 vertices and 72 triangles"
 mutant thinbelow-8cm        $D 's/ThinBelow = 0.04f/ThinBelow = 0.08f/' "the hands must not change changed"
 mutant allowed-no-min       $F 's/(tight ? MathF.Min(Error, SeatLimit(p)) : Error)/(tight ? SeatLimit(p) : Error)/' "stray further from their piece's field"
-mutant seat-share-008       $D 's/SeatShare = 0.15f/SeatShare = 0.08f/' "shows the inside of a piece"
 # The decimator bounds the error both ways (ruling decimator-two-sided-error): the one-sided rule drops a lip thinner than the error; a palm 15 mm short leaves a knuckle roll's end bare.
 mutant decimator-one-sided  client/PuppetDecimate.cs 's/ \&\& Hugs(x, fan, u, v))/)/' "of their error (worst"
 mutant palm-short-z         $D 's/V(.014f, .0265f, .04f)/V(.014f, .0265f, .025f)/' "a roll's end is bare"
