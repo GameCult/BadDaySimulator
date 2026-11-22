@@ -178,6 +178,7 @@ public static class PuppetChecks
         ThinPiecesKeepTheirSilhouette(puppet, real, fields, triangles, Check);
         ExistingPiecesUnchanged(fields, Check);
         HandsHug(puppet, set.Balls, triangles, Check);
+        RollEndsAreCovered(puppet, set.Balls, triangles, Check);
         NoSlits(puppet, real, set.Balls, triangles, Check);
         NoSeeInside(puppet, real, set.Balls, triangles, Check);
         WithinTheError(puppet, fields, triangles, Check);
@@ -491,6 +492,44 @@ public static class PuppetChecks
         check(bare == 0, $"{bare} limbs at hand balls seat on under {HugShare * 100:F1}% of their ball within Seam + 1 mm (least {least * 100:F1}%): they stop short of it");
     }
 
+
+    /// <summary>
+    /// The least share of a roll's end cap (the hemisphere of the knuckle roll's radius beyond its segment) that must lie within 3 mm of the palm or the fingers at rest: a bare roll end, which the whole-ball
+    /// <see cref="HugShare"/> does not see (the fingers cover a palm 15 mm short at each end). Shipped least 16.3%; palm-short-z (the palm's half length 40 to 25 mm) 2.5%; separation 6.5, the bound their geometric
+    /// midpoint 6.4% (lodur:ruling:deterministic-bound-margin).
+    /// </summary>
+    private const float MinEndCover = 0.064f;
+
+    private static void RollEndsAreCovered(PuppetShape shape, JointBall[] balls, int[][] triangles, Action<bool, string> check)
+    {
+        const int count = 600; const float near = 0.003f;
+        int ends = 0; float least = float.MaxValue; string leastAt = "";
+        for (int j = 0; j < shape.Joints.Length; j++)
+        {
+            var roll = balls[j].Roll;
+            if (math.lengthsq(roll) == 0) continue;
+            var (_, a, b, o) = shape.Joints[j]; float radius = shape.BallRadius[j];
+            foreach (float sign in new[] { 1f, -1f })
+            {
+                var end = o + sign * roll; var axis = sign * math.normalize(roll);
+                int covered = 0, total = 0;
+                for (int i = 0; i < 2 * count; i++)
+                {
+                    float z = 1 - 2f * (i + 0.5f) / (2 * count), r = MathF.Sqrt(1 - z * z), ph = i * 2.399963f;
+                    var u = new float3(r * MathF.Cos(ph), r * MathF.Sin(ph), z); if (math.dot(u, axis) < 0) continue;
+                    total++; var p = end + u * radius; float gap = float.MaxValue;
+                    foreach (int body in new[] { a, b }) foreach (int t in triangles[body]) gap = MathF.Min(gap, PuppetDecimate.PointTriangle(p, At(shape, 3 * t), At(shape, 3 * t + 1), At(shape, 3 * t + 2)));
+                    if (gap <= near) covered++;
+                }
+                float cover = covered / (float)total; ends++;
+                Console.WriteLine($"PUPPET roll end: joint {j} {(sign > 0 ? "+" : "-")}: {cover * 100:F1}% of the end cap within 3 mm of the palm or the fingers");
+                if (cover < least) { least = cover; leastAt = $"joint {j} {(sign > 0 ? "+" : "-")}"; }
+            }
+        }
+        Console.WriteLine($"PUPPET roll ends: {ends} ends, least cover {least * 100:F1}% of {MinEndCover * 100:F1}% ({leastAt})");
+        check(ends >= 4, $"the roll end check is vacuous: {ends} roll ends, under 4");
+        check(least >= MinEndCover, $"a roll's end is bare: {least * 100:F1}% of its cap is within 3 mm of the palm or the fingers ({leastAt}), under {MinEndCover * 100:F1}%");
+    }
 
     /// <summary>A ball joint's readings' poses: the creation pose (the ball and its two neighbours' triangles, in the bind) and, at a hand's joint, the bent pose: the child turned about the joint by its bend (<see cref="HandBodies"/>) about z, as the hand bends about its joints.</summary>
     private static List<(string Pose, List<(float3, float3, float3)> Tris)> JointPoses(PuppetShape shape, List<PuppetBody> bodies, int[][] triangles, int j)

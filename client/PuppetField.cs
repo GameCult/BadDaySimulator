@@ -237,6 +237,9 @@ public sealed class PieceField
         return limit;
     }
 
+    /// <summary>How far (m) the field's surface may lie from the mesh at <paramref name="p"/> (the decimator's carried surface points): <see cref="Error"/>, or in the seat band at most <see cref="SeatLimit"/> too.</summary>
+    public float Stray(float3 p) => Tight(p) ? MathF.Min(Error, SeatLimit(p)) : Error;
+
     /// <summary>
     /// Where a decimated surface point may lie, the one owner of the error map: within <see cref="Error"/> of the field, and under the tight rule within <see cref="SeatLimit"/> too,
     /// and never within a ball's radius + 0.2 mm of its core (the origin, or a roll's segment).
@@ -318,7 +321,7 @@ public static class PuppetField
     internal static (float3[] V, int[] Tris) Mesh(PieceField f)
     {
         var (v, tris) = Extract(f);
-        return PuppetDecimate.Run(v, tris, Doll.FacetAlpha, Doll.FacetScale, new DecimateRules(f.Allowed, f.Tight, f.Guard()));
+        return PuppetDecimate.Run(v, tris, Doll.FacetAlpha, Doll.FacetScale, new DecimateRules(f.Allowed, f.Tight, f.Stray, f.Guard()));
     }
 
     /// <summary>Builds the shape and waits for it: the bodies' meshes come from <see cref="PuppetPieces"/> (built once per key), so a second build of the same doll builds nothing; the balls are built inline.</summary>
