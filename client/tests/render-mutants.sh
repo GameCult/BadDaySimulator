@@ -3,7 +3,7 @@
 # failure line the mutant must print. The mutants are the ones the sample floors and bounds of RenderCheck.cs were derived against. A "survives" mutant is one the check
 # cannot tell from the shipped doll; it must still pass, so that the list stays true if the check changes. (A stale crease, PuppetSkin keeping the first pose's creases, was one: every edge lies inside one
 # rigid piece, so a crease never changes with the pose. The creases are now the shape's, derived once from each source, and nothing per frame recomputes them: the mutant has no code to edit.) A doubled kernel is UNCLAIMED, not a survivor: the kernel is nonzero only in the 2 px bands, so the
-# whole-interior statistics barely see it, and the check claims nothing about it: its highlight shift (1.06 on the doll of 2258 triangles) is under the bound's margin band, so it passes, and were it ever to read in the band it is unjudged (see below).
+# whole-interior statistics barely see it, and the check claims nothing about it: its highlight shift (2.27 on the doll of 4738 triangles) reads in the bound's margin band (1.67 to 2.41 of the bound 2.01), so it is unjudged: neither a pass nor a fail (see below).
 # Refuses a dirty tree; restores every file it edits. Every edit must apply exactly once, by itself (not "the file changed": one edit of a mutant applying does not vouch for its
 # others), whatever the file's line endings (a newline in an old text matches LF or CRLF; a new text takes the file's): an edit that does not aborts the whole run, status 3,
 # before anything is built, since a mutant built from a half-applied edit is some other program and its verdict means nothing.
@@ -42,7 +42,7 @@ mutant() {
     local bound top fails other
     bound=$(grep -o 'MaxHighlightShift = [0-9.]*' client/tests/RenderCheck.cs | grep -o '[0-9.]*$')
     top=$(grep -h 'RENDER flicker (' "$LOG/$name.log" | grep -o 'highlight mean shift [0-9.]*' | grep -o '[0-9.]*$' | sort -n | tail -1)
-    other=$(grep -h 'RENDER FAIL' "$LOG/$name.log" | grep -vc "view's highlights are")
+    other=$(grep -h 'RENDER FAIL:' "$LOG/$name.log" | grep -vc "view's highlights are")
     if [ "$other" -ne 0 ] || [ -z "$top" ]; then echo "FAIL  $name: a failure other than the highlight shift, or no reading (log $LOG/$name.log)"; failed=$((failed + 1))
     elif awk "BEGIN { exit !($top < $bound / 1.2) }"; then
       if [ $code -eq 0 ]; then echo "ok    $name: passes, reads $top under the margin band ($bound / 1.2)"; else echo "FAIL  $name: exit $code with its highlight shift $top under the band (log $LOG/$name.log)"; failed=$((failed + 1)); fi
