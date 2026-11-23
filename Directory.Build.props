@@ -3,12 +3,5 @@
     <!-- Sibling Lodur checkout (main, from the nervous-layers merge on): the nervous model BDS consumes. Set LODUR_ROOT to override. -->
     <LodurRoot Condition="'$(LodurRoot)' == '' and '$(LODUR_ROOT)' != ''">$(LODUR_ROOT)</LodurRoot>
     <LodurRoot Condition="'$(LodurRoot)' == ''">$(MSBuildThisFileDirectory)..\Lodur</LodurRoot>
-    <!-- Sibling CultLib checkout at the one revision Ymir admits (its Directory.Build.props owns the pin): GameCult.Geometry for the client's puppet mesh. Set CULTLIB_ROOT to override. -->
-    <CultLibRoot Condition="'$(CultLibRoot)' == '' and '$(CULTLIB_ROOT)' != ''">$(CULTLIB_ROOT)</CultLibRoot>
-    <CultLibRoot Condition="'$(CultLibRoot)' == ''">$(MSBuildThisFileDirectory)..\CultLib</CultLibRoot>
-    <!-- CultLib 2.0.0: tag cultlib-unity-v2.0.0. Keep equal to Ymir's CultLibRevision. -->
-    <CultLibRevision>42dce3611a81adc5c5fac54cadbaa5637d6022d3</CultLibRevision>
-    <GitExecutable Condition="'$(GitExecutable)' == '' and Exists('C:\Program Files\Git\cmd\git.exe')">C:\Program Files\Git\cmd\git.exe</GitExecutable>
-    <GitExecutable Condition="'$(GitExecutable)' == ''">git</GitExecutable>
   </PropertyGroup>
 </Project>

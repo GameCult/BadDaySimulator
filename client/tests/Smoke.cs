@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using BadDay.Core;
 using BadDay.Ymir;
 using Godot;
+using Ymir.Box3D;
 
 namespace BadDay.Client.Tests;
 
@@ -57,7 +58,6 @@ public partial class Smoke : Node
     private async Task Scenario()
     {
         CheckEngineAndScene();
-        PuppetChecks.Run(failure => Check(false, "puppet: " + failure), Session.View);
         if (_failures.Count > 0) return;
 
         // Slow motion, by wall clock: a quarter of the session steps per real second, the same run.
@@ -72,10 +72,10 @@ public partial class Smoke : Node
         // The rest runs the physics clock fast; the session still steps 1/120 s per frame.
         Engine.PhysicsTicksPerSecond = 1200;
 
-        // A Reset is not a topology change: the mesh stays the one built at startup. Checked after three resets so a rebuild per
+        // A Reset is not a new set of bodies: the carriers and meshes made at startup stay. Checked after three resets so a rebuild per
         // Reset fails here, not after hundreds.
         for (ulong seed = 1; seed <= 3; seed++) { PressReset(seed); await Frame(); }
-        Check(_main.Bodies.PuppetMeshBuilds == 1, $"the puppet mesh was built {_main.Bodies.PuppetMeshBuilds} times by the third Reset; the signature never changed, so once");
+        CheckMeshBuilds("by the third Reset");
         CameraChecks.Run(failure => Check(false, "camera: " + failure), _main);
         // The camera writes its transform on input only: one written between frames stays through them.
         var orbit = _main.GetNode<OrbitCamera>("Camera");
@@ -105,7 +105,6 @@ public partial class Smoke : Node
         await UntilTick(1500);
         CheckEvents(reference, "seed 3, intensity 6");
         Check(Session.Finished && _main.Events.Any(e => (e.Events & Lodur.TickEvents.WillBroke) != 0), "intensity 6 did not break the will");
-        CheckPuppetMesh("intensity 6, tick 1500");
 
         // A reset puts every body at its pose now, not on the way from where the last run left it. A reset from the UI
         // lands between physics frames, and on a slow physics clock the next render frame comes before the next tick.
@@ -139,7 +138,7 @@ public partial class Smoke : Node
             await Frame();
         }
         Check(_main.Seed == 1399, $"after 400 resets the seed is {_main.Seed}");
-        Check(_main.Bodies.PuppetMeshBuilds == 1, $"the puppet mesh was built {_main.Bodies.PuppetMeshBuilds} times; the signature never changed, so once");
+        CheckMeshBuilds("after 400 Resets");
 
         // Box off, through the HUD button, at tick 600: the run ends with the will intact and the screen shows the box off.
         PressReset(Seed);
@@ -175,52 +174,22 @@ public partial class Smoke : Node
         Check(_main.IsPhysicsInterpolatedAndEnabled() && (bool)ProjectSettings.GetSetting("physics/common/physics_interpolation"), "physics interpolation is off");
         Check(_main.Seed == Seed, "Main did not start from the smoke's seed");
 
-        // The look: white on dark grey, flat.
-        var puppet = _main.Bodies.PuppetColor;
-        Check(puppet.Luminance > 0.7f && puppet.S < 0.1f, $"the puppet is {puppet}, not white");
+        // The look: dark grey.
         Check(_main.Bodies.SceneryMaterial.AlbedoColor.Luminance < 0.3f, "the floor is not dark");
         var glow = _main.Chamber.Material.AlbedoColor;
         Check(glow.V > 0.7f && glow.S < 0.3f, $"the chamber is {glow}, not light");
         var environment = _main.GetChildren().OfType<WorldEnvironment>().Single().Environment;
         Check(environment.BackgroundColor.Luminance < 0.2f, "the background is not dark grey");
-        // The studio: a shadowing key and two rims. Where the camera turns the key's light turns with it, and it keeps coming from the studio's direction in the camera's space.
-        var rig = _main.FindChildren("*", "DirectionalLight3D", true, false).Cast<DirectionalLight3D>().ToArray();
-        Check(rig.Length == 3 && rig.Count(l => l.ShadowEnabled) == 1, $"the scene has {rig.Length} directional lights, {rig.Count(l => l.ShadowEnabled)} with a shadow, not a key and two rims");
-        var camera = _main.GetNode<Camera3D>("Camera");
-        var home = camera.GlobalTransform;
-        foreach (float turn in new[] { 0f, 2.1f })
-        {
-            camera.GlobalTransform = new Transform3D(home.Basis.Rotated(Vector3.Up, turn), home.Origin);
-            foreach (var key in rig.Where(l => l.ShadowEnabled))
-            {
-                var shinesAlong = camera.GlobalBasis.Inverse() * -key.GlobalBasis.Z; // the key's direction of travel in the camera's space
-                Check((shinesAlong + Look.KeyDirection).Length() < 1e-3f, $"the key shines along {shinesAlong} in the camera's space after the camera turned {turn} rad; the studio does not follow the camera");
-            }
-        }
-        camera.GlobalTransform = home;
         Check(environment.Sky is null && environment.TonemapMode == Godot.Environment.ToneMapper.Linear && !environment.GlowEnabled, "the environment is not a linear colour environment with no sky and no glow");
     }
 
-    /// <summary>The puppet's one mesh as it is drawn: size, one piece, and not stretched into a web by the pose it is in or by a joint swung 90 degrees.</summary>
-    private void CheckPuppetMesh(string when)
+    /// <summary>Every body with a shape is drawn by one mesh, made once: the anchor has none.</summary>
+    private void CheckMeshBuilds(string when)
     {
-        if (_main.Bodies.PuppetShape is not { } shape) { Check(false, $"{when}: the puppet has no mesh"); return; }
-        Check(shape.Triangles is >= 2000 and <= 6000, $"{when}: the puppet mesh has {shape.Triangles} triangles, not 2000 to 6000");
-        int pieces = PuppetChecks.Pieces(shape);
-        Check(pieces == 1, $"{when}: the puppet mesh is {pieces} pieces, not one");
-
-        var posed = new Rigid[shape.Ids.Length];
-        for (int i = 0; i < posed.Length; i++)
-            posed[i] = Puppet.ToRigid((_main.Bodies.PoseOf(shape.Ids[i]) ?? Transform3D.Identity) * Puppet.ToTransform(shape.SpreadBind[i].Inverse()));
-        float stretch = PuppetChecks.Stretch(shape, posed).Ratio;
-        Check(stretch <= PuppetChecks.StretchLimit, $"{when}: a skinned edge is {stretch:F1}x its bind length, over {PuppetChecks.StretchLimit}x");
-
-        for (int j = 0; j < shape.Joints.Length; j++)
-        {
-            if (shape.Joints[j].Kind != global::Ymir.Box3D.Box3DSoaJointKind.Spherical) continue;
-            stretch = PuppetChecks.Stretch(shape, PuppetChecks.Swing(shape, j, new CultMath.float3(1, 0, 0), MathF.PI / 2)).Ratio;
-            Check(stretch <= PuppetChecks.StretchLimit, $"{when}: with body {shape.Ids[shape.Joints[j].B]} swung 90 degrees a skinned edge is {stretch:F1}x its bind length, over {PuppetChecks.StretchLimit}x");
-        }
+        var view = Session.View;
+        int shaped = 0;
+        for (int i = 0; i < view.Count; i++) if ((Box3DSoaKind)view.Kind[i] != Box3DSoaKind.Anchor) shaped++;
+        Check(_main.Bodies.MeshBuilds == shaped, $"{when}: {_main.Bodies.MeshBuilds} body meshes were made for {shaped} bodies with a shape; a Reset makes none");
     }
 
     private void CheckPoses(string when)
