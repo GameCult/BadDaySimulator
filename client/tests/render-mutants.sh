@@ -20,7 +20,7 @@ status=0
 for m in "${MUTANTS[@]}"; do
   IFS='|' read -r name file old new want <<<"$m"
   cp "$file" "$file.orig"
-  restore() { mv -f "$file.orig" "$file"; }
+  restore() { mv -f "$file.orig" "$file"; touch "$file"; }
   if ! python - "$file" "$old" "$new" <<'PY'
 import sys
 path, old, new = sys.argv[1:4]
@@ -32,12 +32,14 @@ text = text.replace(old, new)
 open(path, 'w', newline='').write(text.replace('\n', '\r\n') if '\r\n' in raw else text)
 PY
   then restore; echo "MUTANT $name: edit did not apply once; aborting"; exit 2; fi
-  if ! dotnet build BadDay.Client.csproj 2>&1 | grep -q "Build succeeded"; then restore; echo "MUTANT $name: does not build; aborting"; exit 2; fi
+  build="$(dotnet build BadDay.Client.csproj 2>&1)"
+  if ! grep -q "Build succeeded" <<<"$build"; then restore; echo "MUTANT $name: does not build; aborting"; exit 2; fi
   out="$("$GODOT" --path . res://tests/RenderCheck.tscn 2>&1)"
   restore
   readings="$(grep '^RENDER ' <<<"$out" | grep -v 'FAIL\|PASS\|FAILED' | sed 's/^RENDER //' | tr '\n' ';')"
   if grep -q "^RENDER FAIL $want:" <<<"$out"; then echo "MUTANT $name: fails '$want' as wanted  [$readings]"
   else echo "MUTANT $name: DOES NOT FAIL '$want'  [$readings]"; status=1; fi
 done
-dotnet build BadDay.Client.csproj 2>&1 | grep -q "Build succeeded" || { echo "the shipped code does not build after the run"; status=1; }
+build="$(dotnet build BadDay.Client.csproj 2>&1)"
+grep -q "Build succeeded" <<<"$build" || { echo "the shipped code does not build after the run"; status=1; }
 exit $status

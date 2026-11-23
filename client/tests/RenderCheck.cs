@@ -80,7 +80,10 @@ public partial class RenderCheck : Node
 
         CheckFifteenBit(play);
         CheckBlocks(play, Block);
-        CheckFigureWhereLanesAre(play);
+
+        _main.Chamber.Volume.Visible = false; // the translucent box tints the hand bodies inside it
+        CheckFigureWhereLanesAre(await Capture("play-clear"));
+        _main.Chamber.Volume.Visible = true;
 
         var home = _camera.Transform;
         _camera.Distance = 0.9f;
@@ -92,7 +95,7 @@ public partial class RenderCheck : Node
         await CheckGlow();
     }
 
-    /// <summary>Every channel of every pixel is a multiple of 8: 15-bit colour, within one level of the 8-bit rounding. Bound 0; shipped 0, post off 1729077 channels.</summary>
+    /// <summary>Every channel of every pixel is a multiple of 8: 15-bit colour, within one level of the 8-bit rounding. Bound 0; shipped 0, post off 1728141 channels.</summary>
     private void CheckFifteenBit(Frame f)
     {
         int bad = 0;
@@ -103,7 +106,7 @@ public partial class RenderCheck : Node
         Check(bad == 0, "15-bit", $"{bad} channels are not a multiple of 8");
     }
 
-    /// <summary>Every block of the line grid, anchored at the screen centre, is one colour. Bound 0 pixels; shipped 0, sampling per pixel 218066.</summary>
+    /// <summary>Every block of the line grid, anchored at the screen centre, is one colour. Bound 0 pixels; shipped 0, sampling per pixel 218873.</summary>
     private void CheckBlocks(Frame f, int s)
     {
         var seen = new Dictionary<(int, int), uint>();
