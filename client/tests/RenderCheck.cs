@@ -13,7 +13,7 @@ namespace BadDay.Client.Tests;
 /// The windowed check of the PS1 look: it renders real frames (gl_compatibility, the client's renderer) and reads them back. Every reading is
 /// deterministic (seed 1, ticks pinned, physics frozen before a capture, probes drawn with the client's own materials), so a bound
 /// sits at the geometric midpoint of the shipped worst and the least claimed mutant and needs at least 1.2 between them
-/// (lodur:ruling:deterministic-bound-margin); tests/render-mutants.sh breaks the shipped code once per claim and wants that claim's line to fail.
+/// (lodur:ruling:deterministic-bound-margin; a zero reading, shipped or mutant, is counted as lodur:ruling:deterministic-bound-zero-reading says: half a unit shipped, one unit mutant, each bound's comment stating it); tests/render-mutants.sh breaks the shipped code once per claim and wants that claim's line to fail.
 /// <c>godot --path client res://tests/RenderCheck.tscn [-- --frames=dir]</c>; exit code 0 passes, 1 fails. It needs a window.
 /// </summary>
 public partial class RenderCheck : Node
@@ -21,8 +21,8 @@ public partial class RenderCheck : Node
     private const int Width = 1280, Height = 720;
     private const double WatchdogSeconds = 120;
     // Bounds (shipped worst, least claimed mutant, separation) are in each check's comment.
-    private const int OddLevelFloor = 1245, FigureMisses = 3, DitherBlocks = 139;
-    private const double FogLevels = 22, LightLevels = 11, MipPercent = 6.5;
+    private const int OddLevelFloor = 1245, FigureMisses = 3, DitherBlocks = 160;
+    private const double FogLevels = 6.6, LightLevels = 11, MipPercent = 6.5;
 
     private readonly List<string> _failures = new();
     private Main _main = null!;
@@ -103,7 +103,7 @@ public partial class RenderCheck : Node
     /// <summary>
     /// 15-bit colour: every channel of every pixel is a multiple of 8 (within one level of the 8-bit rounding), and the odd multiples of 8 (8, 24, 40 ...)
     /// appear, which 12-bit colour (multiples of 16) never draws. Off-grid channels: bound 0; shipped 0, post off 1728141. Channels within one level of an
-    /// odd multiple: floor 1245 = sqrt(1 x 1549038); the least shipped reading is 1549038 (the lines mutants read more), the 12-bit post 0 (counted as 1),
+    /// odd multiple: floor 1245 = sqrt(1 x 1549038); the least shipped reading is 1549038 (the lines mutants read more), the 12-bit post 0 (counted as 1, lodur:ruling:deterministic-bound-zero-reading),
     /// so the shipped frame is over the floor by a factor of 1244 and the mutant under it by 1245.
     /// </summary>
     private void CheckFifteenBit(Frame f)
@@ -162,7 +162,7 @@ public partial class RenderCheck : Node
     /// <summary>
     /// Each dynamic body's lane origin, projected through the camera, lands within one block (3 px) of a figure pixel (skin is red over blue; floor,
     /// background and chamber are blue over red). A single pixel failed under unrelated edits (dither, snap, glow, post off each moved one origin onto a
-    /// dithered or edge pixel), so the neighbourhood is the block. Bound 3 of 19 = sqrt(0.5 x 19): shipped 0 (counted as half a body), carriers left
+    /// dithered or edge pixel), so the neighbourhood is the block. Bound 3 of 19 = sqrt(0.5 x 19): shipped 0 (counted as half a body, lodur:ruling:deterministic-bound-zero-reading), carriers left
     /// unposed 19, separation 38; post off, 12-bit, dither off, snap off, glow unset, fog off, per-pixel light, mipmapped and linear textures, 360 and 120
     /// lines, perspective UVs and per-block sampling each read 0, so no collateral edit turns it.
     /// </summary>
@@ -228,7 +228,7 @@ public partial class RenderCheck : Node
                 if (drawn != wantSnapped) offSnapped++;
                 if (drawn != wantExact) offExact++;
             }
-        // Bound 2 blocks: shipped worst 0, snap off 9 (a shipped worst of 0 counts as half a block: sqrt(0.5 x 9) = 2.1, separation 18).
+        // Bound 2 blocks: shipped worst 0, snap off 9 (a shipped worst of 0 counts as half a block, lodur:ruling:deterministic-bound-zero-reading: sqrt(0.5 x 9) = 2.1, separation 18).
         Report("snap: blocks off the snapped hull", offSnapped, 2);
         Report("snap: blocks off the unsnapped hull", offExact, 0);
         Check(offSnapped <= 2, "snap", $"{offSnapped} blocks differ from the hull of the snapped corners (the unsnapped hull differs in {offExact})");
@@ -276,52 +276,66 @@ public partial class RenderCheck : Node
         _main.AddChild(probes);
         _camera.GlobalTransform = new Transform3D(Basis.Identity, new Vector3(0, 0, 3f));
 
-        // Dither: a flat emissive field of raw (97, 106, 61), whose levels 88/96, 96/104 and 56/64 the 4x4 matrix chooses between block by block.
-        // Each block's channels against ps1.js's matrix (column by block column, row by block row), within the 8-bit rounding.
-        var field = new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(30, 30) }, MaterialOverride = Look.Ps1(null, new Color(97 / 255f, 106 / 255f, 61 / 255f), emissive: true) };
-        probes.AddChild(field);
-        await Frames(3);
-        var flat = await Capture("dither");
+        // Dither: three flat emissive fields whose channels sit on every threshold of ps1.js's 4x4 matrix. A channel of raw value v is at level
+        // (v + d) / 8 * 8 in a block whose matrix value is d, and the matrix holds the eight values -4 .. 3 (each twice); a channel of v mod 8 = 3, 2, 1, 0, 7, 6, 5
+        // changes level between the matrix values -4|-3, -3|-2, -2|-1, -1|0, 0|1, 1|2, 2|3, and v mod 8 = 4 never does. The fields below hold these seven
+        // thresholds (and three channels at 4), so a block's three channels in the three fields read the matrix value of its cell exactly: a 2x2 matrix, a
+        // transposed one or one cell changed shows in some field. The level a channel must read is the one the matrix value gives, no level below accepted
+        // (the 8-bit readback of v is exact: every n of 0..255 survives n / 255 x 255 in float32), within 1 of the 8-bit rounding.
+        int[][] fields = { new[] { 99, 98, 97 }, new[] { 96, 103, 102 }, new[] { 101, 100, 100 } };
         int s = Block, offDither = 0;
-        int[] raw = { 97, 106, 61 };
-        for (int by = BlockOf(0, Height, s); by <= BlockOf(Height - 1, Height, s); by++)
-            for (int bx = BlockOf(0, Width, s); bx <= BlockOf(Width - 1, Width, s); bx++)
-            {
-                int x = Width / 2 + bx * s, y = Height / 2 + by * s;
-                if (x < 0 || y < 0 || x >= Width || y >= Height) continue;
-                int d = Bayer[((bx % 4) + 4) % 4][((by % 4) + 4) % 4];
-                bool ok = true;
-                for (int c = 0; c < 3; c++)
-                {
-                    int level = (raw[c] + d) / 8 * 8, below = (raw[c] + d - 1) / 8 * 8, seen = flat.Data[4 * (y * Width + x) + c];
-                    ok &= Math.Abs(seen - level) <= 1 || Math.Abs(seen - below) <= 1;
-                }
-                if (!ok) offDither++;
-            }
-        // Bound 139 blocks of 102480 = sqrt(0.5 x 38400): shipped 0 (counted as half a block), dither off 38400, separation 76800. (Post off and the 12-bit post
-        // read 102480: they change every level the matrix picks between.)
-        Report("dither: blocks off ps1.js's matrix", offDither, DitherBlocks);
-        Check(offDither <= DitherBlocks, "dither", $"{offDither} blocks of a flat field differ from the 4x4 ordered dither");
-        field.QueueFree();
-
-        // Fog: a white field at 9 m (half way between FogNear and FogFar, smoothstep 0.5); the mean of a 300 px square against the fogged colour.
-        var wall = new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(30, 30) }, MaterialOverride = Look.Ps1(null, Colors.White, emissive: true), Position = new Vector3(0, 0, 3f - 9f) };
-        probes.AddChild(wall);
-        await Frames(3);
-        var fogFrame = await Capture("fog");
-        float t = Math.Clamp((9f - Look.FogNear) / (Look.FogFar - Look.FogNear), 0f, 1f), fogged = t * t * (3 - 2 * t);
-        double worst = 0;
-        float[] bg = { Look.Background.R, Look.Background.G, Look.Background.B };
-        for (int c = 0; c < 3; c++)
+        for (int f = 0; f < fields.Length; f++)
         {
-            double sum = 0; int n = 0;
-            for (int y = Height / 2 - 150; y < Height / 2 + 150; y++)
-                for (int x = Width / 2 - 150; x < Width / 2 + 150; x++) { sum += fogFrame.Data[4 * (y * Width + x) + c]; n++; }
-            worst = Math.Max(worst, Math.Abs(sum / n - 255 * (1 - fogged * (1 - bg[c]))));
+            int[] raw = fields[f];
+            var field = new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(30, 30) }, MaterialOverride = Look.Ps1(null, new Color(raw[0] / 255f, raw[1] / 255f, raw[2] / 255f), emissive: true) };
+            probes.AddChild(field);
+            await Frames(3);
+            var flat = await Capture("dither" + f);
+            for (int by = BlockOf(0, Height, s); by <= BlockOf(Height - 1, Height, s); by++)
+                for (int bx = BlockOf(0, Width, s); bx <= BlockOf(Width - 1, Width, s); bx++)
+                {
+                    int x = Width / 2 + bx * s, y = Height / 2 + by * s;
+                    if (x < 0 || y < 0 || x >= Width || y >= Height) continue;
+                    int d = Bayer[((bx % 4) + 4) % 4][((by % 4) + 4) % 4];
+                    bool ok = true;
+                    for (int c = 0; c < 3; c++) ok &= Math.Abs(flat.Data[4 * (y * Width + x) + c] - (raw[c] + d) / 8 * 8) <= 1;
+                    if (!ok) offDither++;
+                }
+            field.QueueFree();
         }
-        // Bound 22 levels = sqrt(4.53 x 107.75): shipped worst 4.53 (the floor to 8 and the dither's mean), fog off 107.75, separation 23.8. (The 12-bit post reads 12.25.)
-        Report("fog: mean level off the fogged colour at 9 m", worst, FogLevels);
-        Check(worst <= FogLevels, "fog", $"a wall at 9 m reads {worst:F1} levels from white fogged by {fogged:F2} toward the background");
+        // Bound 160 block readings of 307440 (three fields of 102480) = sqrt(0.5 x 51240): shipped 0 (counted as half a reading,
+        // lodur:ruling:deterministic-bound-zero-reading), the 2x2 matrix 51240, the transposed one 76860, dither off 140940, round-to-nearest 217740, separation 102480.
+        Report("dither: blocks off ps1.js's matrix, three fields", offDither, DitherBlocks);
+        Check(offDither <= DitherBlocks, "dither", $"{offDither} block readings of three flat fields differ from the 4x4 ordered dither");
+
+        // Fog: a white wall at 6, 9 and 12 m against the literals 4 and 14 m (Look's are not read: a changed FogNear or FogFar must show) and the literal
+        // background (0.10, 0.10, 0.11), the smoothstep 0.104, 0.5 and 0.896 of them; linear fog would read 0.2, 0.5 and 0.8. The wall's colour is the
+        // 8-bit mix toward the background, and the mean of a 300 px square (100 x 100 blocks, 25 periods of the matrix) is that colour's mean level after the
+        // dither and the floor to 8, which round-to-nearest would lift by 4.
+        var wall = new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(30, 30) }, MaterialOverride = Look.Ps1(null, Colors.White, emissive: true) };
+        probes.AddChild(wall);
+        double worst = 0;
+        float[] bg = { 0.10f, 0.10f, 0.11f };
+        foreach (float depth in new[] { 6f, 9f, 12f })
+        {
+            wall.Position = new Vector3(0, 0, 3f - depth);
+            await Frames(3);
+            var fogFrame = await Capture("fog" + depth);
+            float t = Math.Clamp((depth - 4f) / (14f - 4f), 0f, 1f), fogged = t * t * (3 - 2 * t);
+            for (int c = 0; c < 3; c++)
+            {
+                double sum = 0; int n = 0;
+                for (int y = Height / 2 - 150; y < Height / 2 + 150; y++)
+                    for (int x = Width / 2 - 150; x < Width / 2 + 150; x++) { sum += fogFrame.Data[4 * (y * Width + x) + c]; n++; }
+                int mixed = (int)Math.Round(255 * (1 - fogged * (1 - bg[c])));
+                double want = Bayer.SelectMany(col => col).Average(d => Math.Clamp(mixed + d, 0, 255) / 8 * 8);
+                worst = Math.Max(worst, Math.Abs(sum / n - want));
+            }
+        }
+        // Bound 6.6 levels = sqrt(2 x 22): shipped worst 2, fog centred wide (2 to 16 m) 22, linear fog 23, FogNear 6 42, FogFar 18 67, fog off 203, separation 11.
+        // (Round-to-nearest reads 4 and the 12-bit post 8 here; the first is the dither line's claim.)
+        Report("fog: mean level off the fogged colour at 6, 9 and 12 m", worst, FogLevels);
+        Check(worst <= FogLevels, "fog", $"a wall at 6, 9 or 12 m reads {worst:F1} levels from white fogged by the literal smoothstep of 4 to 14 m toward the background");
         wall.QueueFree();
 
         // Light: one grey triangle facing the camera, vertex normals at 0 and -+120 degrees from the key (dots 1, -0.5, -0.5). Light per vertex is the
@@ -376,7 +390,7 @@ public partial class RenderCheck : Node
         for (int y = Height / 2 - 150; y < Height / 2 + 150; y++)
             for (int x = Width / 2 - 200; x < Width / 2 + 200; x++) { if (sheetFrame.Luma(x, y) is > 60 and < 190) grey++; all++; }
         double share = 100.0 * grey / all;
-        // Bound 6.5 percent = sqrt(0.5 x 84.44): shipped 0 (counted as half a percent), linear filter 84.44, nearest with mipmaps 100, separation 169.
+        // Bound 6.5 percent = sqrt(0.5 x 84.44): shipped 0 (counted as half a percent, lodur:ruling:deterministic-bound-zero-reading), linear filter 84.44, nearest with mipmaps 100, separation 169.
         Report("mips: percent of a minified checker that is neither black nor white", share, MipPercent);
         Check(share <= MipPercent, "mips", $"{share:F1}% of a minified checker is grey: the sampler reads mipmaps or filters");
 

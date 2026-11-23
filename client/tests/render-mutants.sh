@@ -7,7 +7,9 @@
 # A mutant's edits are old@@old|new@@new pairs in one file; the line it must fail is the RenderCheck check named in its last field.
 #
 # Readings (shipped / mutant) of the claims, from RenderCheck's bounds, which sit at the geometric midpoint of shipped worst and least mutant
-# (lodur:ruling:deterministic-bound-margin); a shipped 0 counts as half a unit, a mutant 0 as one.
+# (lodur:ruling:deterministic-bound-margin); a zero reading is counted as lodur:ruling:deterministic-bound-zero-reading says (shipped 0 as half a unit, mutant 0 as one, then the geometric mean).
+# The dither line reads three flat fields that hold every threshold of the 4x4 matrix, so the 2x2 matrix and the transposed one fail it; the fog line probes
+# 6, 9 and 12 m against the literals 4 and 14 m, so a linear ramp and changed FogNear or FogFar fail it. Round-to-nearest in the post pass fails the dither line.
 #
 # UNCLAIMED, recorded as the ruling requires (no RenderCheck line separates them; the mutants are in UNCLAIMED below):
 #   fog-per-pixel: fog from the interpolated view depth, in the fragment, instead of per vertex. The fog probe is a quad at one depth, where the
@@ -22,6 +24,9 @@ MUTANTS=(
 'post-off|ps1_post.gdshader|COLOR = vec4(floor(c / 8.0) * 8.0 / 255.0, 1.0);|COLOR = vec4(c / 255.0, 1.0);|15-bit'
 'twelve-bit|ps1_post.gdshader|COLOR = vec4(floor(c / 8.0) * 8.0 / 255.0, 1.0);|COLOR = vec4(floor(c / 16.0) * 16.0 / 255.0, 1.0);|15-bit'
 'dither-off|ps1_post.gdshader|c = clamp(c + D[q.x][q.y], 0.0, 255.0);|c = clamp(c, 0.0, 255.0);|dither'
+'dither-bayer2|ps1_post.gdshader|const mat4 D = mat4(vec4(-4., 0., -3., 1.), vec4(2., -2., 3., -1.), vec4(-3., 1., -4., 0.), vec4(3., -1., 2., -2.));|const mat4 D = mat4(vec4(-4., 0., -4., 0.), vec4(2., -2., 2., -2.), vec4(-4., 0., -4., 0.), vec4(2., -2., 2., -2.));|dither'
+'dither-transposed|ps1_post.gdshader|c = clamp(c + D[q.x][q.y], 0.0, 255.0);|c = clamp(c + D[q.y][q.x], 0.0, 255.0);|dither'
+'post-rounds|ps1_post.gdshader|COLOR = vec4(floor(c / 8.0) * 8.0 / 255.0, 1.0);|COLOR = vec4(floor(c / 8.0 + 0.5) * 8.0 / 255.0, 1.0);|dither'
 'block-off|ps1_post.gdshader|textureLod(screen_tex, (size * 0.5 + (b + 0.5) * s) / size, 0.0)|textureLod(screen_tex, SCREEN_UV, 0.0)|blocks'
 'lines-360|Look.cs|public const int Lines = 240;|public const int Lines = 360;|lines'
 'lines-120|Look.cs|public const int Lines = 240;|public const int Lines = 120;|lines'
@@ -29,6 +34,10 @@ MUTANTS=(
 'perspective-uv|ps1.gdshader|auv = vec3(uv * clip.w, clip.w);|auv = vec3(uv, 1.0);|affine'
 'per-pixel-light|ps1.gdshader|varying vec3 light;@@light = emissive ? vec3(1.0) : ps1_ambient + ps1_key_color * max(dot(n, ps1_key_dir), 0.0) + glow;@@vec3 c = texture(albedo_tex, auv.xy / auv.z).rgb * tint * light;|varying vec3 light; varying vec3 nrm;@@nrm = n; light = vec3(1.0);@@vec3 c = texture(albedo_tex, auv.xy / auv.z).rgb * tint * (emissive ? vec3(1.0) : ps1_ambient + ps1_key_color * max(dot(normalize(nrm), ps1_key_dir), 0.0));|light'
 'fog-off|ps1.gdshader|fog = smoothstep(ps1_fog_near, ps1_fog_far, -mv.z);|fog = 0.0;|fog'
+'fog-linear|ps1.gdshader|fog = smoothstep(ps1_fog_near, ps1_fog_far, -mv.z);|fog = clamp((-mv.z - ps1_fog_near) / (ps1_fog_far - ps1_fog_near), 0.0, 1.0);|fog'
+'fog-far-18|Look.cs|FogNear = 4f, FogFar = 14f;|FogNear = 4f, FogFar = 18f;|fog'
+'fog-near-6|Look.cs|FogNear = 4f, FogFar = 14f;|FogNear = 6f, FogFar = 14f;|fog'
+'fog-centred-wide|Look.cs|FogNear = 4f, FogFar = 14f;|FogNear = 2f, FogFar = 16f;|fog'
 'mipmapped|ps1.gdshader|filter_nearest, repeat_enable|filter_nearest_mipmap, repeat_enable|mips'
 'linear-filter|ps1.gdshader|filter_nearest, repeat_enable|filter_linear, repeat_enable|mips'
 'glow-unset|Chamber.cs|Look.GlowLightEnergy * glow|0f|glow'
