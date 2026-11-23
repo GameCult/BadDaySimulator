@@ -50,6 +50,7 @@ public partial class Main : Node3D
 
     public override void _Ready()
     {
+        Look.Apply();
         _bodies = new BodyRenderer { Name = "Bodies" };
         AddChild(_bodies);
         _chamber = new Chamber { Name = "Chamber" };
@@ -59,11 +60,41 @@ public partial class Main : Node3D
         AddChild(Look.World());
         _hud = new Hud(this) { Name = "Hud" };
         AddChild(_hud);
+        AddChild(Post());
+        SetLines();
+        GetWindow().SizeChanged += SetLines;
         Reset(Seed);
+    }
+
+    /// <summary>The line grid: the window's size over its block size, the one value ps1_res ever holds.</summary>
+    public Vector2 Ps1Res { get; private set; }
+
+    private void SetLines()
+    {
+        var size = GetWindow().Size;
+        float block = Look.BlockSize(size.Y);
+        Ps1Res = new Vector2(size.X / block, size.Y / block);
+        Look.Set("ps1_res", Ps1Res);
+    }
+
+    /// <summary>The framebuffer pass: a full-screen rect under the HUD (its layer is above this one) that quantises what the 3D drew.</summary>
+    private static CanvasLayer Post()
+    {
+        var layer = new CanvasLayer { Name = "Post", Layer = -1 };
+        layer.AddChild(new ColorRect
+        {
+            Name = "Quantise",
+            Material = new ShaderMaterial { Shader = GD.Load<Shader>("res://ps1_post.gdshader") },
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            AnchorRight = 1,
+            AnchorBottom = 1,
+        });
+        return layer;
     }
 
     public override void _ExitTree()
     {
+        if (IsInstanceValid(GetWindow())) GetWindow().SizeChanged -= SetLines;
         Engine.PhysicsTicksPerSecond = StepsPerSecond(1.0);
         _session?.Dispose();
         _session = null;

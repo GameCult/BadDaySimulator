@@ -16,8 +16,8 @@ public partial class BodyRenderer : Node3D
 
     private readonly Dictionary<ulong, Carrier> _carriers = new();
     private readonly HashSet<ulong> _seen = new();
-    private readonly StandardMaterial3D _figure = Look.Matte(Look.Figure);
-    private readonly StandardMaterial3D _scenery = Look.Matte(Look.Scenery);
+    private readonly ShaderMaterial _figure = Look.Ps1(Look.SkinTexture, Colors.White);
+    private readonly ShaderMaterial _scenery = Look.Ps1(Look.TileTexture, Colors.White, tile: 1f);
 
     /// <summary>Bodies drawn, static and dynamic.</summary>
     public int BodyCount => _carriers.Count;
@@ -25,7 +25,7 @@ public partial class BodyRenderer : Node3D
     /// <summary>How many MeshInstance3D this renderer has made: a Reset with the same bodies makes none.</summary>
     public int MeshBuilds { get; private set; }
 
-    public BaseMaterial3D SceneryMaterial => _scenery;
+    public ShaderMaterial SceneryMaterial => _scenery;
 
     /// <summary>The world centre of the union of the dynamic bodies' drawn bounds (each primitive's box in its carrier's pose, interpolated), or null while there are none: where the camera orbits.</summary>
     public Vector3? PuppetCentre
@@ -98,11 +98,18 @@ public partial class BodyRenderer : Node3D
         return true;
     }
 
+    /// <summary>The extra cuts along a box edge of half length <paramref name="half"/>: a cell is at most a metre, so affine texturing on the big floor stays small per cell, as the console's own floors were tiled.</summary>
+    private static int Cells(float half) => Math.Max(0, (int)(2f * half) - 1);
+
     /// <summary>The body's own primitive, or null for a body with no shape. A capsule's lane is its radius and half-length along Y; a box's its half extents.</summary>
     private static Mesh? PrimitiveOf(Box3DSoaKind kind, float size0, float size1, float size2) => kind switch
     {
         Box3DSoaKind.Capsule => new CapsuleMesh { Radius = size0, Height = 2f * (size1 + size0), RadialSegments = 6, Rings = 1 },
-        Box3DSoaKind.Box or Box3DSoaKind.StaticBox => new BoxMesh { Size = new Vector3(2f * size0, 2f * size1, 2f * size2) },
+        Box3DSoaKind.Box or Box3DSoaKind.StaticBox => new BoxMesh
+        {
+            Size = new Vector3(2f * size0, 2f * size1, 2f * size2),
+            SubdivideWidth = Cells(size0), SubdivideHeight = Cells(size1), SubdivideDepth = Cells(size2),
+        },
         Box3DSoaKind.Sphere => new SphereMesh { Radius = size0, Height = 2f * size0, RadialSegments = 6, Rings = 4 },
         _ => null,
     };

@@ -174,10 +174,19 @@ public partial class Smoke : Node
         Check(_main.IsPhysicsInterpolatedAndEnabled() && (bool)ProjectSettings.GetSetting("physics/common/physics_interpolation"), "physics interpolation is off");
         Check(_main.Seed == Seed, "Main did not start from the smoke's seed");
 
-        // The look: dark grey.
-        Check(_main.Bodies.SceneryMaterial.AlbedoColor.Luminance < 0.3f, "the floor is not dark");
-        var glow = _main.Chamber.Material.AlbedoColor;
-        Check(glow.V > 0.7f && glow.S < 0.3f, $"the chamber is {glow}, not light");
+        // The look: PS1. Every surface is the PS1 shader and the shader lights it (no Light3D), the quantising pass sits below the HUD, the
+        // 3D has no MSAA, and ps1_res is the window over its block size.
+        var ps1 = GD.Load<Shader>("res://ps1.gdshader");
+        var meshes = _main.FindChildren("*", "MeshInstance3D", true, false).Cast<MeshInstance3D>().ToArray();
+        Check(meshes.Length > 0 && meshes.All(m => m.MaterialOverride is ShaderMaterial sm && (sm.Shader == ps1 || sm.Shader.Code.EndsWith(ps1.Code))), "a mesh is not drawn with res://ps1.gdshader");
+        Check(Count(_main, n => n is Light3D) == 0, "the scene has a Light3D; the shader lights it");
+        Check(_main.GetNode<CanvasLayer>("Post").Layer < Hud.Layer, "the post pass does not sit below the HUD");
+        Check((int)ProjectSettings.GetSetting("rendering/anti_aliasing/quality/msaa_3d", 0) == 0, "msaa_3d is on");
+        int height = GetWindow().Size.Y, block = Math.Max(1, (int)Math.Round(height / (double)Look.Lines, MidpointRounding.AwayFromZero));
+        Check(Math.Abs(_main.Ps1Res.Y - height / (float)block) < 1e-4f, $"ps1_res.y is {_main.Ps1Res.Y}, not {height} / {block}");
+        Check(Look.Scenery.Luminance < 0.3f, "the floor is not dark");
+        var glow = (Vector3)_main.Chamber.Material.GetShaderParameter("tint");
+        Check(Math.Max(glow.X, Math.Max(glow.Y, glow.Z)) > 0.7f, $"the chamber is {glow}, not light");
         var environment = _main.GetChildren().OfType<WorldEnvironment>().Single().Environment;
         Check(environment.BackgroundColor.Luminance < 0.2f, "the background is not dark grey");
         Check(environment.Sky is null && environment.TonemapMode == Godot.Environment.ToneMapper.Linear && !environment.GlowEnabled, "the environment is not a linear colour environment with no sky and no glow");
