@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Breaks the shipped look once per claim of RenderCheck and wants that claim's line to fail. Each mutant is one set of edits, each of which must
-# apply exactly once; the file is restored whatever happens (the end, a failed edit or build, an interrupt: a trap restores it, and a leftover .orig
+# apply exactly once; the file is restored whatever happens (the end, a failed edit or build, an interrupt: a trap restores it once the build or check in flight returns, and a leftover .orig
 # from a run that died harder is refused at the start). Needs a window (RenderCheck draws). Run from anywhere:
 #   GODOT=<godot console exe> bash client/tests/render-mutants.sh              # every claimed mutant must fail its own line
 #   GODOT=<godot console exe> UNCLAIMED=1 bash client/tests/render-mutants.sh  # the unclaimed ones below must still pass (their readings are the record)
