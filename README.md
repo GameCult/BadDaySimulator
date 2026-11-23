@@ -71,12 +71,13 @@ coordinates, unfiltered texels, light, glow and fog per vertex, in raw sRGB arit
 HUD quantises the frame to one colour per block of a 240-line grid (`Look.Lines`, blocks of round(H / 240) pixels anchored at the screen centre)
 in 15-bit colour with the 4x4 ordered dither. No `Light3D` exists: the shader lights the scene from the globals `ps1_*` (`project.godot`
 `[shader_globals]`), which `Look` (constants), `Main` (`ps1_res`) and `Chamber` (the glow light, 0.9 m range) write.
-Needs the .NET 8+ SDK, cmake and a C compiler (MinGW gcc on Windows), the sibling Lodur, Ymir (with joint origin lanes, ABI 8) and CultLib
-checkouts Ymir builds against (`..\Lodur`, `..\Ymir`, `..\CultLib`, or `LODUR_ROOT`, `YMIR_ROOT` and `CULTLIB_ROOT`; CultLib must be a clean checkout of
-42dce361, the revision Ymir admits, or the build refuses), and Godot 4.7.2 mono.
+Needs the .NET 8+ SDK, cmake and a C compiler (MinGW gcc on Windows), the sibling Lodur and Ymir (with joint origin lanes, ABI 8) checkouts
+(`..\Lodur`, `..\Ymir`, or `LODUR_ROOT` and `YMIR_ROOT`), and Godot 4.7.2 mono. Nothing in this repository pins or checks the siblings' revisions
+(BDS's graph references no CultLib project, so Ymir's own revision check never runs here); the client was last verified against Lodur d7a626b and
+Ymir 5104b17 (its `extern/box3d` submodule initialised).
 
 ```
-dotnet build client/BadDay.Client.csproj     # Lodur, Ymir (cmake, CultLib) and BDS, plus ymir_box3d.dll, into client/.godot/mono/temp/bin/Debug
+dotnet build client/BadDay.Client.csproj     # Lodur, Ymir (cmake) and BDS, plus ymir_box3d.dll, into client/.godot/mono/temp/bin/Debug
 <godot> --path client                        # play: Blender's navigation: middle-drag orbits the puppet, Shift+middle-drag pans, Ctrl+middle-drag and the wheel zoom; Alt+left-drag stands for the middle button (OrbitCamera.Emulate3ButtonMouse)
 <godot> --headless --path client res://tests/Smoke.tscn   # the smoke; exit code 0 passes
 <godot> --path client res://tests/RenderCheck.tscn  # the render check, in a window (not headless); exit code 0 passes; -- --frames=<dir> keeps its frames
@@ -88,13 +89,18 @@ slider, Box off and Slow motion. Do not run `godot --import` on a fresh checkout
 Exports need export templates (not installed here yet), so the client runs from the editor and headless for now.
 
 The smoke has no renderer. `RenderCheck.tscn` is the check that does: it renders real frames (gl_compatibility, the client's renderer at 1280x720)
-of seed 1 stopped at a pinned tick and reads them back, so every reading is the same run to run. It checks that every channel is a multiple of 8 (15-bit
-colour), that every block of the grid is one colour, that a probe box's drawn blocks are those of its hull with the corners snapped to a coarse grid (the
-unsnapped hull differs in 8 blocks), that the texel runs of a checker triangle seen at 60 degrees keep equal widths along a scanline (affine), that the
-chamber at full glow lights the figure by at least 1.2 levels over dark, and that each dynamic body's lane origin projects onto a figure pixel. Bounds sit
-at the midpoint of the shipped worst and the least claimed mutant (`lodur:ruling:deterministic-bound-margin`), each stated in its comment;
-`client/tests/render-mutants.sh` applies one edit per claim (post off, per-pixel blocks, snap off, perspective-correct UVs, glow unwritten, carriers
-unposed) and wants that claim's line to fail. It needs a display.
+of seed 1 stopped at a pinned tick and reads them back, so every reading is the same run to run. It checks that every channel is a multiple of 8 and the odd multiples of 8 appear (15-bit, not 12-bit colour), that the
+grid is 240 lines (a literal: the blocks are 3 px at 720, whatever `Look.Lines` says), that every block of the grid is one colour, that a flat field's
+blocks follow ps1.js's 4x4 ordered dither, that a wall at 9 m is fogged to the depth's smoothstep, that a triangle with different vertex normals is lit by
+the blend of its corners' light (per vertex, not per pixel), that a minified checker that carries mipmaps still draws only black and white (nearest, no
+mips), that a probe box's drawn blocks are those of its hull with the corners snapped to a coarse grid (the unsnapped hull differs in 8 blocks), that the
+texel runs of a checker triangle seen at 60 degrees keep equal widths along a scanline (affine), that the chamber at full glow lights the figure by at least
+1.2 levels over dark, and that each dynamic body's lane origin projects within a block of a figure pixel. The check holds at 1280x720 only: at any other
+window size it fails "window" before reading a frame (the grid is round(H / 240) px, 216 lines at 1080, and `Camera3D.UnprojectPosition` answers in the
+stretch base's coordinates). Bounds sit at the midpoint of the shipped worst and the least claimed mutant (`lodur:ruling:deterministic-bound-margin`),
+each stated in its comment; `client/tests/render-mutants.sh` applies one set of edits per claim (post off, 12-bit post, dither off, per-pixel blocks, 360 and
+120 lines, snap off, perspective-correct UVs, per-pixel light, fog off, mipmapped and linear textures, glow unwritten, carriers unposed) and wants that
+claim's line to fail; with `UNCLAIMED=1` it runs the edits no line separates (per-pixel fog, so far), whose readings it records. It needs a display.
 
 
 ### Who owns what (the map)
@@ -106,7 +112,7 @@ The client's drawing pipeline, one owner per decision (the paragraphs above say 
 | Ymir (the session's world, ABI 8) | the session's commands and Lodur's torque lanes | pose, shape, stable-id and joint lanes, including each joint's origin in the world (the joint origin lanes) | none the client keeps | the client writes no lane; Ymir never reads the client |
 | `BodyRenderer` | the lanes (kind, size, stable id, pose), each physics frame | one carrier per stable id with one primitive `MeshInstance3D`; `PoseOf`, `InterpolatedPoseOf`, `PuppetCentre` (the union of the dynamic bodies' carrier-placed primitive boxes), `MeshBuilds` | `MeshBuilds`, the smoke's counter: a Reset with the same ids makes no mesh | geometry derived from anything but the lane's size; writing a lane |
 | `ps1.gdshader` | `Look`'s numbers and the `ps1_*` globals, the mesh's vertices, normals and UVs | every surface's colour: snapped vertices, affine texels, per-vertex light, glow and fog | none | skinning; a second light model; a `Light3D` |
-| `ps1_post.gdshader` | the frame and `ps1_res` | the framebuffer at the line grid in 15-bit colour with the dither | none | a second resolution owner (viewport scaling, stretch mode, a SubViewport) |
+| `ps1_post.gdshader` | the frame and `ps1_res` | the framebuffer at the line grid in 15-bit colour with the dither | none | a second resolution owner (viewport scaling, a SubViewport; the project's `canvas_items` stretch, base 1280x720, only scales canvas items and `Camera3D.UnprojectPosition`'s answers, and the pass reads the real pixels, so it owns no resolution) |
 | `Look`, `Main`, `Chamber` | `Look`: constants and textures; `Main`: the window size; `Chamber`: the box's intensity | `Look`: the constant globals and `Look.Ps1` materials; `Main`: `ps1_res` and the post layer; `Chamber`: `ps1_glow_*` | `ps1_res` is the window over `Look.BlockSize`, never set elsewhere | any other writer of a `ps1_*` global |
 | `tests/RenderCheck.cs` (the windowed check), `render-mutants.sh`, `Smoke.cs` | the same lanes through the real renderer | an exit code, optional PNGs | none | writing the scene's state beyond pinning a tick and a probe |
 

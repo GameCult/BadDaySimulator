@@ -20,6 +20,9 @@ public partial class RenderCheck : Node
 {
     private const int Width = 1280, Height = 720;
     private const double WatchdogSeconds = 120;
+    // Bounds (shipped worst, least claimed mutant, separation) are in each check's comment.
+    private const int OddLevelFloor = 1245, FigureMisses = 3, DitherBlocks = 139;
+    private const double FogLevels = 22, LightLevels = 11, MipPercent = 6.5;
 
     private readonly List<string> _failures = new();
     private Main _main = null!;
@@ -80,6 +83,7 @@ public partial class RenderCheck : Node
 
         CheckFifteenBit(play);
         CheckBlocks(play, Block);
+        CheckLines(play);
 
         _main.Chamber.Volume.Visible = false; // the translucent box tints the hand bodies inside it
         CheckFigureWhereLanesAre(await Capture("play-clear"));
@@ -92,18 +96,50 @@ public partial class RenderCheck : Node
         _camera.Transform = home;
 
         await CheckSnapAndAffine();
+        await CheckShading();
         await CheckGlow();
     }
 
-    /// <summary>Every channel of every pixel is a multiple of 8: 15-bit colour, within one level of the 8-bit rounding. Bound 0; shipped 0, post off 1728141 channels.</summary>
+    /// <summary>
+    /// 15-bit colour: every channel of every pixel is a multiple of 8 (within one level of the 8-bit rounding), and the odd multiples of 8 (8, 24, 40 ...)
+    /// appear, which 12-bit colour (multiples of 16) never draws. Off-grid channels: bound 0; shipped 0, post off 1728141. Channels within one level of an
+    /// odd multiple: floor 1245 = sqrt(1 x 1549038); the least shipped reading is 1549038 (the lines mutants read more), the 12-bit post 0 (counted as 1),
+    /// so the shipped frame is over the floor by a factor of 1244 and the mutant under it by 1245.
+    /// </summary>
     private void CheckFifteenBit(Frame f)
     {
-        int bad = 0;
+        int bad = 0, odd = 0;
         for (int i = 0; i < f.Data.Length; i += 4)
             for (int c = 0; c < 3; c++)
+            {
                 if (f.Data[i + c] % 8 is not (0 or 1 or 7)) bad++;
+                if (f.Data[i + c] % 16 is 7 or 8 or 9) odd++;
+            }
         Report("15-bit", bad, 0);
         Check(bad == 0, "15-bit", $"{bad} channels are not a multiple of 8");
+        Report("15-bit: channels at an odd multiple of 8", odd, OddLevelFloor);
+        Check(odd >= OddLevelFloor, "15-bit", $"only {odd} channels are at an odd multiple of 8 (8, 24, 40 ...), under {OddLevelFloor}: the framebuffer is not 15-bit");
+    }
+
+    /// <summary>
+    /// The line grid is 240 lines, a literal and not Look.Lines: at 1280x720 the blocks are 3 px, so the greatest common divisor of the offsets from the
+    /// screen centre at which any colour changes is 3 along each axis (a coarser grid has a larger divisor, a finer one a smaller). Exact. The harness
+    /// asserts this at 720 only: any other window size fails the "window" check before a frame is read (the grid is round(H / 240) px, 216 lines at 1080,
+    /// and Camera3D.UnprojectPosition answers in the stretch base's coordinates, so the lanes and snap probes read the wrong pixels). Shipped 3 and 3,
+    /// Look.Lines 360 reads 2, Look.Lines 120 reads 6.
+    /// </summary>
+    private void CheckLines(Frame f)
+    {
+        int gx = 0, gy = 0;
+        for (int y = 0; y < f.Height; y++)
+            for (int x = 1; x < f.Width; x++)
+                if (f.Rgb(x, y) != f.Rgb(x - 1, y)) gx = Gcd(gx, Math.Abs(x - f.Width / 2));
+        for (int x = 0; x < f.Width; x++)
+            for (int y = 1; y < f.Height; y++)
+                if (f.Rgb(x, y) != f.Rgb(x, y - 1)) gy = Gcd(gy, Math.Abs(y - f.Height / 2));
+        Report("lines: block width in px", gx, 3);
+        Report("lines: block height in px", gy, 3);
+        Check(gx == 3 && gy == 3, "lines", $"the blocks are {gx} x {gy} px, not 3 x 3: 240 lines at {Height} px");
     }
 
     /// <summary>Every block of the line grid, anchored at the screen centre, is one colour. Bound 0 pixels; shipped 0, sampling per pixel 218873.</summary>
@@ -123,7 +159,13 @@ public partial class RenderCheck : Node
         Check(bad == 0, "blocks", $"{bad} pixels differ from the first pixel of their block");
     }
 
-    /// <summary>Each dynamic body's lane origin, projected through the camera, lands on a figure pixel (skin is red over blue; floor, background and chamber are blue over red). Bound 0 misses; shipped 0, carriers left unposed 19.</summary>
+    /// <summary>
+    /// Each dynamic body's lane origin, projected through the camera, lands within one block (3 px) of a figure pixel (skin is red over blue; floor,
+    /// background and chamber are blue over red). A single pixel failed under unrelated edits (dither, snap, glow, post off each moved one origin onto a
+    /// dithered or edge pixel), so the neighbourhood is the block. Bound 3 of 19 = sqrt(0.5 x 19): shipped 0 (counted as half a body), carriers left
+    /// unposed 19, separation 38; post off, 12-bit, dither off, snap off, glow unset, fog off, per-pixel light, mipmapped and linear textures, 360 and 120
+    /// lines, perspective UVs and per-block sampling each read 0, so no collateral edit turns it.
+    /// </summary>
     private void CheckFigureWhereLanesAre(Frame play)
     {
         var view = Session.View;
@@ -136,10 +178,17 @@ public partial class RenderCheck : Node
             var p = camera.UnprojectPosition(new Vector3(view.PositionX[i], view.PositionY[i], view.PositionZ[i]));
             int x = (int)p.X, y = (int)p.Y;
             checkedBodies++;
-            if (x < 0 || y < 0 || x >= Width || y >= Height || (play.Rgb(x, y) >> 16 & 0xff) < (play.Rgb(x, y) & 0xff) + 16) missed++;
+            bool figure = false;
+            for (int dy = -Block; dy <= Block && !figure; dy++)
+                for (int dx = -Block; dx <= Block && !figure; dx++)
+                {
+                    int px = x + dx, py = y + dy;
+                    if (px >= 0 && py >= 0 && px < Width && py < Height && (play.Rgb(px, py) >> 16 & 0xff) >= (play.Rgb(px, py) & 0xff) + 16) figure = true;
+                }
+            if (!figure) missed++;
         }
-        Report("figure at lanes", missed, 0);
-        Check(checkedBodies > 5 && missed == 0, "figure at lanes", $"{missed} of {checkedBodies} dynamic bodies' origins are not on a figure pixel");
+        Report("figure at lanes", missed, FigureMisses);
+        Check(checkedBodies > 5 && missed <= FigureMisses, "figure at lanes", $"{missed} of {checkedBodies} dynamic bodies' origins are not within a block of a figure pixel");
     }
 
     /// <summary>
@@ -191,13 +240,7 @@ public partial class RenderCheck : Node
         _camera.GlobalTransform = new Transform3D(Basis.Identity, new Vector3(0, -0.6f, 3f));
         var checker = Image.CreateEmpty(2, 2, false, Image.Format.Rgb8);
         checker.SetPixel(0, 0, Colors.White); checker.SetPixel(1, 1, Colors.White); checker.SetPixel(1, 0, Colors.Black); checker.SetPixel(0, 1, Colors.Black);
-        var arrays = new Godot.Collections.Array();
-        arrays.Resize((int)Mesh.ArrayType.Max);
-        arrays[(int)Mesh.ArrayType.Vertex] = new[] { new Vector3(-1.6f, -0.6f, 0), new Vector3(-1.6f, 1.8f, 0), new Vector3(1.6f, -0.6f, 0) };
-        arrays[(int)Mesh.ArrayType.Normal] = new[] { Vector3.Back, Vector3.Back, Vector3.Back };
-        arrays[(int)Mesh.ArrayType.TexUV] = new[] { new Vector2(0, 0), new Vector2(0, 8), new Vector2(8, 0) };
-        var mesh = new ArrayMesh();
-        mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+        var mesh = TriangleMesh(new[] { new Vector3(-1.6f, -0.6f, 0), new Vector3(-1.6f, 1.8f, 0), new Vector3(1.6f, -0.6f, 0) }, new[] { Vector3.Back, Vector3.Back, Vector3.Back }, new[] { new Vector2(0, 0), new Vector2(0, 8), new Vector2(8, 0) });
         var triangle = new MeshInstance3D { Mesh = mesh, MaterialOverride = Look.Ps1(ImageTexture.CreateFromImage(checker), Colors.White, emissive: true) };
         triangle.Transform = new Transform3D(new Basis(Vector3.Up, Mathf.DegToRad(60)), Vector3.Zero);
         probes.AddChild(triangle);
@@ -215,6 +258,152 @@ public partial class RenderCheck : Node
         _main.Bodies.Visible = true;
         _main.Chamber.Visible = true;
     }
+
+    /// <summary>
+    /// The shading probes, each a surface drawn with the client's own material under the client's camera (the figure and chamber hidden, the chamber's
+    /// glow off): ordered dither on a flat field, fog at 9 m, per-vertex light on a triangle whose vertex normals differ, and a minified texture that
+    /// carries mipmaps. Every reading is a deterministic count or mean; each bound's comment gives shipped worst, least mutant and separation.
+    /// </summary>
+    private async Task CheckShading()
+    {
+        _main.Bodies.Visible = false;
+        _main.Chamber.Visible = false;
+        var home = _camera.Transform;
+        var res = _main.Ps1Res;
+        var glow = RenderingServer.GlobalShaderParameterGet("ps1_glow_energy");
+        Look.Set("ps1_glow_energy", 0f);
+        var probes = new Node3D();
+        _main.AddChild(probes);
+        _camera.GlobalTransform = new Transform3D(Basis.Identity, new Vector3(0, 0, 3f));
+
+        // Dither: a flat emissive field of raw (97, 106, 61), whose levels 88/96, 96/104 and 56/64 the 4x4 matrix chooses between block by block.
+        // Each block's channels against ps1.js's matrix (column by block column, row by block row), within the 8-bit rounding.
+        var field = new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(30, 30) }, MaterialOverride = Look.Ps1(null, new Color(97 / 255f, 106 / 255f, 61 / 255f), emissive: true) };
+        probes.AddChild(field);
+        await Frames(3);
+        var flat = await Capture("dither");
+        int s = Block, offDither = 0;
+        int[] raw = { 97, 106, 61 };
+        for (int by = BlockOf(0, Height, s); by <= BlockOf(Height - 1, Height, s); by++)
+            for (int bx = BlockOf(0, Width, s); bx <= BlockOf(Width - 1, Width, s); bx++)
+            {
+                int x = Width / 2 + bx * s, y = Height / 2 + by * s;
+                if (x < 0 || y < 0 || x >= Width || y >= Height) continue;
+                int d = Bayer[((bx % 4) + 4) % 4][((by % 4) + 4) % 4];
+                bool ok = true;
+                for (int c = 0; c < 3; c++)
+                {
+                    int level = (raw[c] + d) / 8 * 8, below = (raw[c] + d - 1) / 8 * 8, seen = flat.Data[4 * (y * Width + x) + c];
+                    ok &= Math.Abs(seen - level) <= 1 || Math.Abs(seen - below) <= 1;
+                }
+                if (!ok) offDither++;
+            }
+        // Bound 139 blocks of 102480 = sqrt(0.5 x 38400): shipped 0 (counted as half a block), dither off 38400, separation 76800. (Post off and the 12-bit post
+        // read 102480: they change every level the matrix picks between.)
+        Report("dither: blocks off ps1.js's matrix", offDither, DitherBlocks);
+        Check(offDither <= DitherBlocks, "dither", $"{offDither} blocks of a flat field differ from the 4x4 ordered dither");
+        field.QueueFree();
+
+        // Fog: a white field at 9 m (half way between FogNear and FogFar, smoothstep 0.5); the mean of a 300 px square against the fogged colour.
+        var wall = new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(30, 30) }, MaterialOverride = Look.Ps1(null, Colors.White, emissive: true), Position = new Vector3(0, 0, 3f - 9f) };
+        probes.AddChild(wall);
+        await Frames(3);
+        var fogFrame = await Capture("fog");
+        float t = Math.Clamp((9f - Look.FogNear) / (Look.FogFar - Look.FogNear), 0f, 1f), fogged = t * t * (3 - 2 * t);
+        double worst = 0;
+        float[] bg = { Look.Background.R, Look.Background.G, Look.Background.B };
+        for (int c = 0; c < 3; c++)
+        {
+            double sum = 0; int n = 0;
+            for (int y = Height / 2 - 150; y < Height / 2 + 150; y++)
+                for (int x = Width / 2 - 150; x < Width / 2 + 150; x++) { sum += fogFrame.Data[4 * (y * Width + x) + c]; n++; }
+            worst = Math.Max(worst, Math.Abs(sum / n - 255 * (1 - fogged * (1 - bg[c]))));
+        }
+        // Bound 22 levels = sqrt(4.53 x 107.75): shipped worst 4.53 (the floor to 8 and the dither's mean), fog off 107.75, separation 23.8. (The 12-bit post reads 12.25.)
+        Report("fog: mean level off the fogged colour at 9 m", worst, FogLevels);
+        Check(worst <= FogLevels, "fog", $"a wall at 9 m reads {worst:F1} levels from white fogged by {fogged:F2} toward the background");
+        wall.QueueFree();
+
+        // Light: one grey triangle facing the camera, vertex normals at 0 and -+120 degrees from the key (dots 1, -0.5, -0.5). Light per vertex is the
+        // clamped dot at the corners interpolated across the face; per pixel it would be the dot of the interpolated normal, clamped after. One row
+        // near the base, the red channel against the barycentric blend of the corners' light.
+        Look.Set("ps1_res", new Vector2(Width, Height));
+        var key = Look.KeyDirection;
+        var u = key.Cross(Vector3.Right).Normalized();
+        var normals = new[] { key, key * -0.5f + u * 0.8660254f, key * -0.5f - u * 0.8660254f };
+        var corners = new[] { new Vector3(-1.2f, -0.8f, 0), new Vector3(0, 0.9f, 0), new Vector3(1.2f, -0.8f, 0) };
+        var lit = new MeshInstance3D { Mesh = TriangleMesh(corners, normals, new Vector2[3]), MaterialOverride = Look.Ps1(null, new Color(0.5f, 0.5f, 0.5f)) };
+        probes.AddChild(lit);
+        await Frames(3);
+        var litFrame = await Capture("light");
+        var screen = corners.Select(c => _camera.UnprojectPosition(c)).ToArray();
+        int row = (int)(screen[0].Y + (screen[1].Y - screen[0].Y) * 0.12f);
+        double err = 0; int samples = 0;
+        for (int x = 0; x < Width; x++)
+        {
+            var p = new Vector2(x + 0.5f, row + 0.5f);
+            float den = (screen[1].Y - screen[2].Y) * (screen[0].X - screen[2].X) + (screen[2].X - screen[1].X) * (screen[0].Y - screen[2].Y);
+            float w0 = ((screen[1].Y - screen[2].Y) * (p.X - screen[2].X) + (screen[2].X - screen[1].X) * (p.Y - screen[2].Y)) / den;
+            float w1 = ((screen[2].Y - screen[0].Y) * (p.X - screen[2].X) + (screen[0].X - screen[2].X) * (p.Y - screen[2].Y)) / den;
+            float w2 = 1 - w0 - w1;
+            if (w0 < 0.04f || w1 < 0.04f || w2 < 0.04f) continue;
+            float dots = w0 * Math.Max(normals[0].Dot(key), 0) + w1 * Math.Max(normals[1].Dot(key), 0) + w2 * Math.Max(normals[2].Dot(key), 0);
+            err += Math.Abs(litFrame.Data[4 * (row * Width + x)] - Math.Min(1f, 0.5f * (Look.AmbientColor.R + Look.KeyColor.R * dots)) * 255);
+            samples++;
+        }
+        double lightErr = samples > 100 ? err / samples : double.PositiveInfinity;
+        // Bound 11 levels = sqrt(4.45 x 27.13): shipped worst 4.45, light per pixel 27.13, separation 6.1. (The 12-bit post reads 8.51.)
+        Report($"light: mean red level off the Gouraud blend over {samples} px", lightErr, LightLevels);
+        Check(lightErr <= LightLevels, "light", $"red along a row of a triangle is {lightErr:F1} levels from the blend of its corners' light ({samples} px): the light is not per vertex");
+        lit.QueueFree();
+
+        // Mips: a 2 x 2 checker that carries a generated mip chain, minified (about 1.7 texels a pixel). Nearest without mips draws only black and white;
+        // a sampler that reads the mips or filters draws grey. The share of the central 400 x 300 px with luma between 60 and 190.
+        var image = Image.CreateEmpty(2, 2, true, Image.Format.Rgb8);
+        image.SetPixel(0, 0, Colors.White); image.SetPixel(1, 1, Colors.White); image.SetPixel(1, 0, Colors.Black); image.SetPixel(0, 1, Colors.Black);
+        image.GenerateMipmaps();
+        var sheet = new MeshInstance3D
+        {
+            Mesh = TriangleMesh(new[] { new Vector3(-3, 2, 0), new Vector3(3, 2, 0), new Vector3(3, -2, 0), new Vector3(-3, 2, 0), new Vector3(3, -2, 0), new Vector3(-3, -2, 0) },
+                Enumerable.Repeat(Vector3.Back, 6).ToArray(),
+                new[] { new Vector2(0, 0), new Vector2(2400, 0), new Vector2(2400, 1600), new Vector2(0, 0), new Vector2(2400, 1600), new Vector2(0, 1600) }),
+            MaterialOverride = Look.Ps1(ImageTexture.CreateFromImage(image), Colors.White, emissive: true),
+        };
+        probes.AddChild(sheet);
+        await Frames(3);
+        var sheetFrame = await Capture("mips");
+        int grey = 0, all = 0;
+        for (int y = Height / 2 - 150; y < Height / 2 + 150; y++)
+            for (int x = Width / 2 - 200; x < Width / 2 + 200; x++) { if (sheetFrame.Luma(x, y) is > 60 and < 190) grey++; all++; }
+        double share = 100.0 * grey / all;
+        // Bound 6.5 percent = sqrt(0.5 x 84.44): shipped 0 (counted as half a percent), linear filter 84.44, nearest with mipmaps 100, separation 169.
+        Report("mips: percent of a minified checker that is neither black nor white", share, MipPercent);
+        Check(share <= MipPercent, "mips", $"{share:F1}% of a minified checker is grey: the sampler reads mipmaps or filters");
+
+        probes.QueueFree();
+        _camera.Transform = home;
+        Look.Set("ps1_res", res);
+        Look.Set("ps1_glow_energy", glow);
+        _main.Bodies.Visible = true;
+        _main.Chamber.Visible = true;
+    }
+
+    private static ArrayMesh TriangleMesh(Vector3[] vertices, Vector3[] normals, Vector2[] uv)
+    {
+        var arrays = new Godot.Collections.Array();
+        arrays.Resize((int)Mesh.ArrayType.Max);
+        arrays[(int)Mesh.ArrayType.Vertex] = vertices;
+        arrays[(int)Mesh.ArrayType.Normal] = normals;
+        arrays[(int)Mesh.ArrayType.TexUV] = uv;
+        var mesh = new ArrayMesh();
+        mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+        return mesh;
+    }
+
+    private static int Gcd(int a, int b) => b == 0 ? a : Gcd(b, a % b);
+
+    /// <summary>ps1.js's 4x4 ordered dither matrix, indexed [block column mod 4][block row mod 4] as ps1_post.gdshader indexes its mat4.</summary>
+    private static readonly int[][] Bayer = { new[] { -4, 0, -3, 1 }, new[] { 2, -2, 3, -1 }, new[] { -3, 1, -4, 0 }, new[] { 3, -1, 2, -2 } };
 
     /// <summary>
     /// The chamber's light lights the figure: at tick 1 of seed 1 the chamber at full glow (box intensity 6) and dark (0), the bodies in the same
