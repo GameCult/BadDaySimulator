@@ -63,31 +63,33 @@ public static class OfficeBody
         var needs = SeatedPuppet.Needs;
         using var world = new Box3DSoaWorld(capacity: needs.Bodies, jointCapacity: needs.Joints);
         var ragdoll = SeatedPuppet.Build(world);
-        var x = new float[HumanoidRagdoll.RegionCount];
-        var y = new float[HumanoidRagdoll.RegionCount];
-        var z = new float[HumanoidRagdoll.RegionCount];
-        ragdoll.ReadRegions(x, y, z);
-        int head = (int)Region.Head;
+        var plan = ragdoll.Plan;
+        var x = new float[plan.SensePoints.Count];
+        var y = new float[plan.SensePoints.Count];
+        var z = new float[plan.SensePoints.Count];
+        ragdoll.ReadSensePoints(x, y, z);
+        int head = plan.SenseIndex("Head");
+        int handLIdx = plan.SenseIndex("Hand", Side.Left), handRIdx = plan.SenseIndex("Hand", Side.Right);
         // The desk's emitters sit where the head does and are sensed there.
         var session = new StressSession(p with { Setting = p.Setting.Shifted(x[head], y[head], z[head]) }, seed,
-            HumanoidRagdoll.RegionCount, Poses, head);
+            plan.SensePoints.Count, Poses, head);
 
-        var strengths = new float[HumanoidRagdoll.MuscleCount];
-        var targets = new Quat[HumanoidRagdoll.MuscleCount];
+        var strengths = new float[plan.Joints.Count];
+        var targets = new Quat[plan.Joints.Count];
         var handL = new List<BodyPoint>();
         var handR = new List<BodyPoint>();
         var pelvis = new List<BodyPoint>();
-        int pelvisLane = ragdoll.BodyLane(Limb.Pelvis);
+        int pelvisLane = ragdoll.BodyLane(plan.PartIndex("Pelvis"));
         while (!session.Finished)
         {
-            ragdoll.ReadRegions(x, y, z);
+            ragdoll.ReadSensePoints(x, y, z);
             session.Tick(x, y, z, strengths, targets);
             ragdoll.Drive(strengths, targets);
             world.Step((float)p.TickSeconds, SeatedPuppet.Substeps);
 
-            ragdoll.ReadRegions(x, y, z);
-            handL.Add(new BodyPoint(x[(int)Region.HandL], y[(int)Region.HandL], z[(int)Region.HandL]));
-            handR.Add(new BodyPoint(x[(int)Region.HandR], y[(int)Region.HandR], z[(int)Region.HandR]));
+            ragdoll.ReadSensePoints(x, y, z);
+            handL.Add(new BodyPoint(x[handLIdx], y[handLIdx], z[handLIdx]));
+            handR.Add(new BodyPoint(x[handRIdx], y[handRIdx], z[handRIdx]));
             var v = world.View;
             pelvis.Add(new BodyPoint(v.PositionX[pelvisLane], v.PositionY[pelvisLane], v.PositionZ[pelvisLane]));
         }
@@ -114,20 +116,22 @@ public static class OfficeBody
 
     private static OfficePoses BuildPoses()
     {
-        Quat[] Pose() { var q = new Quat[HumanoidRagdoll.MuscleCount]; Array.Fill(q, Quat.Identity); return q; }
+        var plan = SeatedPuppet.Plan;
+        Quat[] Pose() { var q = new Quat[plan.Joints.Count]; Array.Fill(q, Quat.Identity); return q; }
 
         var composed = Pose();
         var keys = new[] { Pose(), Pose(), Pose(), Pose() };
         // Key order: wind-up left, strike left, wind-up right, strike right. The arm not striking stays wound up.
-        foreach (var k in keys) { Arm(k, left: true, strike: false); Arm(k, left: false, strike: false); }
-        Arm(keys[1], left: true, strike: true);
-        Arm(keys[3], left: false, strike: true);
+        foreach (var k in keys) { Arm(plan, k, left: true, strike: false); Arm(plan, k, left: false, strike: false); }
+        Arm(plan, keys[1], left: true, strike: true);
+        Arm(plan, keys[3], left: false, strike: true);
         return new OfficePoses(composed, Pose(), keys);
     }
 
-    private static void Arm(Quat[] pose, bool left, bool strike)
+    private static void Arm(BodyPlan plan, Quat[] pose, bool left, bool strike)
     {
-        pose[(int)(left ? Muscle.ShoulderL : Muscle.ShoulderR)] = Quat.FromAxisAngle(1f, 0f, 0f, strike ? -1.5f : -0.5f);
-        pose[(int)(left ? Muscle.ElbowL : Muscle.ElbowR)] = Quat.FromAxisAngle(0f, 0f, 1f, strike ? 0f : -2.2f);
+        var side = left ? Side.Left : Side.Right;
+        pose[plan.JointIndex("Shoulder", side)] = Quat.FromAxisAngle(1f, 0f, 0f, strike ? -1.5f : -0.5f);
+        pose[plan.JointIndex("Elbow", side)] = Quat.FromAxisAngle(0f, 0f, 1f, strike ? 0f : -2.2f);
     }
 }

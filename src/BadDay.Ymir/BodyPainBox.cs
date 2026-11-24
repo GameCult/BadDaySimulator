@@ -24,8 +24,8 @@ public sealed record BodyPainBoxResult(
 
 /// <summary>
 /// The pain box on the body: <see cref="BodyPainBoxSession"/> is the one owner of the Ymir world and its loop, and
-/// <see cref="Run"/> steps one to the end. BDS reaches the puppet only through <see cref="HumanoidRagdoll.Build"/>,
-/// <see cref="HumanoidRagdoll.ReadRegions"/> and <see cref="HumanoidRagdoll.Drive"/>.
+/// <see cref="Run"/> steps one to the end. BDS reaches the puppet only through <see cref="Ragdoll.Build"/>,
+/// <see cref="Ragdoll.ReadSensePoints"/> and <see cref="Ragdoll.Drive"/>.
 /// </summary>
 public static class BodyPainBox
 {
@@ -80,14 +80,15 @@ public sealed class BodyPainBoxSession : IDisposable
 
     private readonly PainBoxParameters _p;
     private readonly Box3DSoaWorld _world;
-    private readonly HumanoidRagdoll _ragdoll;
+    private readonly Ragdoll _ragdoll;
     private readonly PainBoxSession _session;
     private readonly Queue<BodyEvent> _events = new();
-    private readonly float[] _x = new float[HumanoidRagdoll.RegionCount];
-    private readonly float[] _y = new float[HumanoidRagdoll.RegionCount];
-    private readonly float[] _z = new float[HumanoidRagdoll.RegionCount];
-    private readonly float[] _strengths = new float[HumanoidRagdoll.MuscleCount];
-    private readonly Quat[] _targets = new Quat[HumanoidRagdoll.MuscleCount];
+    private readonly float[] _x;
+    private readonly float[] _y;
+    private readonly float[] _z;
+    private readonly float[] _strengths;
+    private readonly Quat[] _targets;
+    private readonly int _handR;
     private readonly long _rampEnd;
     private readonly long _settleTicks;
     private readonly long _outHoldTicks;
@@ -112,20 +113,29 @@ public sealed class BodyPainBoxSession : IDisposable
         try
         {
             _ragdoll = SeatedPuppet.Build(_world);
+            var plan = _ragdoll.Plan;
+            int senses = plan.SensePoints.Count, joints = plan.Joints.Count;
+            _x = new float[senses];
+            _y = new float[senses];
+            _z = new float[senses];
+            _strengths = new float[joints];
+            _targets = new Quat[joints];
+            _handR = plan.SenseIndex("Hand", Side.Right);
+            int shoulderR = plan.JointIndex("Shoulder", Side.Right), elbowR = plan.JointIndex("Elbow", Side.Right);
 
             // Hold: the right arm raised and bent so the hand sits in the box. Withdraw: the arm pulled back and folded.
-            var hold = new Quat[HumanoidRagdoll.MuscleCount];
-            var withdraw = new Quat[HumanoidRagdoll.MuscleCount];
+            var hold = new Quat[joints];
+            var withdraw = new Quat[joints];
             Array.Fill(hold, Quat.Identity);
             Array.Fill(withdraw, Quat.Identity);
-            hold[(int)Muscle.ShoulderR] = Quat.FromAxisAngle(1f, 0f, 0f, -1.0f);
-            hold[(int)Muscle.ElbowR] = Quat.FromAxisAngle(0f, 0f, 1f, -0.6f);
-            withdraw[(int)Muscle.ShoulderR] = Quat.FromAxisAngle(1f, 0f, 0f, 0.3f);
-            withdraw[(int)Muscle.ElbowR] = Quat.FromAxisAngle(0f, 0f, 1f, -2.0f);
+            hold[shoulderR] = Quat.FromAxisAngle(1f, 0f, 0f, -1.0f);
+            hold[elbowR] = Quat.FromAxisAngle(0f, 0f, 1f, -0.6f);
+            withdraw[shoulderR] = Quat.FromAxisAngle(1f, 0f, 0f, 0.3f);
+            withdraw[elbowR] = Quat.FromAxisAngle(0f, 0f, 1f, -2.0f);
 
             var hp = BodyPainBox.HoldPoint;
             var volume = new BoxStimulus(hp.X, hp.Y, hp.Z, BoxHalf, BoxHalf, BoxHalf);
-            _session = new PainBoxSession(p, seed, volume, HumanoidRagdoll.RegionCount, hold, withdraw, (int)Region.HandR);
+            _session = new PainBoxSession(p, seed, volume, senses, hold, withdraw, _handR);
         }
         catch
         {
@@ -181,7 +191,7 @@ public sealed class BodyPainBoxSession : IDisposable
         var events = TickEvents.None;
         if (ticked)
         {
-            _ragdoll.ReadRegions(_x, _y, _z);
+            _ragdoll.ReadSensePoints(_x, _y, _z);
             events = _session.Tick(_x, _y, _z, _strengths, _targets);
             if (events != TickEvents.None) _events.Enqueue(new BodyEvent(tick, events));
         }
@@ -268,8 +278,8 @@ public sealed class BodyPainBoxSession : IDisposable
 
     private HandSample ReadHand()
     {
-        _ragdoll.ReadRegions(_x, _y, _z);
-        float hx = _x[(int)Region.HandR], hy = _y[(int)Region.HandR], hz = _z[(int)Region.HandR];
+        _ragdoll.ReadSensePoints(_x, _y, _z);
+        float hx = _x[_handR], hy = _y[_handR], hz = _z[_handR];
         return new HandSample(hx, hy, hz, _session.Box.Contains(hx, hy, hz));
     }
 }
