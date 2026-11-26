@@ -1295,9 +1295,21 @@ public static class Program
             var foreign = new Lodur.Physiology(plan, physiologyPlan, p.SlowScale);
             var shared = new StressSession(p, 1, plan.SensePoints.Count, OfficeBody.Poses, plan.SenseIndex("Head"), foreign, plan, physiologyPlan);
             for (int i = 0; i < physiologyPlan.AfflictionSlots; i++) Check(foreign.Afflict(physiologyPlan.AfflictionIndex("Cut"), arm, 0, 1.0), "the table filled early");
-            bool threw = false;
-            try { shared.Wound(arm, skin); } catch (InvalidOperationException) { threw = true; }
-            Check(threw, "a wound the table refused behind the session's count was reported as accepted or refused quietly");
+            int refused = foreign.Refused;
+            Check(!shared.Wound(arm, skin), "a wound the physiology had no room for was accepted");
+            Check(foreign.Refused == refused + 1, "the full table's refusal is the physiology's, counted once");
+
+            var healing = new Lodur.Physiology(plan, physiologyPlan, p.SlowScale);
+            var healer = new StressSession(p, 1, plan.SensePoints.Count, OfficeBody.Poses, plan.SenseIndex("Head"), healing, plan, physiologyPlan);
+            var graze = new WoundTool(new[] { "Skin" }, 1e-3);
+            for (int i = 0; i < physiologyPlan.AfflictionSlots; i++) Check(healer.Wound(arm, graze), $"graze {i} was refused with room left");
+            Check(!healer.Wound(arm, graze), "the table took more wounds than it has slots");
+            var sensed = new float[plan.SensePoints.Count];
+            var strengths = new float[plan.Joints.Count];
+            var targets = new Lodur.Quat[plan.Joints.Count];
+            for (int t = 0; t < 2000 && !healer.Wound(arm, graze); t++) healer.Tick(sensed, sensed, sensed, strengths, targets);
+            Check(!healer.Finished, "the run ended before the grazes healed");
+            Check(healer.Wound(arm, graze), "healed wounds did not free their room: the session still counts them");
         }),
 
         ("SeatedBody hands out no ragdoll: nothing public returns or takes a Ragdoll, so DriveAndStep is the one driver", () =>
