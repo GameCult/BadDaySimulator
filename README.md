@@ -73,8 +73,8 @@ in 15-bit colour with the 4x4 ordered dither. No `Light3D` exists: the shader li
 `[shader_globals]`), which `Look` (constants), `Main` (`ps1_res`) and `Chamber` (the glow light, 0.9 m range) write.
 Needs the .NET 8+ SDK, cmake and a C compiler (MinGW gcc on Windows), the sibling Lodur and Ymir (with joint origin lanes, ABI 8) checkouts
 (`..\Lodur`, `..\Ymir`, or `LODUR_ROOT` and `YMIR_ROOT`), and Godot 4.7.2 mono. Nothing in this repository pins or checks the siblings' revisions
-(BDS's graph references no CultLib project, so Ymir's own revision check never runs here); the client was last verified against Lodur d7a626b and
-Ymir 5104b17 (its `extern/box3d` submodule initialised).
+(BDS's graph references no CultLib project, so Ymir's own revision check never runs here); the client was last verified against Lodur 2359142 (the gravity subtree gate) and
+Ymir 1d27114 (its `extern/box3d` submodule initialised).
 
 ```
 dotnet build client/BadDay.Client.csproj     # Lodur, Ymir (cmake) and BDS, plus ymir_box3d.dll, into client/.godot/mono/temp/bin/Debug

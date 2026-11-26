@@ -32,7 +32,7 @@ public static class BodyPainBox
     /// <summary>The ragdoll's gains are tuned at 120 Hz.</summary>
     public const double TickSeconds = 1.0 / 120.0;
 
-    /// <summary>Centre of the box and the right hand's hold point: where the right palm settles at the hold pose (a copy of Lodur's ConnectedPainBox.Box).</summary>
+    /// <summary>Centre of the box and the right hand's hold point: where the hold pose below is fit to put the strength-1 right palm (mean palm 3-4 s of a quiet seed-1 run on <see cref="SeatedBody"/>, 0.15 cm off). The client's orbit camera and render checks centre on it.</summary>
     public static readonly (float X, float Y, float Z) HoldPoint = (-0.210f, 1.116f, 0.441f);
 
     /// <summary>The hand is out when it has stayed outside the box this long after the break.</summary>
@@ -69,8 +69,8 @@ public static class BodyPainBox
 /// </summary>
 public sealed class BodyPainBoxSession : IDisposable
 {
-    /// <summary>The box's half extent, equal to Lodur's ConnectedPainBox (0.125 m: the palm holds in it until the break).</summary>
-    private const float BoxHalf = 0.125f;
+    /// <summary>The box's half extent: the smallest 0.005 m step that keeps the hand in the box from the end of the ramp to the break on <see cref="BodyPainBox.Run"/> (on-body parameters, seed 1) at the hold pose below. Readings by half extent, ticks out from 2 s: 0.140 6, 0.145 3, 0.150 0, 0.155 0; excursions after the ramp: 0.150 1, 0.155 0.</summary>
+    private const float BoxHalf = 0.155f;
 
     /// <summary>After the deliberate withdrawal begins the run waits this long for the hand to come out.</summary>
     private const double SettleSeconds = 1.0;
@@ -106,13 +106,13 @@ public sealed class BodyPainBoxSession : IDisposable
             _handR = plan.SenseIndex("Hand", Side.Right);
             int shoulderR = plan.JointIndex("Shoulder", Side.Right), elbowR = plan.JointIndex("Elbow", Side.Right);
 
-            // Hold: the right arm raised and bent so the hand sits in the box. Withdraw: the arm pulled back and folded.
+            // Hold: the shoulder and elbow angles fit on this body so the settled strength-1 palm sits on HoldPoint: grid 0.04 then 0.01 over both (the refine reaches 0.08 either side, the fit is a ridge), seed 1, mean palm 3-4 s, box intensity 0, FlinchGain 0, StrainShake 0 give -0.68 and -0.25 at 0.15 cm (the 0.04 grid alone: -0.64, -0.32 at 0.43 cm). Under the gravity feedforward the controller no longer sags the arm onto the box, so the pose is the intent. Withdraw: the arm pulled back and folded.
             var hold = new Quat[joints];
             var withdraw = new Quat[joints];
             Array.Fill(hold, Quat.Identity);
             Array.Fill(withdraw, Quat.Identity);
-            hold[shoulderR] = Quat.FromAxisAngle(1f, 0f, 0f, -1.0f);
-            hold[elbowR] = Quat.FromAxisAngle(0f, 0f, 1f, -0.6f);
+            hold[shoulderR] = Quat.FromAxisAngle(1f, 0f, 0f, -0.68f);
+            hold[elbowR] = Quat.FromAxisAngle(0f, 0f, 1f, -0.25f);
             withdraw[shoulderR] = Quat.FromAxisAngle(1f, 0f, 0f, 0.3f);
             withdraw[elbowR] = Quat.FromAxisAngle(0f, 0f, 1f, -2.0f);
 
