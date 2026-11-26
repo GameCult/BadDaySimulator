@@ -50,8 +50,12 @@ public sealed class SeatedBody : IDisposable
 
     public BodyPlan Plan => _ragdoll.Plan;
 
-    /// <summary>The ragdoll, for reading the lane of a part (<see cref="Ragdoll.BodyLane"/>); the world is stepped only through <see cref="DriveAndStep"/>.</summary>
-    public Ragdoll Ragdoll { get { Live(); return _ragdoll; } }
+    /// <summary>The lane of a part's body in <see cref="View"/>. The ragdoll itself is not handed out: it is driven only through <see cref="DriveAndStep"/>.</summary>
+    public int BodyLane(int part)
+    {
+        Live();
+        return _ragdoll.BodyLane(part);
+    }
 
     /// <summary>The live lanes of the world, for rendering. Read-only: nothing outside this body writes them.</summary>
     public Box3DSoaView View { get { Live(); return _world.View; } }

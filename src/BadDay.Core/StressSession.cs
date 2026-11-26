@@ -34,6 +34,7 @@ public sealed class StressSession
     private Outcome _outcome = Outcome.Endured;
     private long _endTick;
     private long _diedTick = -1;
+    private int _wounds;
 
     /// <param name="poses">What the Brain's goals write, one rotation per muscle; the Actor's muscle count is theirs.</param>
     /// <param name="physiology">The body's physiology, stepped by the Actor (null: a headless run, nothing can be wounded or die); it needs the <paramref name="body"/> it was built on and its <paramref name="physiologyPlan"/>.</param>
@@ -119,26 +120,34 @@ public sealed class StressSession
     /// <summary>
     /// The player wounds a part with a tool from the current tick on: one Cut affliction of the tool's severity on each
     /// of the tool's layers the part has (a layer the part lacks is skipped), through <see cref="Physiology.Afflict"/>,
-    /// the only way harm enters. False, and nothing wounded, for a headless session, a part the body lacks, a tool none
-    /// of whose layers the part has, or when the affliction table refused a slot.
+    /// the only way harm enters. All of the layers or none: false, and nothing wounded, for a headless session, a body
+    /// that is dead (death is permanent, bds-death) or a run that is <see cref="Finished"/>, a part the body lacks, a tool
+    /// none of whose layers the part has, or when the affliction table lacks room for every layer. The session counts its
+    /// own wounds against the table (it is the only one that wounds its physiology), so a healed wound still counts: the
+    /// refusal errs toward full.
     /// </summary>
     public bool Wound(int part, WoundTool tool)
     {
         if (_physiology is null || _physiologyPlan is null || _stackOf is null || (uint)part >= (uint)_stackOf.Length) return false;
+        if (Finished || _physiology.Dead) return false;
         var stack = _physiologyPlan.Parts[_stackOf[part]].Tissues;
-        int applied = 0;
-        bool accepted = true;
+        var layers = new List<int>();
         foreach (var label in tool.Layers)
         {
             for (int layer = 0; layer < stack.Count; layer++)
             {
                 if (stack[layer].Label != label) continue;
-                accepted &= _physiology.Afflict(_cut, part, layer, tool.Severity);
-                applied++;
+                layers.Add(layer);
                 break;
             }
         }
-        return applied > 0 && accepted;
+        if (layers.Count == 0 || _wounds + layers.Count > _physiologyPlan.AfflictionSlots) return false;
+        foreach (int layer in layers)
+        {
+            if (!_physiology.Afflict(_cut, part, layer, tool.Severity)) throw new InvalidOperationException("the physiology's affliction table is full of wounds this session did not make.");
+            _wounds++;
+        }
+        return true;
     }
 
     /// <summary>

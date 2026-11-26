@@ -57,13 +57,12 @@ public static class OfficeBody
         var handL = new List<BodyPoint>();
         var handR = new List<BodyPoint>();
         var pelvis = new List<BodyPoint>();
-        for (;;)
+        while (!session.Finished)
         {
             session.Step();
             handL.Add(session.HandL);
             handR.Add(session.HandR);
             pelvis.Add(session.Pelvis);
-            if (session.Finished) break; // a fresh session is never finished: the first step is a tick
         }
         return new OfficeBodyResult(session.Result(), handL, handR, pelvis);
     }

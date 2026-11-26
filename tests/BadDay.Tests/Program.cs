@@ -1185,6 +1185,137 @@ public static class Program
             Check(physiology.Integrity(palm, physiology.TissueIndex(palm, "Metacarpals")) == 1.0, "the palm's metacarpals were hurt");
         }),
 
+        ("office slow clock: SlowScale reaches the physiology, so a skin wound's bleed ends (it heals on the acute clock) and the blood regrows sooner the larger the scale: 1 > 20 > 1000 ticks to recover", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            var arm = SeatedPuppet.Plan.PartIndex("LowerArm", Lodur.Side.Left);
+            long Recovered(double scale)
+            {
+                using var s = new OfficeBodySession(p with { SlowScale = scale }, 1);
+                Check(s.Wound(arm, new WoundTool(new[] { "Skin" }, 0.006)), "the skin wound was refused");
+                bool bled = false;
+                while (!s.Finished)
+                {
+                    s.Step();
+                    bled |= s.BloodLoss > 0.0;
+                    if (bled && s.BloodLoss == 0.0) return s.TickIndex;
+                }
+                throw new InvalidOperationException($"scale {scale}: the blood never regrew (bled: {bled})");
+            }
+            long slow = Recovered(1.0), normal = Recovered(20.0), fast = Recovered(1000.0);
+            Check(slow - normal > 100 && normal > fast, $"recovered at tick {slow} (scale 1), {normal} (20), {fast} (1000)");
+        }),
+
+        ("office read-outs: Will is Lodur's will (the resolve while unwounded, the lesser of resolve and consciousness wounded), Arousal, Resolve and Goal are the rows' at the same tick, AirHunger is 0 unwounded and rises with both lungs cut", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds, SampleEverySeconds = 1.0 };
+            using (var s = new OfficeBodySession(p, 1))
+            {
+                var arousal = new List<double>(); var resolve = new List<double>(); var goal = new List<OfficeGoal>();
+                double firstWill = -1, minWill = 1;
+                while (!s.Finished)
+                {
+                    s.Step();
+                    if (firstWill < 0) firstWill = s.Will;
+                    minWill = Math.Min(minWill, s.Will);
+                    Check(s.Will == s.Resolve && s.AirHunger == 0.0, $"tick {s.TickIndex}: will {s.Will}, resolve {s.Resolve}, air hunger {s.AirHunger}");
+                    arousal.Add(s.Arousal); resolve.Add(s.Resolve); goal.Add(s.Goal);
+                }
+                Check(firstWill == 1.0 && minWill == 0.0, $"will began at {firstWill} and fell to {minWill}");
+                foreach (var e in s.Result().Timeline)
+                {
+                    int i = (int)Math.Round(e.TimeMs * OfficeBody.Hz / 1000.0);
+                    Check(e.Arousal == arousal[i] && e.Resolve == resolve[i] && e.Goal == goal[i], $"{e.Kind} row at {e.TimeMs} ms: arousal {e.Arousal}, resolve {e.Resolve}, goal {e.Goal}; read-outs {arousal[i]}, {resolve[i]}, {goal[i]}");
+                }
+                Check(goal.Distinct().Count() == 3 && arousal.Max() > 0.3, "the run did not go through all three goals, or arousal never rose");
+            }
+            using (var s = new OfficeBodySession(p, 1))
+            {
+                Check(s.Wound(SeatedPuppet.Plan.PartIndex("Torso", Lodur.Side.Center), new WoundTool(new[] { "LungLeft", "LungRight" }, 15.0)), "the lungs were refused");
+                double maxHunger = 0.0;
+                while (!s.Finished)
+                {
+                    s.Step();
+                    maxHunger = Math.Max(maxHunger, s.AirHunger);
+                    Check(s.Will == Math.Min(s.Resolve, s.Consciousness), $"tick {s.TickIndex}: will {s.Will}, resolve {s.Resolve}, consciousness {s.Consciousness}");
+                }
+                Check(maxHunger > 0.5, $"air hunger peaked at {maxHunger}");
+            }
+        }),
+
+        ("office after Finished: Step ticks nothing (the tick index, the result and the event queue stay) and the world still steps (the hands and pelvis keep moving)", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            using var s = new OfficeBodySession(p, 1);
+            while (!s.Finished) s.Step();
+            var buffer = new BodyEvent[64];
+            while (s.DrainEvents(buffer) > 0) { }
+            long tick = s.TickIndex;
+            string result = s.Result().Render();
+            double will = s.Will;
+            var before = (s.HandL, s.HandR, s.Pelvis);
+            for (int i = 0; i < 60; i++) s.Step();
+            Check(s.TickIndex == tick && s.Result().Render() == result && s.Will == will && s.DrainEvents(buffer) == 0, "a step after Finished ticked the session");
+            Check(s.HandL != before.HandL && s.HandR != before.HandR && s.Pelvis != before.Pelvis, "the world stopped stepping after Finished");
+        }),
+
+        ("office wound is refused once the body is dead or the run is finished, and a refused wound is whole or nothing: a tool the table lacks room for in full wounds no layer", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            var plan = SeatedPuppet.Plan;
+            var arm = plan.PartIndex("LowerArm", Lodur.Side.Left);
+            var leg = plan.PartIndex("Shin", Lodur.Side.Left);
+            using (var s = new OfficeBodySession(p, 1))
+            {
+                Check(s.Wound(arm, WoundTool.Knife), "the knife was refused");
+                while (!s.Dead) s.Step();
+                Check(!s.Finished, "the run finished at the death");
+                Check(!s.Wound(leg, WoundTool.Knife), "a dead body was wounded");
+                while (!s.Finished) s.Step();
+                Check(!s.Wound(leg, WoundTool.Knife), "a finished run was wounded");
+            }
+            using (var s = new OfficeBodySession(p, 1))
+            {
+                while (!s.Finished) s.Step();
+                Check(!s.Dead && !s.Wound(leg, WoundTool.Knife), "a finished, living run was wounded");
+            }
+
+            var physiologyPlan = Lodur.PhysiologyPlans.Humanoid();
+            var physiology = new Lodur.Physiology(plan, physiologyPlan, p.SlowScale);
+            var session = new StressSession(p, 1, plan.SensePoints.Count, OfficeBody.Poses, plan.SenseIndex("Head"), physiology, plan, physiologyPlan);
+            var skin = new WoundTool(new[] { "Skin" }, 1.0);
+            int knives = physiologyPlan.AfflictionSlots / 3;
+            for (int i = 0; i < knives; i++) Check(session.Wound(arm, WoundTool.Knife), $"knife {i} was refused with room left");
+            int free = physiologyPlan.AfflictionSlots - 3 * knives;
+            Check(free > 0 && free < 3, $"the table has {free} slots free; the test needs one or two");
+            Check(!session.Wound(arm, WoundTool.Knife), "a knife that does not fit was accepted");
+            for (int i = 0; i < free; i++) Check(session.Wound(arm, skin), $"the refused knife took a slot: skin wound {i} was refused");
+            Check(!session.Wound(arm, skin), "the table took more wounds than it has slots");
+
+            var foreign = new Lodur.Physiology(plan, physiologyPlan, p.SlowScale);
+            var shared = new StressSession(p, 1, plan.SensePoints.Count, OfficeBody.Poses, plan.SenseIndex("Head"), foreign, plan, physiologyPlan);
+            for (int i = 0; i < physiologyPlan.AfflictionSlots; i++) Check(foreign.Afflict(physiologyPlan.AfflictionIndex("Cut"), arm, 0, 1.0), "the table filled early");
+            bool threw = false;
+            try { shared.Wound(arm, skin); } catch (InvalidOperationException) { threw = true; }
+            Check(threw, "a wound the table refused behind the session's count was reported as accepted or refused quietly");
+        }),
+
+        ("SeatedBody hands out no ragdoll: nothing public returns or takes a Ragdoll, so DriveAndStep is the one driver", () =>
+        {
+            var members = typeof(SeatedBody).GetMembers().Where(m => m.DeclaringType == typeof(SeatedBody)).ToArray();
+            Check(members.Length > 0, "no members found");
+            foreach (var m in members)
+            {
+                var types = m switch
+                {
+                    System.Reflection.PropertyInfo pi => new[] { pi.PropertyType },
+                    System.Reflection.MethodBase mb => mb.GetParameters().Select(x => x.ParameterType).Concat(m is System.Reflection.MethodInfo mi ? new[] { mi.ReturnType } : Array.Empty<Type>()).ToArray(),
+                    _ => Array.Empty<Type>(),
+                };
+                Check(!types.Contains(typeof(Lodur.Body.Ymir.Ragdoll)), $"SeatedBody.{m.Name} exposes the Ragdoll");
+            }
+        }),
+
         ("unwounded office keeps its will: with no wound the body never dies, DeathCause is None and consciousness is 1 at the end, seeds 1-3", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };

@@ -41,7 +41,7 @@ public sealed class OfficeBodySession : IDisposable
             int head = plan.SenseIndex("Head");
             _handL = plan.SenseIndex("Hand", Side.Left);
             _handR = plan.SenseIndex("Hand", Side.Right);
-            _pelvisLane = _body.Ragdoll.BodyLane(plan.PartIndex("Pelvis"));
+            _pelvisLane = _body.BodyLane(plan.PartIndex("Pelvis"));
             var physiologyPlan = PhysiologyPlans.Humanoid();
             _physiology = new Physiology(plan, physiologyPlan, p.SlowScale);
             // The desk's emitters sit where the head does and are sensed there.
