@@ -27,12 +27,16 @@ public sealed class SeatedBody : IDisposable
     private readonly Queue<BodyEvent> _events = new();
     private bool _disposed;
 
-    public SeatedBody()
+    public SeatedBody(BloodParameters? blood = null)
     {
+        blood ??= new BloodParameters();
         var needs = SeatedPuppet.Needs;
-        _world = new Box3DSoaWorld(capacity: needs.Bodies, jointCapacity: needs.Joints);
+        _world = new Box3DSoaWorld(capacity: needs.Bodies, jointCapacity: needs.Joints,
+            particles: new Box3DSoaParticleCapacities(Particles: blood.LiveCap, 0, 0, 0, 0, Materials: blood.Material + 1,
+                Fluid: blood.LiveCap, Wets: blood.WetLanes, Sensors: needs.Sensors));
         try
         {
+            _world.SetMaterial(blood.Material, blood.Friction, viscosity: blood.Viscosity, wetFriction: blood.WetFriction);
             _ragdoll = SeatedPuppet.Build(_world);
             var plan = _ragdoll.Plan;
             _x = new float[plan.SensePoints.Count];

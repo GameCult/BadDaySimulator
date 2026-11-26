@@ -14,18 +14,21 @@ public static class SeatedPuppet
     /// <summary>Physics substeps per 1/120 s step. The ragdoll gains were tuned against 4; the behaviour tests, not this number, are the rule.</summary>
     public const int Substeps = 4;
 
-    /// <summary>Bodies and joints a world needs for <see cref="Build"/>: the ragdoll, the ground and the stool, and the weld.</summary>
-    public static (int Bodies, int Joints) Needs => (Ragdoll.Needs(Plan).Bodies + 2, Ragdoll.Needs(Plan).Joints + 1);
+    /// <summary>The stable id of the first of Fella's parts: a part's stable id is this plus its ordinal. The ground is 1 and the stool 2.</summary>
+    public const ulong FirstStableId = 100;
+
+    /// <summary>Bodies, joints and sensors a world needs for <see cref="Build"/>: the ragdoll, the ground and the stool, the weld, and the airway sensors (the world must also have a particle system for them).</summary>
+    public static (int Bodies, int Joints, int Sensors) Needs => (Ragdoll.Needs(Plan).Bodies + 2, Ragdoll.Needs(Plan).Joints + 1, Ragdoll.Needs(Plan).Sensors);
 
     /// <summary>The humanoid plan every BDS body is built from; classes resolve their labels against it once.</summary>
     public static BodyPlan Plan { get; } = BodyPlans.Humanoid();
 
-    /// <summary>Adds the ground, the stool, the ragdoll (stable ids from 100) and the pelvis weld to <paramref name="world"/>, which must be sized by <see cref="Needs"/>.</summary>
+    /// <summary>Adds the ground, the stool, the ragdoll (stable ids from <see cref="FirstStableId"/>) and the pelvis weld to <paramref name="world"/>, which must be sized by <see cref="Needs"/>.</summary>
     public static Ragdoll Build(Box3DSoaWorld world)
     {
         world.AddStaticBox(1, (0f, -0.5f, 0f), (20f, 0.5f, 20f), friction: 0.8f);
         var stool = world.AddStaticBox(2, (0f, 1.11f, -0.115f), (0.05f, 0.05f, 0.025f), friction: 0.8f);
-        var ragdoll = Ragdoll.Build(world, Plan, (0f, 0f), firstStableId: 100);
+        var ragdoll = Ragdoll.Build(world, Plan, (0f, 0f), firstStableId: FirstStableId);
         world.AddJoint(Box3DSoaJointKind.Weld, stool, ragdoll.BodyLane(Plan.PartIndex("Pelvis")), (0f, 1.11f, -0.09f), (0f, 1f, 0f));
         return ragdoll;
     }
