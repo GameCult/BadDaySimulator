@@ -53,12 +53,9 @@ public static class BodyPainBox
     }
 }
 
-/// <summary>What the Actor reported on one tick of a <see cref="BodyPainBoxSession"/>; only ticks that reported something are queued.</summary>
-public readonly record struct BodyEvent(long Tick, TickEvents Events);
-
 /// <summary>
-/// One body run, stepped by its caller: BDS creates the Ymir world (<see cref="SeatedPuppet"/>'s ground, stool and ragdoll, the box volume around the right hand's hold
-/// point) and is its only stepper; the nervous session inside it is never exposed, so nothing else can tick it.
+/// One body run, stepped by its caller: it holds a <see cref="SeatedBody"/>, the one owner of the world, and adds the box volume around the right hand's hold
+/// point; the nervous session inside it is never exposed, so nothing else can tick it.
 /// Per <see cref="Step"/>: the box writes its intensity, the body reports its hand points, Lodur's Actor decides,
 /// the ragdoll is driven, the world steps. The run ends on the Actor's events, never on the hand: after the
 /// deliberate withdrawal, once the hand is out or the settle is over. After <see cref="Finished"/>
@@ -79,15 +76,8 @@ public sealed class BodyPainBoxSession : IDisposable
     private const double SettleSeconds = 1.0;
 
     private readonly PainBoxParameters _p;
-    private readonly Box3DSoaWorld _world;
-    private readonly Ragdoll _ragdoll;
+    private readonly SeatedBody _body;
     private readonly PainBoxSession _session;
-    private readonly Queue<BodyEvent> _events = new();
-    private readonly float[] _x;
-    private readonly float[] _y;
-    private readonly float[] _z;
-    private readonly float[] _strengths;
-    private readonly Quat[] _targets;
     private readonly int _handR;
     private readonly long _rampEnd;
     private readonly long _settleTicks;
@@ -108,18 +98,11 @@ public sealed class BodyPainBoxSession : IDisposable
         }
 
         _p = p;
-        var needs = SeatedPuppet.Needs;
-        _world = new Box3DSoaWorld(capacity: needs.Bodies, jointCapacity: needs.Joints);
+        _body = new SeatedBody();
         try
         {
-            _ragdoll = SeatedPuppet.Build(_world);
-            var plan = _ragdoll.Plan;
+            var plan = _body.Plan;
             int senses = plan.SensePoints.Count, joints = plan.Joints.Count;
-            _x = new float[senses];
-            _y = new float[senses];
-            _z = new float[senses];
-            _strengths = new float[joints];
-            _targets = new Quat[joints];
             _handR = plan.SenseIndex("Hand", Side.Right);
             int shoulderR = plan.JointIndex("Shoulder", Side.Right), elbowR = plan.JointIndex("Elbow", Side.Right);
 
@@ -139,7 +122,7 @@ public sealed class BodyPainBoxSession : IDisposable
         }
         catch
         {
-            _world.Dispose();
+            _body.Dispose();
             throw;
         }
 
@@ -150,7 +133,7 @@ public sealed class BodyPainBoxSession : IDisposable
     }
 
     /// <summary>The live lanes of the world, for rendering. Read-only: nothing outside this session writes them.</summary>
-    public Box3DSoaView View { get { Live(); return _world.View; } }
+    public Box3DSoaView View { get { Live(); return _body.View; } }
 
     /// <summary>The right hand after the latest step (the rest pose before the first).</summary>
     public HandSample Hand { get { Live(); return _hand; } }
@@ -191,14 +174,13 @@ public sealed class BodyPainBoxSession : IDisposable
         var events = TickEvents.None;
         if (ticked)
         {
-            _ragdoll.ReadSensePoints(_x, _y, _z);
-            events = _session.Tick(_x, _y, _z, _strengths, _targets);
-            if (events != TickEvents.None) _events.Enqueue(new BodyEvent(tick, events));
+            _body.ReadSenses();
+            events = _session.Tick(_body.X, _body.Y, _body.Z, _body.Strengths, _body.Targets);
+            if (events != TickEvents.None) _body.Enqueue(tick, events);
         }
         if (ticked || wasFinished)
         {
-            _ragdoll.Drive(_strengths, _targets); // after Finished: the last strengths and targets again
-            _world.Step((float)_p.TickSeconds, SeatedPuppet.Substeps);
+            _body.DriveAndStep(_p.TickSeconds); // after Finished: the last strengths and targets again
         }
 
         var sample = ReadHand(); // the rest pose when the box was off at tick 0
@@ -233,17 +215,8 @@ public sealed class BodyPainBoxSession : IDisposable
         }
     }
 
-    /// <summary>
-    /// Moves the queued events (oldest first) into <paramref name="buffer"/> and returns how many it wrote; the rest stay
-    /// queued for the next call. Allocation-free once the queue has grown to the client's drain interval.
-    /// </summary>
-    public int DrainEvents(Span<BodyEvent> buffer)
-    {
-        Live();
-        int n = 0;
-        while (n < buffer.Length && _events.Count > 0) buffer[n++] = _events.Dequeue();
-        return n;
-    }
+    /// <summary>Moves the queued events (oldest first) into <paramref name="buffer"/>; see <see cref="SeatedBody.DrainEvents"/>.</summary>
+    public int DrainEvents(Span<BodyEvent> buffer) => _body.DrainEvents(buffer);
 
     /// <summary>Sets the box intensity from the next tick; refuses a level outside 0 to <see cref="PainBox.MaxLevel"/>.</summary>
     public void SetIntensity(double level)
@@ -271,15 +244,15 @@ public sealed class BodyPainBoxSession : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _world.Dispose();
+        _body.Dispose();
     }
 
     private void Live() => ObjectDisposedException.ThrowIf(_disposed, this);
 
     private HandSample ReadHand()
     {
-        _ragdoll.ReadSensePoints(_x, _y, _z);
-        float hx = _x[_handR], hy = _y[_handR], hz = _z[_handR];
+        _body.ReadSenses();
+        float hx = _body.X[_handR], hy = _body.Y[_handR], hz = _body.Z[_handR];
         return new HandSample(hx, hy, hz, _session.Box.Contains(hx, hy, hz));
     }
 }
