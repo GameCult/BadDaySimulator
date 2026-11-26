@@ -36,7 +36,7 @@ recorder. It needs sibling checkouts of Lodur and Ymir (`LODUR_ROOT`, else
 - `src/BadDay.Core/PainBoxParameters.cs`: the box and clock tunables, plus Lodur's parameter records as members.
 - `src/BadDay.Core/Sweep.cs`: consecutive seeds, break-time min/median/max.
 - `src/BadDay.Ymir/BodyPainBox.cs`: the same run on the Ymir ragdoll, with the hand-out time.
-- `src/BadDay.Ymir/SeatedPuppet.cs`: the stool, ground and ragdoll every body run is built on.
+- `src/BadDay.Ymir/SeatedPuppet.cs`: the stool, ground and ragdoll every body is built from (`SeatedBody` holds the world).
 - `src/BadDay.Cli`: `baddaysim`.
 - `tests/BadDay.Tests`: determinism, break-time, monotonicity and body tests.
 - `tools/PainSweep`: the intensity x suppression table.
@@ -123,6 +123,9 @@ The scenarios, one owner per decision:
 | `ChamberBrain`, `OfficeBrain` | `PainBoxParameters` or `StressParameters`, the poses | a Lodur `Brain`: goals and their rules as data, and the release goal's id (`withdraw`, `calm`) | none; Lodur's Actor commits each switch | a session choosing a goal; a goal rule outside the Brain |
 | `PainBoxSession`, `StressSession` | seed, traits, the box or the cause, the player's commands (`Silence`, box off) | the box's or the emitters' intensities each tick; rows read back from the Actor (the stress column is the drive's arousal, the goal column the Actor's goal); the end of the run | the release goal, found by id at construction (an unknown id refuses the build) | computing load, arousal, resolve or a goal; a goal index hard-coded for the release |
 | Lodur (`Actor`, the drive, the Brain) | the sessions' stimuli, the body's region points | muscle strengths and targets; the events | resolve, strain, pain, arousal, the breaks, the sensory gain in force | BDS writing any of it |
+| Lodur's `Physiology` | `Afflict` calls (only from `StressSession.Wound`) and the Actor's step input | blood loss, consciousness, air hunger, death and its cause (`Died` once; a dead body is limp) | tissue integrity, bleed, the motor ceiling | a session or client deciding death, bleed or consciousness; any `Afflict` outside `StressSession.Wound` |
+| `SeatedBody` | the scenario's strengths and targets each tick | the world's view, the sense points, the `BodyEvent` queue | the ragdoll and its world, built through `SeatedPuppet.Build` | any `Box3DSoaWorld` or world step in BDS outside it |
+| `BodyPainBoxSession`, `OfficeBodySession` | their scenario's commands (`SetIntensity`, `SwitchOff`; `Silence`, `Wound`) | one `SeatedBody` stepped per `Step`; the chamber's hand and result, the office's read-outs (will, arousal, resolve, consciousness, blood loss, air hunger, death) | none: neither owns a world | creating or stepping a world; deciding death |
 
 Found stale by Modeling, 2026-11-20, not changed: `docs/scenarios/fella-bad-day-at-the-office.md` is a design document (Status: design, not built) whose ladder rows 3 and 4 are now built; its text outside the ladder is not a map of the code.
 
@@ -206,6 +209,8 @@ The chamber's release is declared the same way (`PainBoxParameters.ReleaseGoalId
 apart from the setting and the cause. Each scenario builds its own Brain from its own parameters; one entry point keyed by character id
 waits for Brains as content. Headless the rage moves nothing; `office --body` runs it on the puppet.
 
+On the puppet the office is `OfficeBodySession`, stepped by its caller one 1/120 s step at a time like the chamber's session (`OfficeBody.Run` records one to its end). It builds a `SeatedBody`, the one owner of every BDS body world, and attaches a Lodur `Physiology` to the Actor (`StressParameters.SlowScale`, default 20 [P]: ruling `lodur:ruling:bds-physiology-clock`; Acute afflictions such as a cut do not move with it). The player's harm is `Wound(part, tool)`: a `WoundTool` names tissue layers and a severity, and `StressSession.Wound` binds one Cut affliction on each layer the part has (a palm has no fat), the only path harm takes into the body. The knife (`WoundTool.Knife`, skin, fat and muscle at 60 [P]) is the click-cut's content until contacts become afflictions. Lodur decides the rest: blood loss, consciousness, air hunger and death (`lodur:ruling:bds-death`). A cut on the left lower arm bleeds the body out in about 40 s; the Actor reports `Died` once, the body goes limp (it writes no strength from then on), the session logs a `Died` row, ends the run `ReleaseSeconds` later with `Outcome.Died`, and `StressResult` carries `DiedAtMs` and `DeathCause`. An unwounded run is unchanged: nothing in it can die.
+
 The stress bar is his arousal, how wound up he is right now, and reads **stress (arousal)** (`StressResult.StressBarLabel`; ruling `lodur:ruling:stress-bar-shows-arousal-calm-silences`).
 It rises with each stressor and falls in quiet; will is not on it. Entering calm fades his arousal and his senses' gain to nothing over `CalmFadeSeconds` (3 s, the aftershock tail of
 `lodur:ruling:flinch-tail-after-stimulus`; the calm goal's `EntryArousal`, `SensoryGain` and `EntrySeconds`), so the bar drains and stays empty for the rest of the run while the stressor columns
@@ -214,7 +219,10 @@ keep sounding. Arousal is exactly 0 from `CalmFadeSeconds` on; the load column t
 - `src/BadDay.Core/Setting.cs`, `Cause.cs`: the office's defaults, in code, not persisted yet.
 - `src/BadDay.Core/StressSession.cs`: one run, driven per tick by the headless run, the sweep, the CLI and a client.
 - `src/BadDay.Core/OfficeBrain.cs`: Office Fella's goals, and the poses they write.
-- `src/BadDay.Ymir/OfficeBody.cs`: the office on the seated puppet: both hands, the pelvis and the strikes.
+- `src/BadDay.Ymir/OfficeBody.cs`: the office on the seated puppet, recorded to its end: both hands, the pelvis and the strikes.
+- `src/BadDay.Ymir/OfficeBodySession.cs`: the office's stepping session on a `SeatedBody` with a Lodur `Physiology`; `Wound`, the read-outs, death.
+- `src/BadDay.Ymir/SeatedBody.cs`: the one owner of a BDS body world and its step order.
+- `src/BadDay.Core/WoundTool.cs`: what a wound is made of; `Knife`.
 - `src/BadDay.Core/StressSimulation.cs`: the headless run with scheduled silences, and the seed sweep.
 
 ```

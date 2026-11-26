@@ -41,4 +41,7 @@ public sealed record StressParameters
 
     /// <summary>Per-seed trait spread (fraction): the senses' gain and resolve drain.</summary>
     public double TraitJitter { get; init; } = 0.2;
+
+    /// <summary>The per-session multiplier on slow body processes [P] (ruling lodur:ruling:bds-physiology-clock): a Slow affliction or regen runs this many times faster than its table rate; Acute ones do not move.</summary>
+    public double SlowScale { get; init; } = 20.0;
 }

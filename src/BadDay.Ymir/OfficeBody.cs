@@ -28,10 +28,8 @@ public sealed record OfficeBodyResult(
 }
 
 /// <summary>
-/// Office Fella on the seated puppet: <see cref="SeatedPuppet"/>'s world, the desk's emitters moved to where the head
-/// sits and sensed there, and the same <see cref="StressSession"/> the headless run drives. Per step: the body reports its
-/// points, the session decides (Lodur's Actor commits the Brain's goals, <see cref="OfficeBrain"/>), the ragdoll is driven,
-/// the world steps. The run ends as the session ends, the release after calm takes over.
+/// Office Fella on the seated puppet: <see cref="Run"/> records an <see cref="OfficeBodySession"/>, the one stepper of the
+/// office's world, from its start to its end, the release after calm takes over (or after a death).
 /// </summary>
 public static class OfficeBody
 {
@@ -55,43 +53,17 @@ public static class OfficeBody
     /// <summary>Runs the office on the puppet to the end of the release; the tick rate must be 1/120 s.</summary>
     public static OfficeBodyResult Run(StressParameters p, ulong seed)
     {
-        if (Math.Abs(p.TickSeconds - TickSeconds) > 1e-12)
-        {
-            throw new ArgumentException($"The body run steps at 1/120 s; got TickSeconds {p.TickSeconds}.");
-        }
-
-        var needs = SeatedPuppet.Needs;
-        using var world = new Box3DSoaWorld(capacity: needs.Bodies, jointCapacity: needs.Joints);
-        var ragdoll = SeatedPuppet.Build(world);
-        var plan = ragdoll.Plan;
-        var x = new float[plan.SensePoints.Count];
-        var y = new float[plan.SensePoints.Count];
-        var z = new float[plan.SensePoints.Count];
-        ragdoll.ReadSensePoints(x, y, z);
-        int head = plan.SenseIndex("Head");
-        int handLIdx = plan.SenseIndex("Hand", Side.Left), handRIdx = plan.SenseIndex("Hand", Side.Right);
-        // The desk's emitters sit where the head does and are sensed there.
-        var session = new StressSession(p with { Setting = p.Setting.Shifted(x[head], y[head], z[head]) }, seed,
-            plan.SensePoints.Count, Poses, head);
-
-        var strengths = new float[plan.Joints.Count];
-        var targets = new Quat[plan.Joints.Count];
+        using var session = new OfficeBodySession(p, seed);
         var handL = new List<BodyPoint>();
         var handR = new List<BodyPoint>();
         var pelvis = new List<BodyPoint>();
-        int pelvisLane = ragdoll.BodyLane(plan.PartIndex("Pelvis"));
-        while (!session.Finished)
+        for (;;)
         {
-            ragdoll.ReadSensePoints(x, y, z);
-            session.Tick(x, y, z, strengths, targets);
-            ragdoll.Drive(strengths, targets);
-            world.Step((float)p.TickSeconds, SeatedPuppet.Substeps);
-
-            ragdoll.ReadSensePoints(x, y, z);
-            handL.Add(new BodyPoint(x[handLIdx], y[handLIdx], z[handLIdx]));
-            handR.Add(new BodyPoint(x[handRIdx], y[handRIdx], z[handRIdx]));
-            var v = world.View;
-            pelvis.Add(new BodyPoint(v.PositionX[pelvisLane], v.PositionY[pelvisLane], v.PositionZ[pelvisLane]));
+            session.Step();
+            handL.Add(session.HandL);
+            handR.Add(session.HandR);
+            pelvis.Add(session.Pelvis);
+            if (session.Finished) break; // a fresh session is never finished: the first step is a tick
         }
         return new OfficeBodyResult(session.Result(), handL, handR, pelvis);
     }

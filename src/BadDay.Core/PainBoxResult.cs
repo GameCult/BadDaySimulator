@@ -14,6 +14,8 @@ public enum Outcome
     BoxDisabled,
     /// <summary>MaxSeconds passed with the box on and the will intact.</summary>
     Endured,
+    /// <summary>A body with a physiology died (an office run; the chamber never produces it).</summary>
+    Died,
 }
 
 public enum EntryKind { Sample, Flinch, WillBroke, Withdrew, BoxDisabled, Endured }

@@ -1,10 +1,11 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using Lodur;
 
 namespace BadDay.Core;
 
-public enum StressEntryKind { Sample, Silenced, WillBroke, GoalChanged, Endured }
+public enum StressEntryKind { Sample, Silenced, WillBroke, GoalChanged, Died, Endured }
 
 /// <summary>One timeline row: end-of-tick state read from the Actor. Audio, Visual and Interrupt are the stimulus that reached the head on each channel.</summary>
 public readonly record struct StressEntry(
@@ -16,7 +17,7 @@ public readonly record struct SilenceCommand(string StressorId, double AtSeconds
 
 public sealed record StressResult(
     ulong Seed,
-    /// <summary>WillBroke (the run goes on through the release) or Endured; the office has no box to disable.</summary>
+    /// <summary>WillBroke (the run goes on through the release), Endured, or Died (a body with a physiology died); the office has no box to disable.</summary>
     Outcome Outcome,
     /// <summary>When the run ended: the release after calm took over, or MaxSeconds.</summary>
     long EndMs,
@@ -24,7 +25,11 @@ public sealed record StressResult(
     long? TimeToBreakMs,
     /// <summary>The lowest resolve at any tick of the run.</summary>
     double MinResolve,
-    IReadOnlyList<StressEntry> Timeline)
+    IReadOnlyList<StressEntry> Timeline,
+    /// <summary>When the body died, ms (Lodur's Physiology decided it); null if it did not.</summary>
+    long? DiedAtMs = null,
+    /// <summary>What killed it; None unless <see cref="DiedAtMs"/> is set.</summary>
+    DeathCause DeathCause = DeathCause.None)
 {
     /// <summary>What the stress bar means (ruling lodur:ruling:stress-bar-shows-arousal-calm-silences): how wound up he is right now, his arousal. Will is not on this bar.</summary>
     public const string StressBarLabel = "stress (arousal)";
@@ -46,7 +51,9 @@ public sealed record StressResult(
         return sb.ToString();
     }
 
-    public string Summary() => Outcome == Outcome.WillBroke
+    public string Summary() => Outcome == Outcome.Died
+        ? $"seed {Seed}: died of {DeathCause} at {DiedAtMs} ms"
+        : Outcome == Outcome.WillBroke
         ? $"seed {Seed}: will broke at {TimeToBreakMs} ms"
         : $"seed {Seed}: endured to {EndMs} ms, will held, min resolve {MinResolve.ToString("F3", CultureInfo.InvariantCulture)}";
 }

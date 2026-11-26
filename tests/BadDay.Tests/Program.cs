@@ -1089,6 +1089,113 @@ public static class Program
             var headless = Office(new StressParameters(), 1);
             Check(Math.Abs(body.TimeToBreakMs!.Value - headless.TimeToBreakMs!.Value) < 500, $"body {body.TimeToBreakMs} ms, headless {headless.TimeToBreakMs} ms");
         }),
+
+        ("office session: stepping OfficeBodySession to Finished gives OfficeBody.Run's timeline, seeds 1 and 2, and the pelvis and hands are the ones Run recorded", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            foreach (ulong seed in new ulong[] { 1, 2 })
+            {
+                var run = OfficeBody.Run(p, seed);
+                using var s = new OfficeBodySession(p, seed);
+                int steps = 0;
+                while (!s.Finished) { s.Step(); steps++; }
+                Check(s.Result().Render() == run.Run.Render(), $"seed {seed}: the stepped session's timeline differs from Run's");
+                Check(steps == run.HandL.Count && s.HandL == run.HandL[^1] && s.HandR == run.HandR[^1] && s.Pelvis == run.Pelvis[^1], $"seed {seed}: {steps} steps against {run.HandL.Count} recorded, or the last points differ");
+                bool threw = false;
+                try { new OfficeBodySession(p with { TickSeconds = 0.01 }, seed).Dispose(); } catch (ArgumentException) { threw = true; }
+                Check(threw, "a tick rate other than 1/120 s was accepted");
+            }
+        }),
+
+        ("office wound kills by blood loss: Wound(LowerArm L, Knife) at tick 0 gives exactly one Died event, DeathCause BloodLoss, Outcome Died, a death 30-60 s in (probe: 42.1 s with skin and muscle) that two runs agree on, and a run that ends ReleaseSeconds later", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            var arm = SeatedPuppet.Plan.PartIndex("LowerArm", Lodur.Side.Left);
+            long? diedAt = null;
+            for (int run = 0; run < 2; run++)
+            {
+                using var s = new OfficeBodySession(p, 1);
+                Check(s.Wound(arm, WoundTool.Knife), "the knife was refused on the lower arm");
+                var buffer = new BodyEvent[16];
+                int died = 0;
+                bool deadBefore = false;
+                while (!s.Finished)
+                {
+                    s.Step();
+                    int n; while ((n = s.DrainEvents(buffer)) > 0) for (int i = 0; i < n; i++) if ((buffer[i].Events & Lodur.TickEvents.Died) != 0) died++;
+                    deadBefore |= s.Dead && died == 0;
+                }
+                var r = s.Result();
+                Check(died == 1 && !deadBefore, $"{died} Died events drained");
+                Check(s.Dead && s.DeathCause == Lodur.DeathCause.BloodLoss && r.DeathCause == Lodur.DeathCause.BloodLoss, $"cause {s.DeathCause}");
+                Check(r.Outcome == Outcome.Died && r.DiedAtMs is long ms && ms >= 30000 && ms <= 60000, $"outcome {r.Outcome}, died at {r.DiedAtMs} ms");
+                Check(r.EndMs == r.DiedAtMs + (long)Math.Round(p.ReleaseSeconds * 1000.0), $"the run ended at {r.EndMs} ms, the death was at {r.DiedAtMs} ms");
+                Check(r.Timeline.Count(e => e.Kind == StressEntryKind.Died) == 1 && r.Summary().Contains("BloodLoss"), "the Died row or the summary is missing");
+                Check(s.Consciousness == 0.0 && s.BloodLoss >= 1.0, $"consciousness {s.Consciousness}, blood loss {s.BloodLoss}");
+                if (diedAt is null) diedAt = r.DiedAtMs; else Check(diedAt == r.DiedAtMs, $"two runs died at {diedAt} and {r.DiedAtMs} ms");
+            }
+        }),
+
+        ("office death is limp and ends the run: after the Died tick every strength the session wrote is 0 and the goal never changes again, the death is before the run's end by exactly ReleaseSeconds, and before it the body was driving muscles", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            var plan = SeatedPuppet.Plan;
+            var physiologyPlan = Lodur.PhysiologyPlans.Humanoid();
+            var physiology = new Lodur.Physiology(plan, physiologyPlan, p.SlowScale);
+            var session = new StressSession(p, 1, plan.SensePoints.Count, OfficeBody.Poses, plan.SenseIndex("Head"), physiology, plan, physiologyPlan);
+            Check(session.Wound(plan.PartIndex("LowerArm", Lodur.Side.Left), WoundTool.Knife), "the knife was refused");
+            var pts = new float[plan.SensePoints.Count];
+            var strengths = new float[plan.Joints.Count];
+            var targets = new Quat[plan.Joints.Count];
+            float drivenBefore = 0f;
+            long diedTick = -1;
+            int goalAtDeath = -1;
+            while (!session.Finished)
+            {
+                var ev = session.Tick(pts, pts, pts, strengths, targets);
+                if ((ev & Lodur.TickEvents.Died) != 0) { diedTick = session.TickIndex - 1; goalAtDeath = session.Actor.GoalIndex; }
+                if (diedTick < 0) drivenBefore = Math.Max(drivenBefore, strengths.Max());
+                else Check(strengths.All(v => v == 0f) && session.Actor.GoalIndex == goalAtDeath, $"tick {session.TickIndex - 1}: a strength or the goal moved after the death");
+            }
+            var r = session.Result();
+            Check(diedTick >= 0 && r.Outcome == Outcome.Died, "the body did not die");
+            Check(drivenBefore > 0f, "no muscle was driven before the death, so limp proves nothing");
+            Check(session.TickIndex - 1 == diedTick + (long)Math.Round(p.ReleaseSeconds / p.TickSeconds), $"the run ended at tick {session.TickIndex - 1}, the death was at {diedTick}");
+        }),
+
+        ("office wound refusals: an out-of-range part and a headless session refuse, a tool with no layer the part has is refused, and a palm takes the knife on skin and muscle without fat", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            using (var s = new OfficeBodySession(p, 1))
+            {
+                Check(!s.Wound(-1, WoundTool.Knife) && !s.Wound(SeatedPuppet.Plan.Parts.Count, WoundTool.Knife), "an out-of-range part was wounded");
+            }
+            Check(!NewOffice(p, 1).Wound(0, WoundTool.Knife), "a headless session was wounded");
+
+            var plan = SeatedPuppet.Plan;
+            var physiologyPlan = Lodur.PhysiologyPlans.Humanoid();
+            var physiology = new Lodur.Physiology(plan, physiologyPlan, p.SlowScale);
+            var session = new StressSession(p, 1, plan.SensePoints.Count, OfficeBody.Poses, plan.SenseIndex("Head"), physiology, plan, physiologyPlan);
+            int palm = plan.PartIndex("Palm", Lodur.Side.Left);
+            Check(!session.Wound(palm, new WoundTool(new[] { "Fat" }, 60.0)), "a palm took a fat-only wound");
+            Check(session.Wound(palm, WoundTool.Knife), "the palm refused the knife");
+            var pts = new float[plan.SensePoints.Count];
+            session.Tick(pts, pts, pts, new float[plan.Joints.Count], new Quat[plan.Joints.Count]);
+            Check(physiology.Integrity(palm, physiology.TissueIndex(palm, "Skin")) < 1.0 && physiology.Integrity(palm, physiology.TissueIndex(palm, "Muscle")) < 1.0, "the palm's skin or muscle is unhurt");
+            Check(physiology.Integrity(palm, physiology.TissueIndex(palm, "Metacarpals")) == 1.0, "the palm's metacarpals were hurt");
+        }),
+
+        ("unwounded office keeps its will: with no wound the body never dies, DeathCause is None and consciousness is 1 at the end, seeds 1-3", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            for (ulong seed = 1; seed <= 3; seed++)
+            {
+                using var s = new OfficeBodySession(p, seed);
+                while (!s.Finished) s.Step();
+                var r = s.Result();
+                Check(!s.Dead && s.DeathCause == Lodur.DeathCause.None && r.DiedAtMs is null && r.Outcome != Outcome.Died && s.Consciousness == 1.0, $"seed {seed}: dead {s.Dead}, cause {s.DeathCause}, consciousness {s.Consciousness}");
+            }
+        }),
     };
 
     private static readonly float[] Point = new float[1], Strengths = new float[1];

@@ -25,15 +25,30 @@ public sealed class StressSession
     private readonly long _sampleEvery;
     private readonly long _releaseTicks;
     private readonly int _releaseGoal;
+    private readonly Physiology? _physiology;
+    private readonly PhysiologyPlan? _physiologyPlan;
+    private readonly int[]? _stackOf;
+    private readonly int _cut;
     private long _breakTick = -1;
     private double _minResolve = 1.0;
     private Outcome _outcome = Outcome.Endured;
     private long _endTick;
+    private long _diedTick = -1;
 
     /// <param name="poses">What the Brain's goals write, one rotation per muscle; the Actor's muscle count is theirs.</param>
-    public StressSession(StressParameters p, ulong seed, int regionCount, OfficePoses poses, int senseRegion = 0)
+    /// <param name="physiology">The body's physiology, stepped by the Actor (null: a headless run, nothing can be wounded or die); it needs the <paramref name="body"/> it was built on and its <paramref name="physiologyPlan"/>.</param>
+    public StressSession(StressParameters p, ulong seed, int regionCount, OfficePoses poses, int senseRegion = 0,
+        Physiology? physiology = null, BodyPlan? body = null, PhysiologyPlan? physiologyPlan = null)
     {
         _p = p;
+        if (physiology is not null)
+        {
+            if (body is null || physiologyPlan is null) throw new ArgumentException("a physiology needs the body and the physiology plan it was built on.");
+            _physiology = physiology;
+            _physiologyPlan = physiologyPlan;
+            _stackOf = physiologyPlan.Resolve(body);
+            _cut = physiologyPlan.AfflictionIndex("Cut");
+        }
         _stressors = new Stressor[p.Cause.Stressors.Count];
         _emitterOf = new int[_stressors.Length];
         _silenced = new bool[_stressors.Length];
@@ -65,7 +80,8 @@ public sealed class StressSession
         Actor = new Actor(p.TickSeconds, regionCount, p.Nerve, p.Reflex,
             p.Drive with { DrainTrait = p.Drive.DrainTrait * drainTrait },
             OfficeBrain.Build(p, poses),
-            p.Character.Senses with { Gain = p.Character.Senses.Gain * gainTrait }, senseRegion);
+            p.Character.Senses with { Gain = p.Character.Senses.Gain * gainTrait }, senseRegion,
+            physiology: physiology, body: body);
         _maxTick = Ticks(p.MaxSeconds);
         _sampleEvery = Math.Max(1, Ticks(p.SampleEverySeconds));
         _releaseTicks = Ticks(p.ReleaseSeconds);
@@ -101,6 +117,31 @@ public sealed class StressSession
     }
 
     /// <summary>
+    /// The player wounds a part with a tool from the current tick on: one Cut affliction of the tool's severity on each
+    /// of the tool's layers the part has (a layer the part lacks is skipped), through <see cref="Physiology.Afflict"/>,
+    /// the only way harm enters. False, and nothing wounded, for a headless session, a part the body lacks, a tool none
+    /// of whose layers the part has, or when the affliction table refused a slot.
+    /// </summary>
+    public bool Wound(int part, WoundTool tool)
+    {
+        if (_physiology is null || _physiologyPlan is null || _stackOf is null || (uint)part >= (uint)_stackOf.Length) return false;
+        var stack = _physiologyPlan.Parts[_stackOf[part]].Tissues;
+        int applied = 0;
+        bool accepted = true;
+        foreach (var label in tool.Layers)
+        {
+            for (int layer = 0; layer < stack.Count; layer++)
+            {
+                if (stack[layer].Label != label) continue;
+                accepted &= _physiology.Afflict(_cut, part, layer, tool.Severity);
+                applied++;
+                break;
+            }
+        }
+        return applied > 0 && accepted;
+    }
+
+    /// <summary>
     /// One step: each stressor draws its jitter (always, so the stream never depends on state) and writes its
     /// schedule value; each emitter takes the largest of its unsilenced stressors; the Actor runs on the caller's
     /// points; the tick's rows are logged from the flags and the end-of-tick state.
@@ -125,6 +166,14 @@ public sealed class StressSession
             _outcome = Outcome.WillBroke;
             Log(tick, StressEntryKind.WillBroke);
         }
+        if ((events & TickEvents.Died) != 0)
+        {
+            // The Actor reported the body's death (once); it is limp and frozen from here, and the run ends a release later.
+            _diedTick = tick;
+            _outcome = Outcome.Died;
+            _endTick = Math.Min(_endTick, tick + _releaseTicks);
+            Log(tick, StressEntryKind.Died);
+        }
         if (tick % _sampleEvery == 0) Log(tick, StressEntryKind.Sample);
         if ((events & TickEvents.GoalChanged) != 0)
         {
@@ -140,7 +189,8 @@ public sealed class StressSession
     }
 
     public StressResult Result() => new(
-        Seed, _outcome, Ms(_endTick), _breakTick >= 0 ? Ms(_breakTick) : null, _minResolve, _timeline);
+        Seed, _outcome, Ms(_endTick), _breakTick >= 0 ? Ms(_breakTick) : null, _minResolve, _timeline,
+        _diedTick >= 0 ? Ms(_diedTick) : null, _diedTick >= 0 ? _physiology!.Cause : DeathCause.None);
 
     public long Ms(long tick) => (long)Math.Round(tick * _p.TickSeconds * 1000.0);
 
