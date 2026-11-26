@@ -188,7 +188,7 @@ public static class Program
             // it settles onto the hold pose. At 4 substeps (the tuned count) the largest drift is 1.35 cm from 3 s and 0.66 cm from 8 s, at 8 substeps 1.16 and 0.48 cm: the
             // limits sit 2.6 and 3.0 times the 4-substep reading, 3.0 and 4.2 times the 8-substep one. The limits hold at 4 and 8 substeps only: at 2 the drift is 5.75 cm
             // from 3 s and 0.90 cm from 8 s, at 1 it is 20.5 cm and 20.4 cm.
-            // A flinch moves the hand over 2.3 cm from where a leak-free arm is; the limits stay at 0.035 and 0.020.
+            // A flinch raises the gap from a leak-free arm by a median 3.32 cm over seeds 1-9 (the flinch control below); the limits stay at 0.035 and 0.020.
             for (int i = 3 * Hz; i < r.Hand.Count; i++) Check(Dist(r.Hand[i]) <= 0.035f, $"drift {Dist(r.Hand[i]):F3} m at tick {i}");
             for (int i = 8 * Hz; i < r.Hand.Count; i++) Check(Dist(r.Hand[i]) <= 0.020f, $"late drift {Dist(r.Hand[i]):F3} m at tick {i}");
         }),
@@ -214,22 +214,27 @@ public static class Program
             }
         }),
 
-        ("body: the flinch moves the hand: against a flinch-gain-0 control on the same seed the gap rises by over 2.3 cm within 200 ms of a flinch, above the gap at that flinch", () =>
+        ("body: the flinch moves the hand: against a flinch-gain-0 control on the same seed, the median over seeds 1-9 of the largest rise of the gap within 200 ms of a pre-break flinch, above the gap at that flinch, is over 1.68 cm", () =>
         {
-            for (ulong seed = 1; seed <= 3; seed++)
+            // The claim is a distribution (ruling deterministic-bound-margin). Per seed: the largest rise, over the flinches whose 200 ms window ends before the break tick, of
+            // max Gap over [f, f+200 ms] minus Gap(f); the gap before the first flinch is the continuous leak of the feedforward, so a rise is read against the gap at its own tick.
+            // Pre-break only: the flinch at the break tick has a window that reaches the withdrawal. Measured medians over seeds 1-9: shipped 3.32 cm (per seed 1.92 2.84 2.85 3.22 3.32
+            // 3.40 3.46 3.47 4.06), FlinchGain halved 0.85 cm, flinch pose = hold pose 0.30 cm; over seeds 1-50 shipped 3.43 (min 1.40, max 4.62), halved 0.92, no flinch 0.30.
+            // The bound 1.68 cm is the geometric mean of 3.32 and 0.85 (separation 3.91 on the halved mutant). The nervous state is checked per seed: the flinches are equal.
+            var rises = new List<float>();
+            for (ulong seed = 1; seed <= 9; seed++)
             {
                 var full = BodyPainBox.Run(Steady, seed);
                 var control = BodyPainBox.Run(Steady with { Hold = new Lodur.HoldParameters { FlinchGain = 0.0 } }, seed);
                 Check(full.Run.Flinches == control.Run.Flinches, $"seed {seed}: the nervous state changed with the arm");
                 var flinches = full.Run.Timeline.Where(e => e.Kind == EntryKind.Flinch).Select(e => Tick(e.TimeMs)).ToList();
                 float Gap(int i) => MathF.Sqrt(MathF.Pow(full.Hand[i].X - control.Hand[i].X, 2) + MathF.Pow(full.Hand[i].Y - control.Hand[i].Y, 2) + MathF.Pow(full.Hand[i].Z - control.Hand[i].Z, 2));
-                float after = flinches.Max(f => Enumerable.Range(f, Hz / 5 + 1).Max(Gap));
-                // The gap before the first flinch is the continuous leak of the feedforward (the two runs part with the box ramp, before any flinch), so what a flinch adds is read
-                // against the gap at its own tick: some flinch's 200 ms window raises the gap by over 2.3 cm above it.
-                float rise = flinches.Max(f => Enumerable.Range(f, Hz / 5 + 1).Max(Gap) - Gap(f));
-                Check(after > 0.023f, $"seed {seed}: the largest gap from the control after a flinch is {after:F4} m");
-                Check(rise > 0.023f, $"seed {seed}: the largest rise of the gap within 200 ms of a flinch, above the gap at that flinch, is {rise:F4} m");
+                int breakTick = Tick(full.Run.TimeToBreakMs ?? long.MaxValue / 2);
+                var pre = flinches.Where(f => f + Hz / 5 < breakTick && f + Hz / 5 < Math.Min(full.Hand.Count, control.Hand.Count)).ToList();
+                rises.Add(pre.Count == 0 ? 0f : pre.Max(f => Enumerable.Range(f, Hz / 5 + 1).Max(Gap) - Gap(f)));
             }
+            rises.Sort();
+            Check(rises[rises.Count / 2] > 0.0168f, $"median largest pre-break rise over seeds 1-9 is {rises[rises.Count / 2]:F4} m: {string.Join(" ", rises.Select(x => (x * 100).ToString("F2")))} cm");
         }),
 
         ("chamber: the withdrawal is one-way: with the box quiet for 90 s past it and the will mended, the goal stays Withdraw, and switching the box off at that moment does not end the run as if the will held", () =>
