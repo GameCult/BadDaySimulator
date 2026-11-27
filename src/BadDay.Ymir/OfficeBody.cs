@@ -50,14 +50,15 @@ public static class OfficeBody
     /// </summary>
     public static OfficePoses Poses { get; } = BuildPoses();
 
-    /// <summary>Runs the office on the puppet to the end of the release; the tick rate must be 1/120 s.</summary>
-    public static OfficeBodyResult Run(StressParameters p, ulong seed)
+    /// <summary>Runs the office on the puppet for <paramref name="seconds"/> (the harness's horizon: the session has no end of its own); the tick rate must be 1/120 s.</summary>
+    public static OfficeBodyResult Run(StressParameters p, ulong seed, double seconds)
     {
         using var session = new OfficeBodySession(p, seed);
         var handL = new List<BodyPoint>();
         var handR = new List<BodyPoint>();
         var pelvis = new List<BodyPoint>();
-        while (!session.Finished)
+        long ticks = (long)Math.Round(seconds * Hz);
+        while (session.TickIndex < ticks)
         {
             session.Step();
             handL.Add(session.HandL);

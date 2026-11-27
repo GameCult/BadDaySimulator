@@ -9,8 +9,8 @@ namespace BadDay.Core;
 /// <see cref="Actor"/>, and the recorder. The headless run, the sweep, the CLI and a client all drive it one
 /// <see cref="Tick"/> per step, and the player's lever is <see cref="Silence"/>. The session never writes drive
 /// state, computes load or arousal, or holds a stress field: rows are end-of-tick state read from the Actor, and
-/// nothing reads them back. The rage and the calm after it are the Brain's (<see cref="OfficeBrain"/>): the session goes on past the break, logs each
-/// tick the Actor commits a switch, and ends ReleaseSeconds after the Brain's release goal (<see cref="StressParameters.ReleaseGoalId"/>) takes over, or at MaxSeconds.
+/// nothing reads them back. The rage and the calm after it are the Brain's (<see cref="OfficeBrain"/>): the session logs each tick the Actor commits a switch. It has no end of its own
+/// (ruling bds-office-is-a-sandbox-preset): the will's break is an event in the scene, and the caller stops stepping when the player ends it.
 /// </summary>
 public sealed class StressSession
 {
@@ -21,10 +21,7 @@ public sealed class StressSession
     private readonly bool[] _silenced;
     private readonly Emitter[] _emitters;
     private readonly List<StressEntry> _timeline = new();
-    private readonly long _maxTick;
     private readonly long _sampleEvery;
-    private readonly long _releaseTicks;
-    private readonly int _releaseGoal;
     private readonly Physiology? _physiology;
     private readonly PhysiologyPlan? _physiologyPlan;
     private readonly int[]? _stackOf;
@@ -32,7 +29,6 @@ public sealed class StressSession
     private long _breakTick = -1;
     private double _minResolve = 1.0;
     private Outcome _outcome = Outcome.Endured;
-    private long _endTick;
     private long _diedTick = -1;
 
     /// <param name="poses">What the Brain's goals write, one rotation per muscle; the Actor's muscle count is theirs.</param>
@@ -82,13 +78,7 @@ public sealed class StressSession
             OfficeBrain.Build(p, poses),
             p.Character.Senses with { Gain = p.Character.Senses.Gain * gainTrait }, senseRegion,
             physiology: physiology, body: body);
-        _maxTick = Ticks(p.MaxSeconds);
         _sampleEvery = Math.Max(1, Ticks(p.SampleEverySeconds));
-        _releaseTicks = Ticks(p.ReleaseSeconds);
-        _releaseGoal = -1;
-        for (int g = 0; g < Actor.Brain.Goals.Count; g++) if (Actor.Brain.Goals[g].Id == p.ReleaseGoalId) _releaseGoal = g;
-        if (_releaseGoal < 0) throw new ArgumentException($"the Brain has no goal '{p.ReleaseGoalId}' to release on");
-        _endTick = _maxTick;
     }
 
     public ulong Seed { get; }
@@ -99,9 +89,6 @@ public sealed class StressSession
 
     /// <summary>Ticks run so far; the tick the next <see cref="Tick"/> runs.</summary>
     public long TickIndex => Actor.TickCount;
-
-    /// <summary>True once the release after calm took over is over, or the time ran out.</summary>
-    public bool Finished { get; private set; }
 
     /// <summary>
     /// The player silences a stressor: from the current tick on it writes nothing. Silencing a silenced stressor
@@ -120,13 +107,13 @@ public sealed class StressSession
     /// The player wounds a part with a tool from the current tick on: one Cut affliction of the tool's severity on each layer its
     /// <see cref="WoundTool.Depth"/> reaches at <paramref name="point"/> (in the part's frame) through the part's PartTissuesDef.Reach,
     /// through <see cref="Physiology.Afflict"/>, the only way harm enters. All of the layers or none: false, and nothing wounded, for a
-    /// headless session, a body that is dead (death is permanent, bds-death) or a run that is <see cref="Finished"/>, a part the body
+    /// headless session, a body that is dead (death is permanent, bds-death), a part the body
     /// lacks, or when the physiology has no room for every layer (its answer, not counted here).
     /// </summary>
     public bool Wound(int part, (float X, float Y, float Z) point, WoundTool tool)
     {
         if (_physiology is null || _physiologyPlan is null || _stackOf is null || (uint)part >= (uint)_stackOf.Length) return false;
-        if (Finished || _physiology.Dead) return false;
+        if (_physiology.Dead) return false;
         var stack = _physiologyPlan.Parts[_stackOf[part]];
         Span<int> layers = stackalloc int[stack.Tissues.Count];
         int n = stack.Reach(point, tool.Depth, layers);
@@ -160,28 +147,21 @@ public sealed class StressSession
         }
         if ((events & TickEvents.Died) != 0)
         {
-            // The Actor reported the body's death (once); it is limp and frozen from here, and the run ends a release later.
+            // The Actor reported the body's death (once); it is limp and frozen from here.
             _diedTick = tick;
             _outcome = Outcome.Died;
-            _endTick = Math.Min(_endTick, tick + _releaseTicks);
             Log(tick, StressEntryKind.Died);
         }
         if (tick % _sampleEvery == 0) Log(tick, StressEntryKind.Sample);
         if ((events & TickEvents.GoalChanged) != 0)
         {
-            if (Actor.GoalIndex == _releaseGoal) _endTick = Math.Min(_maxTick, tick + _releaseTicks);
             Log(tick, StressEntryKind.GoalChanged);
-        }
-        if (tick >= _endTick)
-        {
-            if (_outcome == Outcome.Endured) Log(tick, StressEntryKind.Endured);
-            Finished = true;
         }
         return events;
     }
 
     public StressResult Result() => new(
-        Seed, _outcome, Ms(_endTick), _breakTick >= 0 ? Ms(_breakTick) : null, _minResolve, _timeline,
+        Seed, _outcome, Ms(TickIndex), _breakTick >= 0 ? Ms(_breakTick) : null, _minResolve, _timeline,
         _diedTick >= 0 ? Ms(_diedTick) : null, _diedTick >= 0 ? _physiology!.Cause : DeathCause.None);
 
     public long Ms(long tick) => (long)Math.Round(tick * _p.TickSeconds * 1000.0);

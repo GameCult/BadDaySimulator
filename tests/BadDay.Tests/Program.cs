@@ -617,10 +617,10 @@ public static class Program
             Check(Office(p, 1).Render() == Office(p, 1).Render(), "rendered timelines differ");
             var a = NewOffice(p, 1);
             var b = NewOffice(p, 2);
-            while (!a.Finished || !b.Finished)
+            while (a.TickIndex < OfficeSeconds / p.TickSeconds)
             {
-                if (!a.Finished) Step(a);
-                if (!b.Finished) Step(b);
+                Step(a);
+                Step(b);
             }
             Check(a.Result().Render() == Office(p, 1).Render() && b.Result().Render() == Office(p, 2).Render(), "stepped sessions differ from runs alone");
         }),
@@ -630,12 +630,11 @@ public static class Program
             var r = Office(new StressParameters { Cause = Cause.Office with { Stressors = Array.Empty<Stressor>() } }, 1);
             Check(r.Outcome == Outcome.Endured && r.TimeToBreakMs is null && r.EndMs == 180000, $"outcome {r.Outcome} at {r.EndMs}");
             Check(r.Timeline.All(e => e.Load == 0.0 && e.Arousal == 0.0 && e.Resolve == 1.0), "an empty office loaded the character");
-            Check(r.Timeline[^1].Kind == StressEntryKind.Endured, "no Endured row");
         }),
 
         ("office tuning [P]: seeds 1..50, at least 80% break within 180 s, and p10 and p90 break times differ by more than 20%", () =>
         {
-            var sweep = StressSweep.Run(new StressParameters(), 1, 50);
+            var sweep = StressSweep.Run(new StressParameters(), 1, 50, OfficeSeconds);
             Check(sweep.Broke >= 40, $"only {sweep.Broke} of 50 broke");
             var b = sweep.Results.Where(r => r.TimeToBreakMs.HasValue).Select(r => (double)r.TimeToBreakMs!.Value).OrderBy(x => x).ToArray();
             double p10 = b[(int)(b.Length * 0.1)], p90 = b[(int)(b.Length * 0.9)];
@@ -714,11 +713,11 @@ public static class Program
         ("office: after one 10 s burst resolve does not rise while arousal is at or above the threshold, then it rises", () =>
         {
             var burst = new Stressor("burst", "printer", 0, 0, null, 10, 0.5, 0);
-            var p = new StressParameters { MaxSeconds = 120, Cause = Cause.Office with { Stressors = new[] { burst } } };
+            var p = new StressParameters { Cause = Cause.Office with { Stressors = new[] { burst } } };
             var s = NewOffice(p, 1);
             double gate = p.Drive.ResolveRecoversBelowArousal, prev = 1.0, lowest = 1.0;
             int heldDown = 0, rose = 0;
-            while (!s.Finished)
+            while (s.TickIndex < 120.0 / p.TickSeconds)
             {
                 Step(s);
                 var d = s.Actor.Drive;
@@ -808,8 +807,8 @@ public static class Program
             Check(plain.Contains("will broke at"), "seed 1 should break at the default settings");
             var quiet = Run("office", "--seed", "1", "--silence", "printer@0", "--silence", "desk-phone@0");
             Check(quiet.Split('\n').Count(l => l.Contains(" Silenced ")) == 2, "two --silence options should give two Silenced rows");
-            Check(Run("office", "--seed", "1", "--scale", "0").Contains("endured to 180000 ms"), "--scale 0 should be a quiet office");
-            Check(Run("office", "--seed", "1", "--pull", "1").Contains("endured"), "--pull 1 never drains");
+            Check(Run("office", "--seed", "1", "--scale", "0").Contains("will held to 180000 ms"), "--scale 0 should be a quiet office");
+            Check(Run("office", "--seed", "1", "--pull", "1").Contains("will held to"), "--pull 1 never drains");
             Check(Run("office-sweep", "--seed", "1", "--count", "5").Contains("min resolve of endured runs:"), "no sweep summary");
             foreach (var bad in new[] { new[] { "office" }, new[] { "office", "--seed", "1", "--silence", "printer" }, new[] { "office", "--seed", "1", "--silence", "nope@1" }, new[] { "office-sweep", "--seed", "1", "--body" }, new[] { "office", "--seed", "1", "--body", "--silence", "printer@1" }, new[] { "office", "--seed", "1", "--pay", "5" } })
             {
@@ -868,7 +867,7 @@ public static class Program
             }
         }),
 
-        ("office golden [P]: the rows up to the break are rung 3's bytes, the 50-seed sweep ends in its captured line, and the run's own bytes are captured (re-captured with the arc, again for the 8 s settle, and again for the arousal bar)", () =>
+        ("office golden [P]: the rows up to the break are rung 3's bytes, the 50-seed sweep ends in its captured line, and the run's own bytes are captured (re-captured with the arc, again for the 8 s settle, and again for the arousal bar, and again when the session lost its end: the old run's bytes are the first 109 lines, then 77 more rows to the 180 s horizon)", () =>
         {
             string Out(params string[] a)
             {
@@ -890,12 +889,12 @@ public static class Program
             }
             rung3.Add(lines[^1]);
             Check(Hash(string.Join('\n', rung3) + "\n") == "66098b69834c3c8b5e5b694f0059b8ed566e31d332f36be7e57baf70ae650823", "the office's rows up to the break differ from rung 3's");
-            Check(Hash(string.Join('\n', lines) + "\n") == "f52e70b641cde4bcb5c5f6286ed022ccd31950425656b23f302a041218396db6", $"office --seed 1 changed: {Hash(string.Join('\n', lines) + "\n")}");
+            Check(Hash(string.Join('\n', lines) + "\n") == "fd36bb482a2aa8ae2f8992686016e1bfbc21c3db0e7ecc51cab574f4b617b606", $"office --seed 1 changed: {Hash(string.Join('\n', lines) + "\n")}");
             var last = Out("office-sweep", "--seed", "1", "--count", "50").TrimEnd('\n').Split('\n')[^1];
             Check(last == "runs 50: broke 50, endured 0; time to break min/median/max ms: 72670/86570/113420; min resolve of endured runs: -", $"sweep line changed: {last}");
         }),
 
-        ("office arc: the snap, then a rage on a refilled will, a second break 5-20 s later, and calm for good: every switch 100 ms after its break, nothing after calm, and the run ends ReleaseSeconds after calm", () =>
+        ("office arc: the snap, then a rage on a refilled will, a second break 5-20 s later, and calm for good: every switch 100 ms after its break, and nothing changes after calm to the 180 s horizon", () =>
         {
             for (ulong seed = 1; seed <= 20; seed++)
             {
@@ -913,12 +912,8 @@ public static class Program
                 Check(r.Timeline.Where(e => e.TimeMs < rage.TimeMs).All(e => e.Goal == OfficeGoal.KeepComposure), $"seed {seed}: a row before the rage is not KeepComposure");
                 Check(r.Timeline.Where(e => e.TimeMs >= rage.TimeMs && e.TimeMs < calm.TimeMs).All(e => e.Goal == OfficeGoal.Rage), $"seed {seed}: a row in the rage is not Rage");
                 Check(r.Timeline.Where(e => e.TimeMs >= calm.TimeMs).All(e => e.Goal == OfficeGoal.Calm), $"seed {seed}: a row from calm on is not Calm");
-                Check(r.Outcome == Outcome.WillBroke && r.EndMs == calm.TimeMs + 8000, $"seed {seed}: ended at {r.EndMs}, calm was at {calm.TimeMs}");
+                Check(r.Outcome == Outcome.WillBroke && r.EndMs == 180000, $"seed {seed}: outcome {r.Outcome}, read at {r.EndMs}, calm was at {calm.TimeMs}");
             }
-            var short_ = Office(new StressParameters { ReleaseSeconds = 2.0 }, 1);
-            Check(short_.EndMs == short_.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm).TimeMs + 2000, "ReleaseSeconds did not set the settle time");
-            var clipped = Office(new StressParameters { MaxSeconds = 85.0 }, 1);
-            Check(clipped.Outcome == Outcome.WillBroke && clipped.EndMs == 85000 && clipped.Timeline.All(e => e.Kind != StressEntryKind.Endured && e.Goal != OfficeGoal.Calm), $"a release past MaxSeconds ended at {clipped.EndMs}");
         }),
 
         ("office rage onset: the rage is involuntary for RageOnsetSeconds, so it costs no will in that first second and drains at RageEffort after it", () =>
@@ -953,14 +948,14 @@ public static class Program
             Check(early.Contains("before the rage took over"), $"clipped before the rage: {early}");
         }),
 
-        ("office calm is terminal: with the release moved off calm the run goes to MaxSeconds, and after the Calm row the goal never changes again, with the senses still pressing", () =>
+        ("office calm is terminal: after the Calm row the goal never changes again to the 180 s horizon, with the senses still pressing", () =>
         {
             // Calm's fade is longer than the run here, so his senses stay open and the load keeps pressing for all 180 s. A default calm silences them: since that ruling no public path
             // breaks the will a third time after calm (its mend needs arousal under 0.1, which only the quiet fade gives, and the quiet has no load), so "whatever the mending will does" is not yet reached.
             var Bursty = Cause.Office with { Stressors = new[] { new Stressor("printer", "printer", 5.0, 0.0, 100.0, 40.0, 1.0, 0.0) } };
             for (ulong seed = 1; seed <= 5; seed++)
             {
-                var r = Office(new StressParameters { ReleaseGoalId = "keep-composure", Cause = Bursty, CalmFadeSeconds = 1.0e6 }, seed);
+                var r = Office(new StressParameters { Cause = Bursty, CalmFadeSeconds = 1.0e6 }, seed);
                 var calm = r.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm);
                 Check(r.EndMs == 180000, $"seed {seed}: ended at {r.EndMs}");
                 Check(r.Timeline.Count(e => e.Kind == StressEntryKind.GoalChanged) == 2, $"seed {seed}: a goal changed after calm");
@@ -971,11 +966,11 @@ public static class Program
 
         ("office calm is terminal on the shipped calm: over a full-length run the goal never leaves Calm, though his will mends in the quiet", () =>
         {
-            // The default fade, so the senses are silenced as shipped, and the release moved off calm so the run goes the 180 s. With no load his arousal stays 0 and resolve mends from 0:
+            // The default fade, so the senses are silenced as shipped, and the run read at the 180 s horizon. With no load his arousal stays 0 and resolve mends from 0:
             // a calm that gated on a mended will would be lost here, which the open-senses test above cannot reach.
             for (ulong seed = 1; seed <= 3; seed++)
             {
-                var r = Office(new StressParameters { ReleaseGoalId = "keep-composure" }, seed);
+                var r = Office(new StressParameters(), seed);
                 var calm = r.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm);
                 Check(r.EndMs == 180000, $"seed {seed}: ended at {r.EndMs}");
                 Check(r.Timeline.Count(e => e.Kind == StressEntryKind.GoalChanged) == 2, $"seed {seed}: a goal changed after calm");
@@ -984,16 +979,14 @@ public static class Program
             }
         }),
 
-        ("office release: the run ends on the Brain's release goal, by id, not on any goal change; an id the Brain lacks is refused", () =>
+        ("office has no end of its own: the session ticks on past the break and the calm to 600 s, its result is read at the latest tick, and no row says Endured", () =>
         {
-            var r = Office(new StressParameters { ReleaseGoalId = "keep-composure" }, 1);
-            Check(r.EndMs == 180000 && r.Outcome == Outcome.WillBroke, $"releasing on a goal the Brain never switches to ended the run at {r.EndMs}");
-            var rage = Office(new StressParameters { ReleaseGoalId = OfficeBrain.RageId }, 1);
-            var sw = rage.Timeline.First(e => e.Kind == StressEntryKind.GoalChanged);
-            Check(sw.Goal == OfficeGoal.Rage && rage.EndMs == sw.TimeMs + 8000, $"releasing on the rage ended the run at {rage.EndMs}, the rage was at {sw.TimeMs}");
-            bool threw = false;
-            try { NewOffice(new StressParameters { ReleaseGoalId = "nowhere" }, 1); } catch (ArgumentException) { threw = true; }
-            Check(threw, "a release goal the Brain lacks was accepted");
+            var s = NewOffice(new StressParameters(), 1);
+            while (s.TickIndex < 60000) Step(s);
+            var r = s.Result();
+            Check(r.Outcome == Outcome.WillBroke && r.EndMs == 600000, $"outcome {r.Outcome}, read at {r.EndMs} ms");
+            Check(r.Timeline.Count(e => e.Kind == StressEntryKind.GoalChanged) == 2 && r.Timeline.Where(e => e.Kind == StressEntryKind.Sample).Max(e => e.TimeMs) >= 599000, "the session stopped logging");
+            Check(r.Timeline[^1].Goal == OfficeGoal.Calm, "the office left calm after its break");
         }),
 
         ("office rage: a will that holds never switches, and the job's pull is the composure goal's alone", () =>
@@ -1008,8 +1001,8 @@ public static class Program
         ("office body: the rage is visible: both hands move at least 3x faster, and over 1 m/s (a limp rage gives 0.6), in the 2 s after the switch than in the 2 s before, the pelvis stays within 1 cm, and two runs agree", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
-            var a = OfficeBody.Run(p, 1);
-            var b = OfficeBody.Run(p, 1);
+            var a = BodyArc(p, 1);
+            var b = BodyArc(p, 1);
             Check(a.Run.Render() == b.Run.Render() && a.HandL.SequenceEqual(b.HandL) && a.HandR.SequenceEqual(b.HandR) && a.Pelvis.SequenceEqual(b.Pelvis), "two body runs differ");
             Check(a.Run.Outcome == Outcome.WillBroke && a.RageTick is not null, $"outcome {a.Run.Outcome}");
             int sw = a.RageTick!.Value;
@@ -1046,7 +1039,7 @@ public static class Program
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             for (ulong seed = 1; seed <= 3; seed++)
             {
-                var a = OfficeBody.Run(p, seed);
+                var a = BodyArc(p, seed);
                 int rage = a.RageTick!.Value;
                 int calm = (int)Math.Round(a.Run.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm).TimeMs * Hz / 1000.0);
                 double Speed(IReadOnlyList<BodyPoint> h, int i)
@@ -1077,7 +1070,7 @@ public static class Program
             ulong worstSeed = 0;
             foreach (ulong seed in seeds)
             {
-                var a = OfficeBody.Run(new StressParameters { TickSeconds = OfficeBody.TickSeconds }, seed);
+                var a = BodyArc(new StressParameters { TickSeconds = OfficeBody.TickSeconds }, seed);
                 foreach (var h in new[] { a.HandL, a.HandR })
                 {
                     for (int k = h.Count - Hz; k < h.Count; k++)
@@ -1093,20 +1086,20 @@ public static class Program
 
         ("office body: the desk's emitters are sensed at the head, so the body breaks within 0.5 s of the headless run (sensed at a hand it is 3.6 s off)", () =>
         {
-            var body = OfficeBody.Run(new StressParameters { TickSeconds = OfficeBody.TickSeconds }, 1).Run;
+            var body = OfficeBody.Run(new StressParameters { TickSeconds = OfficeBody.TickSeconds }, 1, OfficeSeconds).Run;
             var headless = Office(new StressParameters(), 1);
             Check(Math.Abs(body.TimeToBreakMs!.Value - headless.TimeToBreakMs!.Value) < 500, $"body {body.TimeToBreakMs} ms, headless {headless.TimeToBreakMs} ms");
         }),
 
-        ("office session: stepping OfficeBodySession to Finished gives OfficeBody.Run's timeline, seeds 1 and 2, and the pelvis and hands are the ones Run recorded", () =>
+        ("office session: stepping OfficeBodySession to the horizon gives OfficeBody.Run's timeline, seeds 1 and 2, and the pelvis and hands are the ones Run recorded", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             foreach (ulong seed in new ulong[] { 1, 2 })
             {
-                var run = OfficeBody.Run(p, seed);
+                var run = OfficeBody.Run(p, seed, OfficeSeconds);
                 using var s = new OfficeBodySession(p, seed);
                 int steps = 0;
-                while (!s.Finished) { s.Step(); steps++; }
+                while (s.TickIndex < Sandbox) { s.Step(); steps++; }
                 Check(s.Result().Render() == run.Run.Render(), $"seed {seed}: the stepped session's timeline differs from Run's");
                 Check(steps == run.HandL.Count && s.HandL == run.HandL[^1] && s.HandR == run.HandR[^1] && s.Pelvis == run.Pelvis[^1], $"seed {seed}: {steps} steps against {run.HandL.Count} recorded, or the last points differ");
                 bool threw = false;
@@ -1115,7 +1108,7 @@ public static class Program
             }
         }),
 
-        ("office wound kills by blood loss: Wound(LowerArm L, Knife) at tick 0 gives exactly one Died event, DeathCause BloodLoss, Outcome Died, a death 30-60 s in (probe: 42.1 s with skin and muscle) that two runs agree on, and a run that ends ReleaseSeconds later", () =>
+        ("an ordinary knife cut bleeds out in 2-4 minutes: Wound(LowerArm L, Knife) at tick 0 gives exactly one Died event, DeathCause BloodLoss, Outcome Died, a death 120-240 s in (ruling bds-bleed-by-vessels; the band is the ruling's; shipped 191.00 s through skin, fat and muscle) that two runs agree on, and a limp body after it", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             var arm = SeatedPuppet.Plan.PartIndex("LowerArm", Lodur.Side.Left);
@@ -1127,7 +1120,7 @@ public static class Program
                 var buffer = new BodyEvent[16];
                 int died = 0;
                 bool deadBefore = false;
-                while (!s.Finished)
+                while (s.TickIndex < 250 * Hz)
                 {
                     s.Step();
                     int n; while ((n = s.DrainEvents(buffer)) > 0) for (int i = 0; i < n; i++) if ((buffer[i].Events & Lodur.TickEvents.Died) != 0) died++;
@@ -1136,15 +1129,34 @@ public static class Program
                 var r = s.Result();
                 Check(died == 1 && !deadBefore, $"{died} Died events drained");
                 Check(s.Dead && s.DeathCause == Lodur.DeathCause.BloodLoss && r.DeathCause == Lodur.DeathCause.BloodLoss, $"cause {s.DeathCause}");
-                Check(r.Outcome == Outcome.Died && r.DiedAtMs is long ms && ms >= 30000 && ms <= 60000, $"outcome {r.Outcome}, died at {r.DiedAtMs} ms");
-                Check(r.EndMs == r.DiedAtMs + (long)Math.Round(p.ReleaseSeconds * 1000.0), $"the run ended at {r.EndMs} ms, the death was at {r.DiedAtMs} ms");
+                Check(r.Outcome == Outcome.Died && r.DiedAtMs is long ms && ms >= 120000 && ms <= 240000, $"outcome {r.Outcome}, died at {r.DiedAtMs} ms");
                 Check(r.Timeline.Count(e => e.Kind == StressEntryKind.Died) == 1 && r.Summary().Contains("BloodLoss"), "the Died row or the summary is missing");
                 Check(s.Consciousness == 0.0 && s.BloodLoss >= 1.0, $"consciousness {s.Consciousness}, blood loss {s.BloodLoss}");
                 if (diedAt is null) diedAt = r.DiedAtMs; else Check(diedAt == r.DiedAtMs, $"two runs died at {diedAt} and {r.DiedAtMs} ms");
             }
         }),
 
-        ("office death is limp and ends the run: after the Died tick every strength the session wrote is 0 and the goal never changes again, the death is before the run's end by exactly ReleaseSeconds, and before it the body was driving muscles", () =>
+        ("a knife cut reaching a major vessel kills in about 30 s: Wound at the side of the neck (either carotid) or the inner thigh (femoral) at tick 0, DeathCause BloodLoss, death within (21.9, 48.6) s, the airway never touched", () =>
+        {
+            // Shipped 29.73 s at all three sites (ruling bds-bleed-by-vessels, about 30 s, a target and not a band). The bounds are Lodur's (VesselTests, the same physiology: shipped 29.73 s there too), the geometric midpoints
+            // sqrt(29.73 x 16.15) = 21.9 for a carotid with no site (reached at the front of the throat as well) and sqrt(29.73 x 79.35) = 48.6 for VesselV 1.0, separations 1.84 and 2.67.
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            var plan = SeatedPuppet.Plan;
+            foreach (var (part, side, point) in new[] { ("Head", Lodur.Side.Center, (0.0778f, -0.0778f, 0f)), ("Head", Lodur.Side.Center, (-0.0778f, -0.0778f, 0f)), ("Thigh", Lodur.Side.Left, (-0.0495f, 0.12f, 0.0495f)) })
+            {
+                using var s = new OfficeBodySession(p, 1);
+                int index = plan.PartIndex(part, side);
+                Check(s.Wound(HitAtPoint(s, index, point), WoundTool.Knife), $"the knife was refused at {part} {point}");
+                double maxOcclusion = 0.0;
+                while (!s.Dead && s.TickIndex < 120 * Hz) { s.Step(); maxOcclusion = Math.Max(maxOcclusion, s.Occlusion); }
+                double at = s.TickIndex / (double)Hz;
+                Console.WriteLine($"  vessel at {part} {side} {point}: dead at {at:F2} s of {s.DeathCause}");
+                Check(s.Dead && s.DeathCause == Lodur.DeathCause.BloodLoss && at > 21.9 && at < 48.6, $"{part} {point}: dead {s.Dead} at {at:F2} s of {s.DeathCause}");
+                Check(maxOcclusion == 0.0, $"{part} {point}: the airway filled to {maxOcclusion:F3}");
+            }
+        }),
+
+        ("office death is limp: after the Died tick every strength the session wrote is 0 and the goal never changes again, to 250 s, and before it the body was driving muscles", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             var plan = SeatedPuppet.Plan;
@@ -1158,7 +1170,7 @@ public static class Program
             float drivenBefore = 0f;
             long diedTick = -1;
             int goalAtDeath = -1;
-            while (!session.Finished)
+            while (session.TickIndex < 250 * Hz)
             {
                 var ev = session.Tick(pts, pts, pts, strengths, targets);
                 if ((ev & Lodur.TickEvents.Died) != 0) { diedTick = session.TickIndex - 1; goalAtDeath = session.Actor.GoalIndex; }
@@ -1168,7 +1180,6 @@ public static class Program
             var r = session.Result();
             Check(diedTick >= 0 && r.Outcome == Outcome.Died, "the body did not die");
             Check(drivenBefore > 0f, "no muscle was driven before the death, so limp proves nothing");
-            Check(session.TickIndex - 1 == diedTick + (long)Math.Round(p.ReleaseSeconds / p.TickSeconds), $"the run ended at tick {session.TickIndex - 1}, the death was at {diedTick}");
         }),
 
         ("office wound refusals: an out-of-range part and a headless session refuse, and a palm takes the knife on skin, muscle and metacarpals", () =>
@@ -1201,7 +1212,7 @@ public static class Program
                 using var s = new OfficeBodySession(p with { SlowScale = scale }, 1);
                 Check(s.Wound(Hit(s, arm), new WoundTool(0.001, 0.006)), "the skin wound was refused");
                 bool bled = false;
-                while (!s.Finished)
+                while (s.TickIndex < Sandbox)
                 {
                     s.Step();
                     bled |= s.BloodLoss > 0.0;
@@ -1220,7 +1231,7 @@ public static class Program
             {
                 var arousal = new List<double>(); var resolve = new List<double>(); var goal = new List<OfficeGoal>();
                 double firstWill = -1, minWill = 1;
-                while (!s.Finished)
+                while (s.TickIndex < Sandbox)
                 {
                     s.Step();
                     if (firstWill < 0) firstWill = s.Will;
@@ -1240,7 +1251,7 @@ public static class Program
             {
                 Check(s.Wound(HitAt(s, SeatedPuppet.Plan.PartIndex("Torso", Lodur.Side.Center), (0f, 0.07f, -0.09f), alongZ: true), new WoundTool(0.065, 15.0)), "the lungs were refused");
                 double maxHunger = 0.0;
-                while (!s.Finished)
+                while (s.TickIndex < Sandbox)
                 {
                     s.Step();
                     maxHunger = Math.Max(maxHunger, s.AirHunger);
@@ -1250,23 +1261,7 @@ public static class Program
             }
         }),
 
-        ("office after Finished: Step ticks nothing (the tick index, the result and the event queue stay) and the world still steps (the hands and pelvis keep moving)", () =>
-        {
-            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
-            using var s = new OfficeBodySession(p, 1);
-            while (!s.Finished) s.Step();
-            var buffer = new BodyEvent[64];
-            while (s.DrainEvents(buffer) > 0) { }
-            long tick = s.TickIndex;
-            string result = s.Result().Render();
-            double will = s.Will;
-            var before = (s.HandL, s.HandR, s.Pelvis);
-            for (int i = 0; i < 60; i++) s.Step();
-            Check(s.TickIndex == tick && s.Result().Render() == result && s.Will == will && s.DrainEvents(buffer) == 0, "a step after Finished ticked the session");
-            Check(s.HandL != before.HandL && s.HandR != before.HandR && s.Pelvis != before.Pelvis, "the world stopped stepping after Finished");
-        }),
-
-        ("office wound is refused once the body is dead or the run is finished, and a refused wound is whole or nothing: a tool the table lacks room for in full wounds no layer", () =>
+        ("office wound is refused once the body is dead (not once the will has broken: the office has no end), and a refused wound is whole or nothing: a tool the table lacks room for in full wounds no layer", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             var plan = SeatedPuppet.Plan;
@@ -1277,16 +1272,15 @@ public static class Program
                 var legHit = Hit(s, leg);
                 Check(s.Wound(Hit(s, arm), WoundTool.Knife), "the knife was refused");
                 while (!s.Dead) s.Step();
-                Check(!s.Finished, "the run finished at the death");
                 Check(!s.Wound(legHit, WoundTool.Knife), "a dead body was wounded");
-                while (!s.Finished) s.Step();
-                Check(!s.Wound(legHit, WoundTool.Knife), "a finished run was wounded");
+                while (s.TickIndex < 250 * Hz) s.Step();
+                Check(!s.Wound(legHit, WoundTool.Knife), "a body dead for a minute was wounded");
             }
             using (var s = new OfficeBodySession(p, 1))
             {
                 var legHit = Hit(s, leg);
-                while (!s.Finished) s.Step();
-                Check(!s.Dead && !s.Wound(legHit, WoundTool.Knife), "a finished, living run was wounded");
+                while (s.TickIndex < Sandbox) s.Step();
+                Check(!s.Dead && s.Result().TimeToBreakMs is not null && s.Wound(legHit, WoundTool.Knife), "a living body whose will had broken could not be wounded");
             }
 
             var physiologyPlan = Lodur.PhysiologyPlans.Humanoid();
@@ -1317,7 +1311,6 @@ public static class Program
             var strengths = new float[plan.Joints.Count];
             var targets = new Lodur.Quat[plan.Joints.Count];
             for (int t = 0; t < 2000 && !healer.Wound(arm, default, graze); t++) healer.Tick(sensed, sensed, sensed, strengths, targets);
-            Check(!healer.Finished, "the run ended before the grazes healed");
             Check(healer.Wound(arm, default, graze), "healed wounds did not free their room: the session still counts them");
         }),
 
@@ -1343,7 +1336,7 @@ public static class Program
             for (ulong seed = 1; seed <= 3; seed++)
             {
                 using var s = new OfficeBodySession(p, seed);
-                while (!s.Finished) s.Step();
+                while (s.TickIndex < Sandbox) s.Step();
                 var r = s.Result();
                 Check(!s.Dead && s.DeathCause == Lodur.DeathCause.None && r.DiedAtMs is null && r.Outcome != Outcome.Died && s.Consciousness == 1.0, $"seed {seed}: dead {s.Dead}, cause {s.DeathCause}, consciousness {s.Consciousness}");
             }
@@ -1363,7 +1356,8 @@ public static class Program
                 for (int t = 0; t < 10 * Hz; t++) s.Step();
                 double spilled = blood.NominalVolume * s.BloodLoss * blood.LethalLossFraction; // nominal - BloodVolume
                 double visible = bloodParameters.Gain * spilled;
-                Check(visible > 0.005, $"only {visible * 1000.0:F1} L was spilled in 10 s");
+                // Floor by deterministic-bound-margin and the zero-reading convention: shipped about 2.5 L (the knife at severity 20), the mutant that bleeds nothing reads 0, counted as one unit (1 mL); sqrt(2.5e-3 x 1e-6) = 5e-5 m^3.
+                Check(visible > 5e-5, $"only {visible * 1000.0:F1} L was spilled in 10 s");
                 Check(Math.Abs(s.BloodEmitted + s.BloodBacklog - visible) < 1e-9, $"emitted {s.BloodEmitted} + backlog {s.BloodBacklog} is not {visible} m^3");
                 Check(s.BloodBacklog >= 0.0 && s.BloodBacklog < bloodParameters.DropVolume, $"backlog {s.BloodBacklog} m^3 is not under one drop");
                 Console.WriteLine($"  blood: {visible * 1000.0:F2} L visible in 10 s, {s.BloodEmitted / bloodParameters.DropVolume:F0} drops, backlog {s.BloodBacklog * 1e6:F2} mL, live {s.LiveDrops}");
@@ -1456,14 +1450,14 @@ public static class Program
             Console.WriteLine($"  airway: liquid at the opening from tick {atAirway}, in the airway from tick {liquid}, peak {maxLiquid * 1e6:F2} mL, occlusion {maxOcclusion:F3}");
         }),
 
-        ("office throat click reaches the larynx and fills the airway: HitAt(Head, the front of the throat), Wound(hit, Knife) at tick 0 puts more than 20 mL in the airway within 5 s, occludes it fully before the death, and the death is BloodLoss", () =>
+        ("the front of the throat drowns him: HitAt(Head, the front of the throat), Wound(hit, Knife) at tick 0 puts more than 20 mL in the airway within 5 s, fills it (occlusion 0.99) within 12.9 s, and the death is Consciousness, not BloodLoss", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             using var s = new OfficeBodySession(p, 1);
             var head = SeatedPuppet.Plan.PartIndex("Head", Lodur.Side.Center);
             Check(s.Wound(HitAt(s, head, (0f, -0.0778f, 0.0778f)), WoundTool.Knife), "the knife was refused at the throat");
             double liquidAt5 = 0.0, maxOcclusion = 0.0, occludedAt = -1.0;
-            while (!s.Dead && !s.Finished)
+            while (!s.Dead && s.TickIndex < 250 * Hz)
             {
                 s.Step();
                 if (s.TickIndex <= 5 * Hz) liquidAt5 = Math.Max(liquidAt5, s.AirwayLiquid);
@@ -1472,8 +1466,9 @@ public static class Program
             }
             Console.WriteLine($"  throat: {liquidAt5 * 1e6:F1} mL in the airway by 5 s, full at {occludedAt:F1} s, died at {s.TickIndex / (double)Hz:F1} s");
             Check(liquidAt5 > 20e-6, $"the airway held {liquidAt5 * 1e6:F2} mL by 5 s");
-            Check(occludedAt >= 0.0 && maxOcclusion >= 0.99, $"the airway never filled: occlusion peaked at {maxOcclusion:F3}");
-            Check(s.Dead && s.DeathCause == Lodur.DeathCause.BloodLoss, $"cause {s.DeathCause}");
+            // Bounds are Lodur's (VesselTests, the same physiology and the same gain: shipped 1.29 s here and there): full within 12.9 s = sqrt(1.29 x 129.95), the cough-2.0 mutant at 129.95 s; separation 10.
+            Check(occludedAt >= 0.0 && occludedAt <= 12.9 && maxOcclusion >= 0.99, $"the airway filled at {occludedAt:F2} s, occlusion peaked at {maxOcclusion:F3}");
+            Check(s.Dead && s.DeathCause == Lodur.DeathCause.Consciousness, $"cause {s.DeathCause}");
         }),
 
         ("the physiology bleeds into the airway at the body's gain: a throat cut at Gain 1 and at Gain 10 fills the airway, in its first tenth of a second, at least 3.16 times as far at Gain 10", () =>
@@ -1490,13 +1485,13 @@ public static class Program
             }
             double ratio = rise[1] / rise[0];
             Console.WriteLine($"  gain: the airway held {rise[0] * 1e6:F3} mL after 0.1 s at gain 1 and {rise[1] * 1e6:F3} mL at gain 10 (ratio {ratio:F3})");
-            // Bound by deterministic-bound-margin: shipped ratio 10.000 (5.477 and 54.769 mL), least mutant 1.000 (the physiology at gain 1 under a body at gain 10: the airway filling at a tenth of the visible bleed), separation 10, bound sqrt(10.000 x 1.000) = 3.16.
+            // Bound by deterministic-bound-margin: shipped ratio 10.000 (1.380 and 13.803 mL at the Knife's severity 20), least mutant 1.000 (the physiology at gain 1 under a body at gain 10: the airway filling at a tenth of the visible bleed), separation 10, bound sqrt(10.000 x 1.000) = 3.16.
             Check(rise[0] > 0.0 && ratio >= 3.16, $"the airway's first tenth of a second held {rise[0] * 1e6:F3} mL at gain 1 and {rise[1] * 1e6:F3} mL at gain 10 (ratio {ratio:F3}): the physiology did not bleed at the body's gain");
         }),
 
-        ("a cut throat conserves liquid over the whole cycle at Gain 1 and Gain 10: every tick the world's liquid, the airway's and the expulsion backlog, less what the airway owes, the drops the wounds shed and the gain times the blood bled into the airway, is what it started as (1.8e-5 of the world's liquid), and at Gain 10 more than a litre is coughed and drained", () =>
+        ("a cut throat conserves liquid over the whole cycle at Gain 1 and Gain 10: every tick the world's liquid, the airway's and the expulsion backlog, less what the airway owes, the drops the wounds shed and the gain times the blood bled into the airway, is what it started as (1.76e-5 of the world's liquid), and at Gain 10 more than a litre is coughed and drained", () =>
         {
-            // Bound by deterministic-bound-margin, as the fraction of the world's liquid over the 1e-9 m^3 constant (read once the world holds 100 mL): shipped worst 6.70e-6 (Gain 10; 1.72e-7 at Gain 1), least mutant 4.78e-5 (the bled-in term 5e-5 short, at Gain 1; 8.90e-5 at Gain 10), separation 7.1, bound sqrt(6.70e-6 x 4.78e-5) = 1.8e-5 (the bound it replaces was 2e-5). Leaving the gain out of the bled-in term is caught by the constant at the first tick.
+            // Bound by deterministic-bound-margin, as the fraction of the world's liquid over the 1e-9 m^3 constant (read once the world holds 100 mL): shipped worst 6.68e-6 (Gain 10; 5.66e-8 at Gain 1), least mutant 4.62e-5 (the bled-in term 5e-5 short, at Gain 1; 8.41e-5 at Gain 10), separation 6.9, bound sqrt(6.68e-6 x 4.62e-5) = 1.76e-5 (the bound it replaces was 2e-5). Leaving the gain out of the bled-in term is caught by the constant at the first tick.
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             var head = SeatedPuppet.Plan.PartIndex("Head", Lodur.Side.Center);
             foreach (double gain in new[] { 1.0, 10.0 })
@@ -1505,23 +1500,19 @@ public static class Program
                 Check(s.Wound(HitAt(s, head, (0f, -0.0778f, 0.0778f)), WoundTool.Knife), "the knife was refused at the throat");
                 double c0 = WorldLiquid(s) + s.AirwayLiquid, bledIn = 0.0, worst = 0.0, worstRel = 0.0, mutantRel = 0.0;
                 long worstTick = 0;
-                int settling = 0; // the 600 ticks after Finished: in-flight drops settle and the backlog sheds
-                for (int t = 0; settling < 600 && t < 20 * 60 * Hz; t++)
+                for (int t = 0; t < 200 * Hz; t++) // death comes at 175 s at Gain 10 (380 s at Gain 1): the whole bleed, cough and drain
                 {
-                    bool running = !s.Finished;
                     s.Step();
-                    if (running) bledIn += OfficeBody.TickSeconds * gain * s.AirwayBleed;
-                    if (s.Finished) settling++;
+                    bledIn += OfficeBody.TickSeconds * gain * s.AirwayBleed;
                     double w = WorldLiquid(s);
                     double rest = w + s.AirwayLiquid + s.ExpelBacklog - s.AirwayOwed - (s.BloodEmitted - s.BloodExpelled) - c0;
                     double residual = rest - bledIn;
-                    double bound = 1.8e-5 * w + 1e-9;
+                    double bound = 1.76e-5 * w + 1e-9;
                     mutantRel = Math.Max(mutantRel, Over(rest - (1.0 - 5e-5) * bledIn, w));
                     worstRel = Math.Max(worstRel, Over(residual, w));
                     if (Math.Abs(residual) > worst) { worst = Math.Abs(residual); worstTick = s.TickIndex; }
                     Check(Math.Abs(residual) <= bound, $"gain {gain}, tick {s.TickIndex}: residual {residual * 1e6:F4} mL against a bound of {bound * 1e6:F4} mL (world {w * 1e6:F1} mL, airway {s.AirwayLiquid * 1e6:F1}, backlog {s.ExpelBacklog * 1e6:F1}, owed {s.AirwayOwed * 1e6:F2})");
                 }
-                Check(s.Finished, $"gain {gain}: the run did not finish");
                 if (gain > 1.0) Check(s.BloodExpelled > 1e-3, $"gain {gain}: only {s.BloodExpelled * 1e6:F0} mL was coughed and drained as drops");
                 Console.WriteLine($"  throat at gain {gain}: coughed and drained {s.BloodExpelled * 1e6:F0} mL as drops, {s.ExpelBacklog * 1e6:F0} mL waiting, owed {s.AirwayOwed * 1e6:F3} mL, worst residual {worst * 1e6:F4} mL ({worstRel:E2} of the world) at tick {worstTick}; the bled-in term 5e-5 short: {mutantRel:E2}");
             }
@@ -1533,7 +1524,7 @@ public static class Program
             using var s = new OfficeBodySession(p, 1);
             Check(s.Wound(MouthHit(s), WoundTool.Knife), "the knife was refused at the mouth");
             double half = 0.5 * new BloodParameters().DropVolume, lowest = 0.0, highest = 0.0, drawn = 0.0;
-            for (int t = 0; t < 100 * Hz && !s.Finished; t++)
+            for (int t = 0; t < 100 * Hz; t++)
             {
                 s.Step();
                 lowest = Math.Min(lowest, s.AirwayOwed);
@@ -1650,10 +1641,10 @@ public static class Program
                 try { _ = new WoundTool(depth, 60.0); } catch (ArgumentException) { threw = true; }
                 Check(threw, $"a depth of {depth} was accepted");
             }
-            Check(WoundTool.Knife.Depth == 0.02 && WoundTool.Knife.Severity == 60.0, "the knife changed");
+            Check(WoundTool.Knife.Depth == 0.02 && WoundTool.Knife.Severity == 20.0, "the knife changed");
         }),
 
-        ("office blood is conserved to death and the death tick's blood is shed: one Knife (and three on one point), run to Finished, Emitted + Backlog == Gain x the real spill within 1e-9 m^3 (the dying step bleeds, though Bleed reads 0 once dead)", () =>
+        ("office blood is conserved to death and the death tick's blood is shed: one Knife (and three on one point), run to 250 s, Emitted + Backlog == Gain x the real spill within 1e-9 m^3 (the dying step bleeds, though Bleed reads 0 once dead)", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             var blood = Lodur.PhysiologyPlans.Humanoid().Blood;
@@ -1662,25 +1653,12 @@ public static class Program
                 using var s = new OfficeBodySession(p, 1);
                 var hit = Hit(s, SeatedPuppet.Plan.PartIndex("LowerArm", Lodur.Side.Left));
                 for (int i = 0; i < cuts; i++) Check(s.Wound(hit, WoundTool.Knife), "the knife was refused");
-                while (!s.Finished) s.Step();
+                while (s.TickIndex < 250 * Hz) s.Step();
                 Check(s.Dead, "the body lived");
                 double visible = new BloodParameters().Gain * blood.NominalVolume * s.BloodLoss * blood.LethalLossFraction;
                 double shed = s.BloodEmitted + s.BloodBacklog;
                 Check(Math.Abs(shed - visible) < 1e-9, $"{cuts} cut(s): shed {shed * 1000.0:F4} L of {visible * 1000.0:F4} L");
             }
-        }),
-
-        ("office blood stops when the run does: a living body still bleeding at Finished sheds nothing in the next 300 steps (the physiology no longer steps, so its last rates would run forever)", () =>
-        {
-            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
-            using var s = new OfficeBodySession(p, 1);
-            Check(s.Wound(Hit(s, SeatedPuppet.Plan.PartIndex("LowerArm", Lodur.Side.Left)), new WoundTool(WoundTool.Knife.Depth, 3.0)), "the wound was refused");
-            double before = 0.0;
-            while (!s.Finished) { s.Step(); if (s.TickIndex == 100) before = s.BloodEmitted; }
-            Check(!s.Dead && s.BloodEmitted > before + 1e-3, "the wound was not bleeding at the end of the run");
-            double shed = s.BloodEmitted + s.BloodBacklog;
-            for (int t = 0; t < 300; t++) s.Step();
-            Check(s.BloodEmitted + s.BloodBacklog == shed, $"{(s.BloodEmitted + s.BloodBacklog - shed) * 1e6:F3} mL more blood after Finished");
         }),
 
         ("office blood never throws or flies at repeated clicks: the same PartHit cut five or six times (lower arm, upper arm, thigh) and six coincident cuts on a shin run 20 s with every drop under 12 m/s, no refused Settle, and wet volume + live drops == Emitted within 1e-6 m^3", () =>
@@ -1773,7 +1751,7 @@ public static class Program
                 // One bound for both, 0.42 L = sqrt(0.094 x 1.86), the geometric mean of the shipped worst (0.094 L) and the least degraded claimed reading (3 spots at 1 cm, 1.86 L); 2 spots gave 4.24 L, no spread 14.84 and 7.36 L.
                 double bound = 0.42e-3, worst = 0.0, atDeath = -1.0;
                 int deadAt = -1;
-                for (int t = 0; !s.Finished; t++)
+                for (int t = 0; t < Sandbox; t++)
                 {
                     s.Step();
                     worst = Math.Max(worst, s.BloodBacklog);
@@ -1943,6 +1921,20 @@ public static class Program
     /// A hit on <paramref name="part"/> at <paramref name="local"/> (the part's frame) as it now stands: a ray from 0.5 m outside that point, in along the
     /// outward direction (or along +z from behind when <paramref name="alongZ"/>), on through it; the ray must meet the part first.
     /// </summary>
+    /// <summary>A hit on a part at a point of its frame, with no ray: the world point and the outward normal. For a side the camera does not see (the side of the neck, the inner thigh).</summary>
+    private static PartHit HitAtPoint(OfficeBodySession s, int part, (float X, float Y, float Z) local)
+    {
+        var v = s.View;
+        ulong id = SeatedPuppet.FirstStableId + (ulong)part;
+        int lane = -1;
+        for (int i = 0; i < v.StableId.Length; i++) if (v.StableId[i] == id) { lane = i; break; }
+        Check(lane >= 0, $"part {part} has no lane");
+        var q = new Quat(v.RotationX[lane], v.RotationY[lane], v.RotationZ[lane], v.RotationW[lane]);
+        q.Rotate(local.X, local.Y, local.Z, out var ox, out var oy, out var oz);
+        float len = MathF.Sqrt(ox * ox + oy * oy + oz * oz);
+        return new PartHit(part, new BodyPoint(v.PositionX[lane] + ox, v.PositionY[lane] + oy, v.PositionZ[lane] + oz), new BodyPoint(ox / len, oy / len, oz / len));
+    }
+
     private static PartHit HitAt(OfficeBodySession s, int part, (float X, float Y, float Z) local, bool alongZ = false)
     {
         var v = s.View;
@@ -1989,12 +1981,25 @@ public static class Program
         return ray!.Value;
     }
 
+    /// <summary>The office has no end (ruling bds-office-is-a-sandbox-preset): the tests' horizon, seconds, where a run is read.</summary>
+    private const double OfficeSeconds = 180.0;
+    private const int Sandbox = (int)(OfficeSeconds * Hz);
+
+    /// <summary>The body run to the horizon, cut where the old run ended: the calm switch and the 8 s the seated body needs to settle after it (the prefix of a longer run is the shorter run).</summary>
+    private static OfficeBodyResult BodyArc(StressParameters p, ulong seed)
+    {
+        var a = OfficeBody.Run(p, seed, OfficeSeconds);
+        int calm = (int)Math.Round(a.Run.Timeline.Single(e => e.Kind == StressEntryKind.GoalChanged && e.Goal == OfficeGoal.Calm).TimeMs * Hz / 1000.0);
+        int n = calm + 8 * Hz + 1;
+        return new OfficeBodyResult(a.Run, a.HandL.Take(n).ToList(), a.HandR.Take(n).ToList(), a.Pelvis.Take(n).ToList());
+    }
+
     private static StressSession NewOffice(StressParameters p, ulong seed) => new(p, seed, 1, OfficePoses.Identity);
 
     private static void Step(StressSession s) => s.Tick(Point, Point, Point, Strengths, Targets);
 
     private static StressResult Office(StressParameters p, ulong seed, params SilenceCommand[] silences) =>
-        StressSimulation.Run(p, seed, silences);
+        StressSimulation.Run(p, seed, OfficeSeconds, silences);
 
     /// <summary>The median break time over <paramref name="count"/> seeds; a run that endured counts as never.</summary>
     private static long MedianBreak(StressParameters p, ulong first, int count, params SilenceCommand[] silences)

@@ -24,8 +24,8 @@ public sealed record WoundTool
     public double Severity { get; }
 
     /// <summary>
-    /// 2 cm at severity 60. At that depth: skin, fat and muscle on the limbs and trunk (bone lies past 2.26 cm there), skin and fat on the
+    /// 2 cm at severity 20 (ruling bds-bleed-by-vessels: an ordinary cut bleeds out in 2 to 4 minutes, a major vessel in about 30 s, the front of the throat drowns). At that depth: skin, fat and muscle on the limbs and trunk (bone lies past 2.26 cm there), skin and fat on the
     /// face and sides of the head, the larynx at the front of the throat, and bone as well as muscle in the hands and feet.
     /// </summary>
-    public static WoundTool Knife { get; } = new(0.02, 60.0);
+    public static WoundTool Knife { get; } = new(0.02, 20.0);
 }

@@ -13,8 +13,7 @@ namespace BadDay.Ymir;
 /// sensed there. Per <see cref="Step"/>: the body reports its points and what its airway openings hold, the session decides (Lodur's Actor, which steps
 /// the physiology first), the ragdoll is driven, the world steps. Harm enters only through <see cref="Wound"/>; the
 /// session never decides death, blood or consciousness: the read-outs are Lodur's. A dead body is limp (the Actor writes
-/// no strength) and the run ends a release after the death. After <see cref="Finished"/> <see cref="Step"/> only keeps
-/// the body moving, as the chamber does.
+/// no strength). The office has no end (ruling bds-office-is-a-sandbox-preset): <see cref="Finished"/> is never true, the will's break is an event, and the caller stops stepping.
 /// </summary>
 public sealed class OfficeBodySession : IBodyRun
 {
@@ -24,7 +23,6 @@ public sealed class OfficeBodySession : IBodyRun
     private readonly double _tickSeconds;
     private readonly double[] _bleeds;
     private readonly int _handL, _handR, _pelvisLane;
-    private bool _flows; // the latest step's physiology flows are live: it stepped (a dead physiology is not stepped, so its flows stand only on the tick it died)
     private bool _disposed;
 
     public OfficeBodySession(StressParameters p, ulong seed, BloodParameters? blood = null)
@@ -65,7 +63,8 @@ public sealed class OfficeBodySession : IBodyRun
     /// <summary>Ticks run so far; the tick the next <see cref="Step"/> runs.</summary>
     public long TickIndex { get { Live(); return _session.TickIndex; } }
 
-    public bool Finished { get { Live(); return _session.Finished; } }
+    /// <summary>Always false: the office is a sandbox preset that lasts until the player ends it. Here for <see cref="IBodyRun"/>, which the chamber ends.</summary>
+    public bool Finished { get { Live(); return false; } }
 
     /// <summary>The Actor's state at the end of the latest tick, and the body's (Lodur's numbers, never BDS's).</summary>
     public double Will { get { Live(); return _session.Actor.Drive.Will; } }
@@ -84,8 +83,8 @@ public sealed class OfficeBodySession : IBodyRun
     public double BloodBacklog { get { Live(); return _body.BloodBacklog; } }
     public int LiveDrops { get { Live(); return _body.LiveDrops; } }
     /// <summary>The blood bled into the airway (real m^3/s, entering the airway at the body's blood gain; the HUD reads it) and the live liquid drawn from it (world m^3) in the latest step, then what the airway owes the world (m^3, signed), the part of <see cref="BloodEmitted"/> that was cough and drain, and the cough and drain still waiting to be shed: the body's, display only.</summary>
-    public double AirwayBleed { get { Live(); return _flows ? _physiology.AirwayBleed : 0.0; } }
-    public double AirwayDrawnLive { get { Live(); return _flows ? _physiology.DrawnLive : 0.0; } }
+    public double AirwayBleed { get { Live(); return _physiology.AirwayBleed; } }
+    public double AirwayDrawnLive { get { Live(); return _physiology.DrawnLive; } }
     public double AirwayOwed { get { Live(); return _body.Owed; } }
     public double BloodExpelled { get { Live(); return _body.BloodExpelled; } }
     public double ExpelBacklog { get { Live(); return _body.ExpelBacklog; } }
@@ -105,31 +104,18 @@ public sealed class OfficeBodySession : IBodyRun
         }
     }
 
-    /// <summary>One step of 1/120 s; see the type's summary for what it does after <see cref="Finished"/>.</summary>
+    /// <summary>One step of 1/120 s: the body reports its points and what its airway openings hold, the session decides, the ragdoll is driven, the world steps.</summary>
     public void Step()
     {
         Live();
-        if (!_session.Finished)
-        {
-            long tick = _session.TickIndex;
-            _body.ReadSenses();
-            var airway = _body.ReadAirway();
-            bool deadBefore = _physiology.Dead; // the Actor does not step a dead physiology, so its flows stand only on the tick it died
-            _flows = !deadBefore;
-            var events = _session.Tick(_body.X, _body.Y, _body.Z, _body.Strengths, _body.Targets, airway);
-            if (events != TickEvents.None) _body.Enqueue(tick, events);
-            if (!deadBefore)
-            {
-                _body.Exchange(_physiology.DrawnLive, _physiology.DrawnPooled, _physiology.Coughed, _physiology.Drained); // the dying step's flows are real
-                for (int part = 0; part < _bleeds.Length; part++) _bleeds[part] = _physiology.Bleed(part); // the dying step's bleed included: Lodur reports it
-            }
-            else Array.Clear(_bleeds);
-            _body.DriveAndStep(_tickSeconds, _bleeds);
-            return;
-        }
-        // After Finished the physiology no longer steps, so its last rates would run forever: no bleeds, and what is in flight settles.
-        _flows = false;
-        _body.DriveAndStep(_tickSeconds); // the last strengths and targets again
+        long tick = _session.TickIndex;
+        _body.ReadSenses();
+        var airway = _body.ReadAirway();
+        var events = _session.Tick(_body.X, _body.Y, _body.Z, _body.Strengths, _body.Targets, airway);
+        if (events != TickEvents.None) _body.Enqueue(tick, events);
+        _body.Exchange(_physiology.DrawnLive, _physiology.DrawnPooled, _physiology.Coughed, _physiology.Drained); // the dying step's flows are real; a dead physiology's read 0 (Lodur steps it)
+        for (int part = 0; part < _bleeds.Length; part++) _bleeds[part] = _physiology.Bleed(part);
+        _body.DriveAndStep(_tickSeconds, _bleeds);
     }
 
     /// <summary>Moves the queued events (oldest first) into <paramref name="buffer"/>; see <see cref="SeatedBody.DrainEvents"/>.</summary>

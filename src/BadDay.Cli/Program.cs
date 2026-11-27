@@ -106,9 +106,9 @@ public static class Program
         var p = defaults with
         {
             Cause = (defaults.Cause with { ObjectivePull = Num(opts, "pull", defaults.Cause.ObjectivePull) }).Scaled(Num(opts, "scale", 1.0)),
-            MaxSeconds = Num(opts, "max", defaults.MaxSeconds),
             SampleEverySeconds = Num(opts, "every", defaults.SampleEverySeconds),
         };
+        double seconds = Num(opts, "max", 180); // the headless run's horizon: the office session has no end of its own
         if (opts.ContainsKey("body") && opts.ContainsKey("silence")) throw new ArgumentException("--silence does not apply to --body");
         var silences = new List<SilenceCommand>();
         if (opts.TryGetValue("silence", out var list))
@@ -123,7 +123,7 @@ public static class Program
 
         if (opts.ContainsKey("body"))
         {
-            var b = OfficeBody.Run(p with { TickSeconds = OfficeBody.TickSeconds }, seed);
+            var b = OfficeBody.Run(p with { TickSeconds = OfficeBody.TickSeconds }, seed, seconds);
             output.WriteLine(OfficeTitle);
             output.Write(b.Run.Render());
             output.WriteLine(b.Run.Summary());
@@ -139,14 +139,14 @@ public static class Program
                                  $"(left {OfficeBody.CountStrikes(b.HandL, rage, end)}, right {OfficeBody.CountStrikes(b.HandR, rage, end)}), " +
                                  $"{b.Strikes(0, rage)} before it");
             }
-            else if (b.Run.Outcome == Outcome.WillBroke) output.WriteLine($"the will broke but --max ended the run at {b.Run.EndMs} ms, before the rage took over");
+            else if (b.Run.Outcome == Outcome.WillBroke) output.WriteLine($"the will broke but --max stopped the run at {b.Run.EndMs} ms, before the rage took over");
             else output.WriteLine($"no rage: the will held to {b.Run.EndMs} ms");
             return 0;
         }
 
         if (!sweep)
         {
-            var r = StressSimulation.Run(p, seed, silences);
+            var r = StressSimulation.Run(p, seed, seconds, silences);
             output.WriteLine(OfficeTitle);
             output.Write(r.Render());
             output.WriteLine(r.Summary());
@@ -154,7 +154,7 @@ public static class Program
         }
 
         int count = (int)Num(opts, "count", 20);
-        var summary = StressSweep.Run(p, seed, count, silences);
+        var summary = StressSweep.Run(p, seed, count, seconds, silences);
         foreach (var r in summary.Results) output.WriteLine(r.Summary());
         output.WriteLine($"runs {summary.Runs}: broke {summary.Broke}, endured {summary.Endured}; " +
                          $"time to break min/median/max ms: {Fmt(summary.MinBreakMs)}/{Fmt(summary.MedianBreakMs)}/{Fmt(summary.MaxBreakMs)}; " +

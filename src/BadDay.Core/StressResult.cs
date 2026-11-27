@@ -5,7 +5,7 @@ using Lodur;
 
 namespace BadDay.Core;
 
-public enum StressEntryKind { Sample, Silenced, WillBroke, GoalChanged, Died, Endured }
+public enum StressEntryKind { Sample, Silenced, WillBroke, GoalChanged, Died }
 
 /// <summary>One timeline row: end-of-tick state read from the Actor. Audio, Visual and Interrupt are the stimulus that reached the head on each channel.</summary>
 public readonly record struct StressEntry(
@@ -17,9 +17,9 @@ public readonly record struct SilenceCommand(string StressorId, double AtSeconds
 
 public sealed record StressResult(
     ulong Seed,
-    /// <summary>WillBroke (the run goes on through the release), Endured, or Died (a body with a physiology died); the office has no box to disable.</summary>
+    /// <summary>WillBroke, Endured (the will has held so far), or Died (a body with a physiology died); the office has no box to disable.</summary>
     Outcome Outcome,
-    /// <summary>When the run ended: the release after calm took over, or MaxSeconds.</summary>
+    /// <summary>The time of the latest tick when the result was read, ms: the session has no end of its own.</summary>
     long EndMs,
     /// <summary>Time resolve hit zero, ms; null unless the will broke.</summary>
     long? TimeToBreakMs,
@@ -55,5 +55,5 @@ public sealed record StressResult(
         ? $"seed {Seed}: died of {DeathCause} at {DiedAtMs} ms"
         : Outcome == Outcome.WillBroke
         ? $"seed {Seed}: will broke at {TimeToBreakMs} ms"
-        : $"seed {Seed}: endured to {EndMs} ms, will held, min resolve {MinResolve.ToString("F3", CultureInfo.InvariantCulture)}";
+        : $"seed {Seed}: will held to {EndMs} ms, min resolve {MinResolve.ToString("F3", CultureInfo.InvariantCulture)}";
 }

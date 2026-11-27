@@ -38,7 +38,7 @@ public static class OfficeBrain
 
     public const string RageId = "rage";
 
-    /// <summary>The calm goal's id: what the scenario's release waits for (<see cref="StressParameters.ReleaseGoalId"/>).</summary>
+    /// <summary>The calm goal's id.</summary>
     public const string CalmId = "calm";
 
     public static OfficeGoal GoalAt(int index) => index switch { RageIndex => OfficeGoal.Rage, CalmIndex => OfficeGoal.Calm, _ => OfficeGoal.KeepComposure };
