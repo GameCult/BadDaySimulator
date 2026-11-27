@@ -1519,7 +1519,8 @@ public static class Program
             float ex = w.ParticleX[drop] - pick.Point.X, ey = w.ParticleY[drop] - pick.Point.Y, ez = w.ParticleZ[drop] - pick.Point.Z;
             float cos = (ex * pick.Normal.X + ey * pick.Normal.Y + ez * pick.Normal.Z) / MathF.Sqrt(ex * ex + ey * ey + ez * ez);
             Console.WriteLine($"  first drop leaves at cos {cos:F3} to the surface normal");
-            Check(cos > 0.95f, $"the first drop left at cos {cos:F3} to the normal: the wound normal was not taken into the part's frame");
+            // Bound by deterministic-bound-margin, as angle: clean acos(0.998) = 3.6 deg, normal unrotated acos(0.857) = 31.0 deg, geometric mean 10.6 deg, cos 0.983.
+            Check(cos > 0.983f, $"the first drop left at cos {cos:F3} to the normal: the wound normal was not taken into the part's frame");
         }),
 
         ("office reach by point: the throat front cuts the larynx and not the neck muscle; the chin cuts the muscle and not the larynx", () =>
