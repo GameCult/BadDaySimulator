@@ -1123,7 +1123,7 @@ public static class Program
             for (int run = 0; run < 2; run++)
             {
                 using var s = new OfficeBodySession(p, 1);
-                Check(s.Wound(arm, WoundTool.Knife), "the knife was refused on the lower arm");
+                Check(s.Wound(Hit(s, arm), WoundTool.Knife), "the knife was refused on the lower arm");
                 var buffer = new BodyEvent[16];
                 int died = 0;
                 bool deadBefore = false;
@@ -1176,7 +1176,7 @@ public static class Program
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             using (var s = new OfficeBodySession(p, 1))
             {
-                Check(!s.Wound(-1, WoundTool.Knife) && !s.Wound(SeatedPuppet.Plan.Parts.Count, WoundTool.Knife), "an out-of-range part was wounded");
+                Check(!s.Wound(new PartHit(-1, default, default), WoundTool.Knife) && !s.Wound(new PartHit(SeatedPuppet.Plan.Parts.Count, default, default), WoundTool.Knife), "an out-of-range part was wounded");
             }
             Check(!NewOffice(p, 1).Wound(0, WoundTool.Knife), "a headless session was wounded");
 
@@ -1200,7 +1200,7 @@ public static class Program
             long Recovered(double scale)
             {
                 using var s = new OfficeBodySession(p with { SlowScale = scale }, 1);
-                Check(s.Wound(arm, new WoundTool(new[] { "Skin" }, 0.006)), "the skin wound was refused");
+                Check(s.Wound(Hit(s, arm), new WoundTool(new[] { "Skin" }, 0.006)), "the skin wound was refused");
                 bool bled = false;
                 while (!s.Finished)
                 {
@@ -1239,7 +1239,7 @@ public static class Program
             }
             using (var s = new OfficeBodySession(p, 1))
             {
-                Check(s.Wound(SeatedPuppet.Plan.PartIndex("Torso", Lodur.Side.Center), new WoundTool(new[] { "LungLeft", "LungRight" }, 15.0)), "the lungs were refused");
+                Check(s.Wound(Hit(s, SeatedPuppet.Plan.PartIndex("Torso", Lodur.Side.Center)), new WoundTool(new[] { "LungLeft", "LungRight" }, 15.0)), "the lungs were refused");
                 double maxHunger = 0.0;
                 while (!s.Finished)
                 {
@@ -1275,17 +1275,19 @@ public static class Program
             var leg = plan.PartIndex("Shin", Lodur.Side.Left);
             using (var s = new OfficeBodySession(p, 1))
             {
-                Check(s.Wound(arm, WoundTool.Knife), "the knife was refused");
+                var legHit = Hit(s, leg);
+                Check(s.Wound(Hit(s, arm), WoundTool.Knife), "the knife was refused");
                 while (!s.Dead) s.Step();
                 Check(!s.Finished, "the run finished at the death");
-                Check(!s.Wound(leg, WoundTool.Knife), "a dead body was wounded");
+                Check(!s.Wound(legHit, WoundTool.Knife), "a dead body was wounded");
                 while (!s.Finished) s.Step();
-                Check(!s.Wound(leg, WoundTool.Knife), "a finished run was wounded");
+                Check(!s.Wound(legHit, WoundTool.Knife), "a finished run was wounded");
             }
             using (var s = new OfficeBodySession(p, 1))
             {
+                var legHit = Hit(s, leg);
                 while (!s.Finished) s.Step();
-                Check(!s.Dead && !s.Wound(leg, WoundTool.Knife), "a finished, living run was wounded");
+                Check(!s.Dead && !s.Wound(legHit, WoundTool.Knife), "a finished, living run was wounded");
             }
 
             var physiologyPlan = Lodur.PhysiologyPlans.Humanoid();
@@ -1347,10 +1349,154 @@ public static class Program
                 Check(!s.Dead && s.DeathCause == Lodur.DeathCause.None && r.DiedAtMs is null && r.Outcome != Outcome.Died && s.Consciousness == 1.0, $"seed {seed}: dead {s.Dead}, cause {s.DeathCause}, consciousness {s.Consciousness}");
             }
         }),
+
+        ("office blood is the gain times the spill: one Knife at Hit(s, LowerArm L), 10 s; Emitted + Backlog == 10 x (nominal - BloodVolume) within 1e-9 m^3, the backlog is under one drop, and two runs are equal", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            var blood = Lodur.PhysiologyPlans.Humanoid().Blood;
+            var bloodParameters = new BloodParameters();
+            var arm = SeatedPuppet.Plan.PartIndex("LowerArm", Lodur.Side.Left);
+            var seen = new List<(double Emitted, double Backlog, int Live)>();
+            for (int run = 0; run < 2; run++)
+            {
+                using var s = new OfficeBodySession(p, 1);
+                Check(s.Wound(Hit(s, arm), WoundTool.Knife), "the knife was refused");
+                for (int t = 0; t < 10 * Hz; t++) s.Step();
+                double spilled = blood.NominalVolume * s.BloodLoss * blood.LethalLossFraction; // nominal - BloodVolume
+                double visible = bloodParameters.Gain * spilled;
+                Check(visible > 0.005, $"only {visible * 1000.0:F1} L was spilled in 10 s");
+                Check(Math.Abs(s.BloodEmitted + s.BloodBacklog - visible) < 1e-9, $"emitted {s.BloodEmitted} + backlog {s.BloodBacklog} is not {visible} m^3");
+                Check(s.BloodBacklog >= 0.0 && s.BloodBacklog < bloodParameters.DropVolume, $"backlog {s.BloodBacklog} m^3 is not under one drop");
+                Console.WriteLine($"  blood: {visible * 1000.0:F2} L visible in 10 s, {s.BloodEmitted / bloodParameters.DropVolume:F0} drops, backlog {s.BloodBacklog * 1e6:F2} mL, live {s.LiveDrops}");
+                seen.Add((s.BloodEmitted, s.BloodBacklog, s.LiveDrops));
+            }
+            Check(seen[0] == seen[1], "two runs shed different blood");
+        }),
+
+        ("office blood settles under the cap: six Knife cuts; LiveDrops <= LiveCap - MaxDropsPerTick after every Step, no refused CreateParticles, WetCount > 0 by 15 s, and wet volume + live drops == Emitted within 1e-6 m^3", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            var bloodParameters = new BloodParameters();
+            using var s = SixCuts(p);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            int wetAt15 = -1, peak = 0;
+            for (int t = 0; t < 40 * Hz; t++)
+            {
+                s.Step(); // a refused CreateParticles or Settle throws here
+                Check(s.LiveDrops <= bloodParameters.LiveCap - bloodParameters.MaxDropsPerTick, $"tick {t}: {s.LiveDrops} drops live");
+                peak = Math.Max(peak, s.LiveDrops);
+                if (t == 15 * Hz) wetAt15 = s.View.WetCount;
+            }
+            clock.Stop();
+            Check(wetAt15 > 0, "no wet patch by 15 s");
+            double wet = 0.0;
+            var volume = s.View.WetPatchVolume;
+            var live = s.View.WetLive;
+            for (int i = 0; i < volume.Length; i++) if (live[i] != 0u) wet += volume[i];
+            double held = wet + s.LiveDrops * bloodParameters.DropVolume;
+            Check(Math.Abs(held - s.BloodEmitted) < 1e-6, $"wet {wet} + live {s.LiveDrops} x drop is {held}, emitted {s.BloodEmitted} m^3");
+            Console.WriteLine($"  blood: {s.BloodEmitted * 1000.0:F1} L shed, backlog {s.BloodBacklog * 1000.0:F2} L, peak live {peak}, {s.View.WetCount} wet patches, {clock.Elapsed.TotalMilliseconds / (40 * Hz):F2} ms a tick whole (probe: +0.56 ms at 256 live)");
+        }),
+
+        ("office blood lands where it falls: every patch's support is the ground, the stool or a Fella lane, and six cuts give a ground patch (stable id 1) by 40 s", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            using var s = SixCuts(p);
+            for (int t = 0; t < 40 * Hz; t++) s.Step();
+            var view = s.View;
+            var ids = view.StableId;
+            var patches = new SortedDictionary<ulong, int>();
+            for (int i = 0; i < view.WetCount; i++)
+            {
+                if (view.WetLive[i] == 0u) continue;
+                Check(view.WetParticle[i] < 0 && view.WetBody[i] >= 0, $"patch {i} is held by no body ({view.WetBody[i]}, particle {view.WetParticle[i]})");
+                ulong id = ids[view.WetBody[i]];
+                Check(id == 1 || id == 2 || (id >= SeatedPuppet.FirstStableId && id < SeatedPuppet.FirstStableId + (ulong)SeatedPuppet.Plan.Parts.Count), $"patch {i} sits on stable id {id}");
+                patches[id] = patches.GetValueOrDefault(id) + 1;
+            }
+            Check(patches.GetValueOrDefault(1UL) > 0, "no patch reached the ground");
+            Console.WriteLine("  patches per support (stable id): " + string.Join(", ", patches.Select(kv => $"{kv.Key}: {kv.Value}")));
+        }),
+
+        ("seated world identity: a SeatedBody (a particle system, no wound) steps to the same positions and rotations as the same world with no particle system, 1200 driven ticks", () =>
+        {
+            using var body = new SeatedBody();
+            var needs = SeatedPuppet.Needs;
+            using var control = new global::Ymir.Box3D.Box3DSoaWorld(capacity: needs.Bodies, jointCapacity: needs.Joints);
+            var ragdoll = SeatedPuppet.Build(control);
+            var strengths = new float[SeatedPuppet.Plan.Joints.Count];
+            var targets = new Quat[strengths.Length];
+            for (int i = 0; i < strengths.Length; i++) { strengths[i] = 0.4f; targets[i] = Quat.FromAxisAngle(0f, 0f, 1f, 0.05f * (i % 5)); body.Strengths[i] = strengths[i]; body.Targets[i] = targets[i]; }
+            for (int t = 0; t < 1200; t++)
+            {
+                ragdoll.Drive(strengths, targets);
+                control.Step(1f / Hz, SeatedPuppet.Substeps);
+                body.DriveAndStep(1.0 / Hz);
+                var a = body.View;
+                var b = control.View;
+                Check(a.Count == b.Count, "the lane counts differ");
+                for (int i = 0; i < a.Count; i++)
+                {
+                    Check(a.PositionX[i] == b.PositionX[i] && a.PositionY[i] == b.PositionY[i] && a.PositionZ[i] == b.PositionZ[i] &&
+                          a.RotationX[i] == b.RotationX[i] && a.RotationY[i] == b.RotationY[i] && a.RotationZ[i] == b.RotationZ[i] && a.RotationW[i] == b.RotationW[i],
+                        $"tick {t}, lane {i}: the particle world moved a body");
+                }
+            }
+        }),
     };
 
     private static readonly float[] Point = new float[1], Strengths = new float[1];
     private static readonly Quat[] Targets = new Quat[1];
+
+    /// <summary>An office session with six Knife cuts at tick 0: both lower arms, both thighs, both shins.</summary>
+    private static OfficeBodySession SixCuts(StressParameters p)
+    {
+        var plan = SeatedPuppet.Plan;
+        var s = new OfficeBodySession(p, 1);
+        try
+        {
+            foreach (var label in new[] { "LowerArm", "Thigh", "Shin" })
+            {
+                foreach (var side in new[] { Lodur.Side.Left, Lodur.Side.Right })
+                {
+                    Check(s.Wound(Hit(s, plan.PartIndex(label, side)), WoundTool.Knife), $"the knife was refused on {label} {side}");
+                }
+            }
+            return s;
+        }
+        catch
+        {
+            s.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// A hit on <paramref name="part"/>: rays from 1 m outside the part's rest centre along -X, +X, -Y, +Y, -Z, +Z toward it, the first that meets that part first.
+    /// Taken at the start of a run, while the body is where the plan puts it.
+    /// </summary>
+    private static PartHit Hit(OfficeBodySession s, int part)
+    {
+        var c = SeatedPuppet.Plan.Parts[part].Position;
+        foreach (var (dx, dy, dz) in new[] { (1f, 0f, 0f), (-1f, 0f, 0f), (0f, 1f, 0f), (0f, -1f, 0f), (0f, 0f, 1f), (0f, 0f, -1f) })
+        {
+            var hit = s.Pick(new BodyPoint(c.X - dx, c.Y - dy, c.Z - dz), new BodyPoint(dx, dy, dz));
+            if (hit is { } h && h.Part == part) return h;
+        }
+        throw new InvalidOperationException($"no ray from outside meets part {part} first");
+    }
+
+    /// <summary>A hit on the head at the plan's Mouth opening: a ray from 1 m in front of it, straight back.</summary>
+    private static PartHit MouthHit(OfficeBodySession s)
+    {
+        var plan = SeatedPuppet.Plan;
+        var mouth = plan.AirwayOpenings.First(a => a.Label == "Mouth");
+        var c = plan.Parts[mouth.Part].Position;
+        var at = new BodyPoint(c.X + mouth.Offset.X, c.Y + mouth.Offset.Y, c.Z + mouth.Offset.Z);
+        var ray = s.Pick(new BodyPoint(at.X, at.Y, at.Z + 1f), new BodyPoint(0f, 0f, -1f));
+        Check(ray is { } h && h.Part == mouth.Part, "a ray at the mouth did not meet the head first");
+        return ray!.Value;
+    }
 
     private static StressSession NewOffice(StressParameters p, ulong seed) => new(p, seed, 1, OfficePoses.Identity);
 

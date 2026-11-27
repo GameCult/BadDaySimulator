@@ -22,6 +22,7 @@ public sealed class OfficeBodySession : IDisposable
     private readonly StressSession _session;
     private readonly Physiology _physiology;
     private readonly double _tickSeconds;
+    private readonly double[] _bleeds;
     private readonly int _handL, _handR, _pelvisLane;
     private bool _disposed;
 
@@ -37,6 +38,7 @@ public sealed class OfficeBodySession : IDisposable
         try
         {
             var plan = _body.Plan;
+            _bleeds = new double[plan.Parts.Count];
             _body.ReadSenses();
             int head = plan.SenseIndex("Head");
             _handL = plan.SenseIndex("Hand", Side.Left);
@@ -71,6 +73,14 @@ public sealed class OfficeBodySession : IDisposable
     public double Consciousness { get { Live(); return _physiology.Consciousness; } }
     public double BloodLoss { get { Live(); return _physiology.BloodLoss; } }
     public bool Dead { get { Live(); return _physiology.Dead; } }
+    /// <summary>The liquid in the airway (m^3), the fraction of it filled, and whether the last sample found liquid at an opening: Lodur's numbers.</summary>
+    public double AirwayLiquid { get { Live(); return _physiology.AirwayLiquid; } }
+    public double Occlusion { get { Live(); return _physiology.Occlusion; } }
+    public bool LiquidAtAirway { get { Live(); return _physiology.LiquidAtAirway; } }
+    /// <summary>The blood the body has shed as drops, the volume still waiting to be shed (visible m^3, the gain applied) and the drops not yet settled: the body's, display only.</summary>
+    public double BloodEmitted { get { Live(); return _body.BloodEmitted; } }
+    public double BloodBacklog { get { Live(); return _body.BloodBacklog; } }
+    public int LiveDrops { get { Live(); return _body.LiveDrops; } }
     public DeathCause DeathCause { get { Live(); return _physiology.Cause; } }
     public OfficeGoal Goal { get { Live(); return OfficeBrain.GoalAt(_session.Actor.GoalIndex); } }
 
@@ -97,8 +107,12 @@ public sealed class OfficeBodySession : IDisposable
             _body.ReadSenses();
             var events = _session.Tick(_body.X, _body.Y, _body.Z, _body.Strengths, _body.Targets);
             if (events != TickEvents.None) _body.Enqueue(tick, events);
+            for (int part = 0; part < _bleeds.Length; part++) _bleeds[part] = _physiology.Bleed(part);
+            _body.DriveAndStep(_tickSeconds, _bleeds);
+            return;
         }
-        _body.DriveAndStep(_tickSeconds); // after Finished: the last strengths and targets again
+        // After Finished the physiology no longer steps, so its last rates would run forever: no bleeds, and what is in flight settles.
+        _body.DriveAndStep(_tickSeconds); // the last strengths and targets again
     }
 
     /// <summary>Moves the queued events (oldest first) into <paramref name="buffer"/>; see <see cref="SeatedBody.DrainEvents"/>.</summary>
@@ -115,11 +129,23 @@ public sealed class OfficeBodySession : IDisposable
         _session.Silence(stressorId);
     }
 
-    /// <summary>Wounds the body's part from the next tick; false when refused (see <see cref="StressSession.Wound"/>).</summary>
-    public bool Wound(int part, WoundTool tool)
+    /// <summary>The part of the body a ray meets first; see <see cref="SeatedBody.Pick"/>.</summary>
+    public PartHit? Pick(BodyPoint origin, BodyPoint translation)
     {
         Live();
-        return _session.Wound(part, tool);
+        return _body.Pick(origin, translation);
+    }
+
+    /// <summary>
+    /// Wounds the part <paramref name="hit"/> names from the next tick, and opens the wound at the point it hit so the blood leaves from there;
+    /// false when refused (see <see cref="StressSession.Wound"/>), and then nothing is opened.
+    /// </summary>
+    public bool Wound(in PartHit hit, WoundTool tool)
+    {
+        Live();
+        if (!_session.Wound(hit.Part, tool)) return false;
+        _body.OpenWound(hit.Part, hit.Point, hit.Normal);
+        return true;
     }
 
     /// <summary>The nervous result so far, with the death if there was one.</summary>
