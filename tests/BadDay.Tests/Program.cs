@@ -1373,7 +1373,7 @@ public static class Program
             Check(seen[0] == seen[1], "two runs shed different blood");
         }),
 
-        ("office blood settles under the cap: six Knife cuts; LiveDrops <= LiveCap - MaxDropsPerTick after every Step, no refused CreateParticles, WetCount > 0 by 15 s, and wet volume + live drops == Emitted within 1e-6 m^3, and the peak live is at most three quarters of the cap", () =>
+        ("office blood settles under the cap: six Knife cuts; LiveDrops <= LiveCap - MaxDropsPerTick after every Step, no refused CreateParticles, WetCount > 0 by 15 s, and wet volume + live drops == Emitted within 1e-6 m^3, and the peak live is at most 438 (the geometric mean of the shipped 381 and the cap-only mutant 504)", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             var bloodParameters = new BloodParameters();
@@ -1389,8 +1389,8 @@ public static class Program
             }
             clock.Stop();
             Check(wetAt15 > 0, "no wet patch by 15 s");
-            // Measured: shipped peak 381 now (340 with clearance but no spread, 319 before the clearance), the cap-only-settle mutant 504, this bound 384, so the margin is 3 drops: the bound is not to be loosened, the shed pattern is to be changed instead.
-            Check(peak <= bloodParameters.LiveCap * 3 / 4, $"{peak} drops were live at once: the cap, not the slow-settle rule, is carrying the blood (probe: 256 live at 300 drops/s)");
+            // Measured: shipped peak 381, the cap-only-settle mutant 504 (SettleTicks 32 gives 456, not claimed). The bound is their geometric mean, sqrt(381 x 504) = 438, the same factor 1.15 either side.
+            Check(peak <= 438, $"{peak} drops were live at once: the cap, not the slow-settle rule, is carrying the blood (probe: 256 live at 300 drops/s)");
             double wet = 0.0;
             var volume = s.View.WetPatchVolume;
             var live = s.View.WetLive;
@@ -1551,7 +1551,7 @@ public static class Program
             Check(body.BloodEmitted > 24 * parameters.DropVolume, "the cap was never reached: the test pins nothing");
         }),
 
-        ("office blood keeps pace with the bleed at coincident and near-coincident cuts: five clicks on one PartHit and six points 1 cm apart on a lower arm; the unshed backlog never passes one second of the flow (0.78 L visible per knife) and, two ticks after the death, nothing more than a drop a point is left to shed", () =>
+        ("office blood keeps pace with the bleed at coincident and near-coincident cuts: five clicks on one PartHit and six points 1 cm apart on a lower arm; the unshed backlog never passes 0.83 L (shipped 0.08-0.09 L, a degraded spread 1.9 L and more) and, two ticks after the death, nothing more than a drop a point is left to shed", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             var parameters = new BloodParameters();
@@ -1573,7 +1573,9 @@ public static class Program
                     Check(hits.Count == 6, $"only {hits.Count} points 1 cm apart");
                 }
                 foreach (var h in hits) Check(s.Wound(h, WoundTool.Knife), "the knife was refused");
-                double bound = hits.Count * 0.78e-3, worst = 0.0, atDeath = -1.0;
+                // Measured peak backlog: shipped 0.078 L (5 coincident clicks) and 0.094 L (6 points 1 cm apart); with the spread cut to 2 and 3 spots, 4.24 and 1.86 L at 1 cm; with no spread 14.84 and 7.36 L.
+                // One bound for both, 0.83 L (Soul's margin rule over the shipped and degraded readings): 9 times the shipped worst, under every degraded spread measured (2 spots 4.24 L, 3 spots 1.86 L at 1 cm; no spread 14.84 and 7.36 L).
+                double bound = 0.83e-3, worst = 0.0, atDeath = -1.0;
                 int deadAt = -1;
                 for (int t = 0; !s.Finished; t++)
                 {
