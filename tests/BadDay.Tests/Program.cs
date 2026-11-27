@@ -1551,7 +1551,7 @@ public static class Program
             Check(body.BloodEmitted > 24 * parameters.DropVolume, "the cap was never reached: the test pins nothing");
         }),
 
-        ("office blood keeps pace with the bleed at coincident and near-coincident cuts: five clicks on one PartHit and six points 1 cm apart on a lower arm; the unshed backlog never passes 0.83 L (shipped 0.08-0.09 L, a degraded spread 1.9 L and more) and, two ticks after the death, nothing more than a drop a point is left to shed", () =>
+        ("office blood keeps pace with the bleed at coincident and near-coincident cuts: five clicks on one PartHit and six points 1 cm apart on a lower arm; the unshed backlog never passes 0.42 L (shipped 0.08-0.09 L, a degraded spread 1.9 L and more) and, two ticks after the death, nothing more than a drop a point is left to shed", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             var parameters = new BloodParameters();
@@ -1574,8 +1574,8 @@ public static class Program
                 }
                 foreach (var h in hits) Check(s.Wound(h, WoundTool.Knife), "the knife was refused");
                 // Measured peak backlog: shipped 0.078 L (5 coincident clicks) and 0.094 L (6 points 1 cm apart); with the spread cut to 2 and 3 spots, 4.24 and 1.86 L at 1 cm; with no spread 14.84 and 7.36 L.
-                // One bound for both, 0.83 L (Soul's margin rule over the shipped and degraded readings): 9 times the shipped worst, under every degraded spread measured (2 spots 4.24 L, 3 spots 1.86 L at 1 cm; no spread 14.84 and 7.36 L).
-                double bound = 0.83e-3, worst = 0.0, atDeath = -1.0;
+                // One bound for both, 0.42 L = sqrt(0.094 x 1.86), the geometric mean of the shipped worst (0.094 L) and the least degraded claimed reading (3 spots at 1 cm, 1.86 L); 2 spots gave 4.24 L, no spread 14.84 and 7.36 L.
+                double bound = 0.42e-3, worst = 0.0, atDeath = -1.0;
                 int deadAt = -1;
                 for (int t = 0; !s.Finished; t++)
                 {
