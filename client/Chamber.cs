@@ -26,7 +26,7 @@ public partial class Chamber : Node3D
     public float Glow { get; private set; }
 
     /// <summary>The office has no chamber: hidden, and the glow light it casts off.</summary>
-    public void Hide()
+    public new void Hide()
     {
         Visible = false;
         Glow = 0f;

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text;
 using BadDay.Core;
 using BadDay.Ymir;
@@ -18,8 +19,16 @@ public partial class Hud : CanvasLayer
     public Hud(Main main) => _main = main;
 
     private readonly VBoxContainer _chamberControls = new();
+    private readonly VBoxContainer _officeControls = new();
+    private readonly Dictionary<string, Button> _silence = new();
 
     public OptionButton ScenarioPicker { get; } = new();
+    /// <summary>His will, 0 to 1 (lodur:ruling:bds-will-visible).</summary>
+    public ProgressBar WillBar { get; } = new() { MinValue = 0, MaxValue = 1, Step = 0, ShowPercentage = false, CustomMinimumSize = new Vector2(220, 18) };
+    /// <summary>His arousal, 0 to 1 (lodur:ruling:stress-bar-shows-arousal-calm-silences).</summary>
+    public ProgressBar StressBar { get; } = new() { MinValue = 0, MaxValue = 1, Step = 0, ShowPercentage = false, CustomMinimumSize = new Vector2(220, 18) };
+    /// <summary>One button per stressor of the office's cause, by id.</summary>
+    public IReadOnlyDictionary<string, Button> SilenceButtons => _silence;
     public SpinBox SeedBox { get; } = new() { MinValue = 0, MaxValue = 999999999, Step = 1, Value = 1 };
     public Button ResetButton { get; } = new() { Text = "Reset" };
     public HSlider IntensitySlider { get; } = new() { MinValue = 0, MaxValue = PainBox.MaxLevel, Step = 0.05, CustomMinimumSize = new Vector2(220, 24) };
@@ -61,6 +70,21 @@ public partial class Hud : CanvasLayer
         ScenarioPicker.ItemSelected += i => _main.SetScenario((Scenario)ScenarioPicker.GetItemId((int)i));
         controls.AddChild(ScenarioPicker);
 
+        controls.AddChild(_officeControls);
+        _officeControls.AddChild(new Label { Text = "Will", Modulate = Ink });
+        _officeControls.AddChild(WillBar);
+        _officeControls.AddChild(new Label { Text = "Stress", Modulate = Ink });
+        _officeControls.AddChild(StressBar);
+        _officeControls.AddChild(new Label { Text = "Silence", Modulate = Ink });
+        foreach (var stressor in Main.OfficeParameters.Cause.Stressors)
+        {
+            var id = stressor.Id;
+            var button = new Button { Text = id };
+            button.Pressed += () => _main.Silence(id);
+            _silence[id] = button;
+            _officeControls.AddChild(button);
+        }
+
         controls.AddChild(_chamberControls);
         _chamberControls.AddChild(new Label { Text = "Intensity", Modulate = Ink });
         IntensitySlider.Value = _main.Intensity;
@@ -82,11 +106,11 @@ public partial class Hud : CanvasLayer
         }
 
         _chamberControls.Visible = _main.Scenario == Scenario.Chamber;
+        _officeControls.Visible = _main.Scenario == Scenario.Office;
         _text.Clear();
         if (_main.Scenario == Scenario.Office)
         {
-            _text.Append($"office   seed {_main.Seed}    t {_main.Run.TickIndex * OfficeBody.TickSeconds:F2} s  (tick {_main.Run.TickIndex})\n");
-            _readout.Text = _text.ToString();
+            OfficeReadout(_main.Office);
             return;
         }
 
@@ -103,6 +127,25 @@ public partial class Hud : CanvasLayer
         for (int i = System.Math.Max(0, events.Count - LogLines); i < events.Count; i++)
         {
             _text.Append($"{events[i].Tick * BodyPainBox.TickSeconds,6:F2} s  {events[i].Events}\n");
+        }
+        _readout.Text = _text.ToString();
+    }
+
+    private void OfficeReadout(OfficeBodySession o)
+    {
+        WillBar.Value = o.Will;
+        StressBar.Value = o.Arousal;
+        _text.Append($"office   seed {_main.Seed}    t {o.TickIndex * OfficeBody.TickSeconds:F2} s  (tick {o.TickIndex})\n");
+        _text.Append($"will {o.Will:F2}   stress {o.Arousal:F2}   goal {o.Goal}\n");
+        _text.Append($"blood loss {o.BloodLoss * 100:F0} % of lethal   blood spilled {o.BloodEmitted * 1000:F2} L\n");
+        _text.Append($"consciousness {o.Consciousness:F2}   air hunger {o.AirHunger:F2}\n");
+        if (o.Dead) _text.Append($"DEAD: {o.DeathCause}\n");
+        else _text.Append(o.Finished ? "finished\n" : "running\n");
+        _text.Append(_main.Cuts.Count > 0 ? $"last cut: {_main.Cuts[^1].Part} at tick {_main.Cuts[^1].Tick}\n" : "no cuts yet\n");
+        var events = _main.Events;
+        for (int i = System.Math.Max(0, events.Count - LogLines); i < events.Count; i++)
+        {
+            _text.Append($"{events[i].Tick * OfficeBody.TickSeconds,6:F2} s  {events[i].Events}\n");
         }
         _readout.Text = _text.ToString();
     }

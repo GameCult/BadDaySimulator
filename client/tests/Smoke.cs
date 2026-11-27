@@ -21,7 +21,7 @@ public partial class Smoke : Node
 
     private readonly List<string> _failures = new();
     private Main _main = null!;
-    private BodyPainBoxSession? _lastSession;
+    private IBodyRun? _lastSession;
     private long _lastTick;
     private bool _done;
 
@@ -47,7 +47,7 @@ public partial class Smoke : Node
             _main = GD.Load<PackedScene>("res://Main.tscn").Instantiate<Main>();
             AddChild(_main);
             if (_main.Failure is { } failure) Check(false, "Main could not start a session: " + failure);
-            else await Scenario();
+            else await ChamberScenario();
         }
         catch (Exception e)
         {
@@ -56,7 +56,7 @@ public partial class Smoke : Node
         Finish();
     }
 
-    private async Task Scenario()
+    private async Task ChamberScenario()
     {
         CheckEngineAndScene();
         if (_failures.Count > 0) return;
@@ -164,6 +164,50 @@ public partial class Smoke : Node
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
         Check(!Session.BoxOn && _main.Chamber.Glow == 0f && Hud.Readout.Contains("box intensity 0.00 off"), $"after Box off on a finished run: on {Session.BoxOn}, glow {_main.Chamber.Glow}");
+
+        await OfficeScenario();
+    }
+
+    /// <summary>The office, chosen through the HUD's picker: the bars, Silence, and the way back to the chamber.</summary>
+    private async Task OfficeScenario()
+    {
+        Hud.SeedBox.Value = Seed;
+        Hud.ScenarioPicker.Select((int)Scenario.Office);
+        Hud.ScenarioPicker.EmitSignal(OptionButton.SignalName.ItemSelected, (long)Scenario.Office);
+        Check(_main.Scenario == Scenario.Office && _main.Seed == Seed, $"the picker left Main in {_main.Scenario}, seed {_main.Seed}");
+        var office = Office;
+        Check(!_main.Chamber.Visible && _main.Chamber.Glow == 0f, "the chamber is drawn in the office");
+        await UntilTick(600);
+
+        // The bars are the session's will and arousal, to the bit, once a frame has drawn them (stepping paused so the session holds still).
+        _main.SetPhysicsProcess(false);
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        Check(Hud.WillBar.Value == office.Will && Hud.StressBar.Value == office.Arousal,
+            $"bars show will {Hud.WillBar.Value} and stress {Hud.StressBar.Value}; the session has {office.Will} and {office.Arousal}");
+        _main.SetPhysicsProcess(true);
+        _lastSession = null;
+
+        // Silence is the HUD's button for the stressor, and the session logs it.
+        Check(Hud.SilenceButtons.Count == Main.OfficeParameters.Cause.Stressors.Count, $"{Hud.SilenceButtons.Count} Silence buttons for {Main.OfficeParameters.Cause.Stressors.Count} stressors");
+        int silenced = office.Result().Timeline.Count(e => e.Kind == StressEntryKind.Silenced);
+        Hud.SilenceButtons["printer"].EmitSignal(BaseButton.SignalName.Pressed);
+        Check(office.Result().Timeline.Count(e => e.Kind == StressEntryKind.Silenced) == silenced + 1, "Silence did not put a Silenced row in the result");
+        await Frame();
+
+        // Back to the chamber: the office run is gone and the chamber is drawn.
+        Hud.ScenarioPicker.Select((int)Scenario.Chamber);
+        Hud.ScenarioPicker.EmitSignal(OptionButton.SignalName.ItemSelected, (long)Scenario.Chamber);
+        await Frame();
+        Check(_main.Scenario == Scenario.Chamber && _main.Run is BodyPainBoxSession, "switching back did not make the pain box the live run");
+        Check(_main.Chamber.Visible, "the chamber is hidden after switching back");
+        Check(Throws(() => _ = office.TickIndex), "the office run was not disposed by the switch");
+    }
+
+    private static bool Throws(Action a)
+    {
+        try { a(); return false; }
+        catch (ObjectDisposedException) { return true; }
     }
 
     private void CheckEngineAndScene()
@@ -246,7 +290,7 @@ public partial class Smoke : Node
     {
         await ToSignal(GetTree(), SceneTree.SignalName.PhysicsFrame);
         if (_main.Failure is { } failure) throw new InvalidOperationException(failure);
-        var s = Session;
+        var s = _main.Run;
         if (ReferenceEquals(s, _lastSession) && !s.Finished) Check(s.TickIndex == _lastTick + 1, $"{s.TickIndex - _lastTick} steps in one physics frame");
         _lastSession = s;
         _lastTick = s.TickIndex;
@@ -259,7 +303,7 @@ public partial class Smoke : Node
 
     private async Task UntilTick(long tick)
     {
-        while (Session.TickIndex < tick && !Session.Finished) await Frame();
+        while (_main.Run.TickIndex < tick && !_main.Run.Finished) await Frame();
     }
 
     /// <summary>Session steps per real second over the next <paramref name="milliseconds"/>.</summary>

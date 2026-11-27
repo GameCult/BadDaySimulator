@@ -52,6 +52,14 @@ public partial class Main : Node3D
     /// <summary>The parameters of an office run: every default except the 1/120 s tick the body needs.</summary>
     public static StressParameters OfficeParameters { get; } = new() { TickSeconds = OfficeBody.TickSeconds };
 
+    /// <summary>A cut the knife opened: the part's label and the tick.</summary>
+    public readonly record struct Cut(string Part, long Tick);
+
+    private readonly List<Cut> _cuts = new();
+
+    /// <summary>Every cut opened since the last Reset, oldest first: a log for the HUD.</summary>
+    public IReadOnlyList<Cut> Cuts => _cuts;
+
     public bool SlowMotion { get; private set; }
 
     /// <summary>Every event the session has reported since the last Reset, oldest first.</summary>
@@ -136,6 +144,7 @@ public partial class Main : Node3D
         _run = null;
         Failure = null;
         _events.Clear();
+        _cuts.Clear();
         Seed = seed;
         try
         {
@@ -158,6 +167,9 @@ public partial class Main : Node3D
         (_run as BodyPainBoxSession)?.SetIntensity(level);
         _intensity = level;
     }
+
+    /// <summary>The player silences a stressor of the office.</summary>
+    public void Silence(string stressorId) => Office.Silence(stressorId);
 
     public void SwitchOff() => (_run as BodyPainBoxSession)?.SwitchOff();
 
