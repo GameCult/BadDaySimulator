@@ -191,7 +191,19 @@ public partial class Smoke : Node
         Check(office.Result().Timeline.Count > 0, "no timeline after a cut");
         await UntilTick(600);
 
+        // The blood drawn is the blood the world holds: a drop per live fluid lane, a disc per live wet lane, counted from the lanes here.
+        var view = office.View;
+        int liveDrops = 0, livePatches = 0;
+        for (int i = 0; i < view.ParticleCount; i++) if (view.ParticleLive[i] != 0 && (view.ParticlePhase[i] & Box3DSoaPhase.Fluid) != 0) liveDrops++;
+        for (int i = 0; i < view.WetCount; i++) if (view.WetLive[i] != 0) livePatches++;
+        Check(liveDrops + livePatches > 0, "no blood in the world 480 ticks after the cut");
+        Check(_main.Blood.DropCount == liveDrops && _main.Blood.PatchCount == livePatches,
+            $"blood draws {_main.Blood.DropCount} drops and {_main.Blood.PatchCount} patches; the lanes hold {liveDrops} and {livePatches}");
+
         // The bars are the session's will and arousal, to the bit, once a frame has drawn them (stepping paused so the session holds still).
+        // Run on until the cut has cost his will, so a bar bound to resolve instead shows a different number.
+        await UntilTick(1800);
+        Check(office.Will < office.Resolve - 0.1, $"will {office.Will} and resolve {office.Resolve} are too close at tick 1800 for the bars to tell them apart");
         _main.SetPhysicsProcess(false);
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);

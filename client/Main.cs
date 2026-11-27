@@ -26,8 +26,11 @@ public partial class Main : Node3D
     private Chamber _chamber = null!;
     private OrbitCamera _camera = null!;
     private Hud _hud = null!;
+    private BloodRenderer _blood = null!;
     private IBodyRun? _run;
     private double _intensity = new PainBoxParameters().BoxIntensity;
+
+    public BloodRenderer Blood => _blood;
 
     public Scenario Scenario { get; private set; } = Scenario.Chamber;
 
@@ -77,6 +80,8 @@ public partial class Main : Node3D
         Look.Apply();
         _bodies = new BodyRenderer { Name = "Bodies" };
         AddChild(_bodies);
+        _blood = new BloodRenderer { Name = "Blood" };
+        AddChild(_blood);
         _chamber = new Chamber { Name = "Chamber" };
         AddChild(_chamber);
         _camera = new OrbitCamera { Name = "Camera", Pivot = () => _bodies.PuppetCentre };
@@ -218,6 +223,7 @@ public partial class Main : Node3D
     {
         var s = Run;
         _bodies.Sync(s.View, teleport);
+        _blood.Sync(s.View);
         if (s is BodyPainBoxSession box) _chamber.Sync(box); else _chamber.Hide();
         Span<BodyEvent> events = stackalloc BodyEvent[8];
         int n;
