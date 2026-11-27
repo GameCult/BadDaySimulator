@@ -10,7 +10,7 @@ namespace BadDay.Ymir;
 /// The office on the seated body, stepped by its caller like <see cref="BodyPainBoxSession"/>: a <see cref="SeatedBody"/>
 /// (the one owner of the world), a Lodur <see cref="Physiology"/> on the humanoid plan with the session's slow scale,
 /// and the <see cref="StressSession"/> the headless run drives, with the desk's emitters moved to where the head sits and
-/// sensed there. Per <see cref="Step"/>: the body reports its points, the session decides (Lodur's Actor, which steps
+/// sensed there. Per <see cref="Step"/>: the body reports its points and what its airway openings hold, the session decides (Lodur's Actor, which steps
 /// the physiology first), the ragdoll is driven, the world steps. Harm enters only through <see cref="Wound"/>; the
 /// session never decides death, blood or consciousness: the read-outs are Lodur's. A dead body is limp (the Actor writes
 /// no strength) and the run ends a release after the death. After <see cref="Finished"/> <see cref="Step"/> only keeps
@@ -105,7 +105,8 @@ public sealed class OfficeBodySession : IDisposable
         {
             long tick = _session.TickIndex;
             _body.ReadSenses();
-            var events = _session.Tick(_body.X, _body.Y, _body.Z, _body.Strengths, _body.Targets);
+            var airway = _body.ReadAirway();
+            var events = _session.Tick(_body.X, _body.Y, _body.Z, _body.Strengths, _body.Targets, airway);
             if (events != TickEvents.None) _body.Enqueue(tick, events);
             for (int part = 0; part < _bleeds.Length; part++) _bleeds[part] = _physiology.Bleed(part);
             _body.DriveAndStep(_tickSeconds, _bleeds);

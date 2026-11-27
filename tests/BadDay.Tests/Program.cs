@@ -1373,7 +1373,7 @@ public static class Program
             Check(seen[0] == seen[1], "two runs shed different blood");
         }),
 
-        ("office blood settles under the cap: six Knife cuts; LiveDrops <= LiveCap - MaxDropsPerTick after every Step, no refused CreateParticles, WetCount > 0 by 15 s, and wet volume + live drops == Emitted within 1e-6 m^3", () =>
+        ("office blood settles under the cap: six Knife cuts; LiveDrops <= LiveCap - MaxDropsPerTick after every Step, no refused CreateParticles, WetCount > 0 by 15 s, and wet volume + live drops == Emitted within 1e-6 m^3, and the peak live is at most three quarters of the cap", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             var bloodParameters = new BloodParameters();
@@ -1389,6 +1389,7 @@ public static class Program
             }
             clock.Stop();
             Check(wetAt15 > 0, "no wet patch by 15 s");
+            Check(peak <= bloodParameters.LiveCap * 3 / 4, $"{peak} drops were live at once: the cap, not the slow-settle rule, is carrying the blood (probe: 256 live at 300 drops/s)");
             double wet = 0.0;
             var volume = s.View.WetPatchVolume;
             var live = s.View.WetLive;
@@ -1416,6 +1417,43 @@ public static class Program
             }
             Check(patches.GetValueOrDefault(1UL) > 0, "no patch reached the ground");
             Console.WriteLine("  patches per support (stable id): " + string.Join(", ", patches.Select(kv => $"{kv.Key}: {kv.Value}")));
+        }),
+
+        ("office blood starts outside the body: the first drop of a cut is, after the step it was shed in, 14.5-30 mm from the picked point: outside the surface by its radius and the lift, and not thrown out of the body (a drop shed on the surface is ejected 50 mm)", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            using var s = new OfficeBodySession(p, 1);
+            var hit = Hit(s, SeatedPuppet.Plan.PartIndex("LowerArm", Lodur.Side.Left));
+            Check(s.Wound(hit, WoundTool.Knife), "the knife was refused");
+            int tick = 0;
+            while (s.LiveDrops == 0 && tick++ < Hz) s.Step();
+            Check(s.LiveDrops > 0, "no drop in the first second");
+            var v = s.View;
+            int lane = 0;
+            while (v.ParticleLive[lane] == 0u) lane++;
+            double d = Math.Sqrt(Math.Pow(v.ParticleX[lane] - hit.Point.X, 2) + Math.Pow(v.ParticleY[lane] - hit.Point.Y, 2) + Math.Pow(v.ParticleZ[lane] - hit.Point.Z, 2));
+            Console.WriteLine($"  first drop {d * 1000.0:F1} mm from the picked point after its step (tick {tick}); radius {new BloodParameters().DropRadius * 1000.0:F1} mm");
+            Check(d > new BloodParameters().DropRadius + 0.002 && d < 0.03, $"the first drop is {d * 1000.0:F1} mm from the picked point: it started inside the body or was thrown");
+        }),
+
+        ("office airway reads the blood: Wound(MouthHit(s), Knife) at tick 0; within 1 s LiquidAtAirway is true on some tick and AirwayLiquid follows, per Lodur's airway", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            using var s = new OfficeBodySession(p, 1);
+            Check(s.Wound(MouthHit(s), WoundTool.Knife), "the knife was refused at the mouth");
+            int atAirway = -1, liquid = -1;
+            double maxLiquid = 0.0, maxOcclusion = 0.0;
+            for (int t = 0; t < Hz; t++)
+            {
+                s.Step();
+                if (atAirway < 0 && s.LiquidAtAirway) atAirway = t;
+                if (liquid < 0 && s.AirwayLiquid > 0.0) liquid = t;
+                maxLiquid = Math.Max(maxLiquid, s.AirwayLiquid);
+                maxOcclusion = Math.Max(maxOcclusion, s.Occlusion);
+            }
+            Check(atAirway >= 0, "no liquid was ever at the airway in the first second");
+            Check(liquid >= 0, "liquid was at the airway but none reached it");
+            Console.WriteLine($"  airway: liquid at the opening from tick {atAirway}, in the airway from tick {liquid}, peak {maxLiquid * 1e6:F2} mL, occlusion {maxOcclusion:F3}");
         }),
 
         ("seated world identity: a SeatedBody (a particle system, no wound) steps to the same positions and rotations as the same world with no particle system, 1200 driven ticks", () =>
@@ -1486,14 +1524,14 @@ public static class Program
         throw new InvalidOperationException($"no ray from outside meets part {part} first");
     }
 
-    /// <summary>A hit on the head at the plan's Mouth opening: a ray from 1 m in front of it, straight back.</summary>
+    /// <summary>A hit on the head at the plan's Mouth opening: a ray from 1 m in front of it, straight back and on through it.</summary>
     private static PartHit MouthHit(OfficeBodySession s)
     {
         var plan = SeatedPuppet.Plan;
         var mouth = plan.AirwayOpenings.First(a => a.Label == "Mouth");
         var c = plan.Parts[mouth.Part].Position;
         var at = new BodyPoint(c.X + mouth.Offset.X, c.Y + mouth.Offset.Y, c.Z + mouth.Offset.Z);
-        var ray = s.Pick(new BodyPoint(at.X, at.Y, at.Z + 1f), new BodyPoint(0f, 0f, -1f));
+        var ray = s.Pick(new BodyPoint(at.X, at.Y, at.Z + 1f), new BodyPoint(0f, 0f, -1.5f));
         Check(ray is { } h && h.Part == mouth.Part, "a ray at the mouth did not meet the head first");
         return ray!.Value;
     }

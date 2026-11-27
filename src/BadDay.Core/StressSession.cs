@@ -145,10 +145,10 @@ public sealed class StressSession
     /// <summary>
     /// One step: each stressor draws its jitter (always, so the stream never depends on state) and writes its
     /// schedule value; each emitter takes the largest of its unsilenced stressors; the Actor runs on the caller's
-    /// points; the tick's rows are logged from the flags and the end-of-tick state.
+    /// points and on the airway the body found at its openings (<paramref name="airway"/>, nothing by default); the tick's rows are logged from the flags and the end-of-tick state.
     /// </summary>
     public TickEvents Tick(ReadOnlySpan<float> x, ReadOnlySpan<float> y, ReadOnlySpan<float> z,
-        Span<float> strengths, Span<Quat> targets)
+        Span<float> strengths, Span<Quat> targets, in AirwaySample airway = default)
     {
         long tick = TickIndex;
         for (int e = 0; e < _emitters.Length; e++) _emitters[e].Intensity = 0.0;
@@ -158,7 +158,7 @@ public sealed class StressSession
             if (!_silenced[i] && value > _emitters[_emitterOf[i]].Intensity) _emitters[_emitterOf[i]].Intensity = value;
         }
 
-        var events = Actor.Tick(x, y, z, default, strengths, targets, _emitters);
+        var events = Actor.Tick(x, y, z, default, strengths, targets, _emitters, airway);
         _minResolve = Math.Min(_minResolve, Actor.Drive.Resolve);
 
         if ((events & TickEvents.WillBroke) != 0)
