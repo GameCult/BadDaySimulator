@@ -47,8 +47,9 @@ public sealed record BloodParameters
 /// it as drops of <see cref="BloodParameters.DropVolume"/> from where the wound is, carried by the part's pose, at most
 /// <see cref="BloodParameters.MaxDropsPerTick"/> a tick; volume that cannot be shed yet waits as backlog and none is
 /// dropped. After every step a drop that has rested on something for <see cref="BloodParameters.SettleTicks"/> ticks
-/// settles into a wet patch, and the oldest supported drops settle until there is room for a full tick of emission, so
-/// the live drops stay under <see cref="BloodParameters.LiveCap"/>. Ymir never settles by itself; this is the policy.
+/// settles into a wet patch, and the oldest supported drops settle until the live drops are at most LiveCap - MaxDropsPerTick, so
+/// they stay under <see cref="BloodParameters.LiveCap"/>. A lane Settle frees cannot be taken before the next Step, so a cap-bound run sheds fewer drops
+/// than it could (measured 69% of 8 a tick at saturation; the rest waits as backlog, none is lost); a lethal bleed (2.5 drops a tick) never reaches it. Ymir never settles by itself; this is the policy.
 /// Allocation-free once the wound points are open.
 /// </summary>
 public sealed class Blood
@@ -129,27 +130,34 @@ public sealed class Blood
         int n = 0;
         var v = _world.View;
         float r = _p.DropRadius;
-        for (int pass = 0; n < budget; pass++)
+        for (bool any = true; any && n < budget;)
         {
-            bool any = false;
+            any = false;
             for (int k = 0; k < _pointCount && n < budget; k++)
             {
                 ref var w = ref _points[(_cursor + k) % _pointCount];
                 if (w.Volume < _dropVolume) continue;
-                w.Volume -= _dropVolume;
-                any = true;
 
                 int lane = _ragdoll.BodyLane(w.Part);
                 var q = new Quat(v.RotationX[lane], v.RotationY[lane], v.RotationZ[lane], v.RotationW[lane]);
                 q.Rotate(w.Px, w.Py, w.Pz, out var px, out var py, out var pz);
                 q.Rotate(w.Nx, w.Ny, w.Nz, out var nx, out var ny, out var nz);
-                // Outside the surface, and a drop shed in the same tick one diameter further out so none starts inside another.
-                float lift = r + 0.002f + pass * 2f * r;
-                var at = (v.PositionX[lane] + px + nx * lift, v.PositionY[lane] + py + ny * lift, v.PositionZ[lane] + pz + nz * lift);
+                // Outside the surface, and then outward until clear of every drop already live or shed this tick (coincident cuts, a wound that sheds
+                // faster than a drop leaves): overlapped fluid blows up. A point still blocked after a few diameters waits; its volume stays gathered.
+                float lift = r + 0.002f;
+                (float X, float Y, float Z) at = default;
+                bool clear = false;
+                for (int attempt = 0; attempt < 12 && !clear; attempt++, lift += r)
+                {
+                    at = (v.PositionX[lane] + px + nx * lift, v.PositionY[lane] + py + ny * lift, v.PositionZ[lane] + pz + nz * lift);
+                    clear = Clear(at, n, v);
+                }
+                if (!clear) continue;
+                w.Volume -= _dropVolume;
+                any = true;
                 var velocity = (v.VelocityX[lane] + nx * _p.ExitSpeed, v.VelocityY[lane] + ny * _p.ExitSpeed, v.VelocityZ[lane] + nz * _p.ExitSpeed);
                 _descs[n++] = new Box3DSoaParticleDesc(at, _mass, r, _phase, (uint)_p.Material, velocity: velocity);
             }
-            if (!any) break;
         }
         _cursor = (_cursor + 1) % _pointCount;
         if (n == 0) return;
@@ -164,7 +172,27 @@ public sealed class Blood
         Emitted += n * _dropVolume;
     }
 
-    /// <summary>Settles the drops that have come to rest, then the oldest supported ones down to room for a full tick, after the step.</summary>
+    /// <summary>True when a drop at <paramref name="at"/> touches none of the live drops nor the <paramref name="placed"/> drops of this tick.</summary>
+    private bool Clear((float X, float Y, float Z) at, int placed, Box3DSoaView v)
+    {
+        float min = 2f * _p.DropRadius * 0.999f;
+        float min2 = min * min;
+        for (int i = 0; i < placed; i++)
+        {
+            float dx = _descs[i].X - at.X, dy = _descs[i].Y - at.Y, dz = _descs[i].Z - at.Z;
+            if (dx * dx + dy * dy + dz * dz < min2) return false;
+        }
+        var px = v.ParticleX; var py = v.ParticleY; var pz = v.ParticleZ;
+        for (int i = 0; i < _liveCount; i++)
+        {
+            int lane = _live[i].Lane;
+            float dx = px[lane] - at.X, dy = py[lane] - at.Y, dz = pz[lane] - at.Z;
+            if (dx * dx + dy * dy + dz * dz < min2) return false;
+        }
+        return true;
+    }
+
+    /// <summary>Settles the drops that have come to rest, then the oldest supported ones until at most LiveCap - MaxDropsPerTick are live, after the step.</summary>
     internal void AfterStep()
     {
         if (_liveCount == 0) return;

@@ -1389,6 +1389,7 @@ public static class Program
             }
             clock.Stop();
             Check(wetAt15 > 0, "no wet patch by 15 s");
+            // Measured: shipped peak 340 (319 before the spawn clearance), a settle by the cap alone (the cap-only-settle mutant) 504, this bound 384 between them.
             Check(peak <= bloodParameters.LiveCap * 3 / 4, $"{peak} drops were live at once: the cap, not the slow-settle rule, is carrying the blood (probe: 256 live at 300 drops/s)");
             double wet = 0.0;
             var volume = s.View.WetPatchVolume;
@@ -1454,6 +1455,123 @@ public static class Program
             Check(atAirway >= 0, "no liquid was ever at the airway in the first second");
             Check(liquid >= 0, "liquid was at the airway but none reached it");
             Console.WriteLine($"  airway: liquid at the opening from tick {atAirway}, in the airway from tick {liquid}, peak {maxLiquid * 1e6:F2} mL, occlusion {maxOcclusion:F3}");
+        }),
+
+        ("office blood is conserved to death and the death tick's blood is shed: one Knife (and three on one point), run to Finished, Emitted + Backlog == Gain x the real spill within 1e-9 m^3 (the dying step bleeds, though Bleed reads 0 once dead)", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            var blood = Lodur.PhysiologyPlans.Humanoid().Blood;
+            foreach (int cuts in new[] { 1, 3 })
+            {
+                using var s = new OfficeBodySession(p, 1);
+                var hit = Hit(s, SeatedPuppet.Plan.PartIndex("LowerArm", Lodur.Side.Left));
+                for (int i = 0; i < cuts; i++) Check(s.Wound(hit, WoundTool.Knife), "the knife was refused");
+                while (!s.Finished) s.Step();
+                Check(s.Dead, "the body lived");
+                double visible = new BloodParameters().Gain * blood.NominalVolume * s.BloodLoss * blood.LethalLossFraction;
+                double shed = s.BloodEmitted + s.BloodBacklog;
+                Check(Math.Abs(shed - visible) < 1e-9, $"{cuts} cut(s): shed {shed * 1000.0:F4} L of {visible * 1000.0:F4} L");
+            }
+        }),
+
+        ("office blood stops when the run does: a living body still bleeding at Finished sheds nothing in the next 300 steps (the physiology no longer steps, so its last rates would run forever)", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            using var s = new OfficeBodySession(p, 1);
+            Check(s.Wound(Hit(s, SeatedPuppet.Plan.PartIndex("LowerArm", Lodur.Side.Left)), new WoundTool(new[] { "Skin", "Muscle" }, 3.0)), "the wound was refused");
+            double before = 0.0;
+            while (!s.Finished) { s.Step(); if (s.TickIndex == 100) before = s.BloodEmitted; }
+            Check(!s.Dead && s.BloodEmitted > before + 1e-3, "the wound was not bleeding at the end of the run");
+            double shed = s.BloodEmitted + s.BloodBacklog;
+            for (int t = 0; t < 300; t++) s.Step();
+            Check(s.BloodEmitted + s.BloodBacklog == shed, $"{(s.BloodEmitted + s.BloodBacklog - shed) * 1e6:F3} mL more blood after Finished");
+        }),
+
+        ("office blood never throws or flies at repeated clicks: the same PartHit cut five or six times (lower arm, upper arm, thigh) and six coincident cuts on a shin run 20 s with every drop under 12 m/s, no refused Settle, and wet volume + live drops == Emitted within 1e-6 m^3", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            var drop = new BloodParameters().DropVolume;
+            foreach (var (label, cuts) in new[] { ("LowerArm", 5), ("UpperArm", 6), ("Thigh", 6), ("Shin", 6) })
+            {
+                using var s = new OfficeBodySession(p, 1);
+                var hit = Hit(s, SeatedPuppet.Plan.PartIndex(label, Lodur.Side.Left));
+                for (int i = 0; i < cuts; i++) Check(s.Wound(hit, WoundTool.Knife), $"{label} cut {i} was refused");
+                double fastest = 0.0;
+                int peakWet = 0;
+                for (int t = 0; t < 20 * Hz; t++)
+                {
+                    s.Step(); // a refused Settle or CreateParticles throws here
+                    var v = s.View;
+                    for (int i = 0; i < v.ParticleCount; i++)
+                    {
+                        if (v.ParticleLive[i] == 0u) continue;
+                        fastest = Math.Max(fastest, Math.Sqrt(v.ParticleVx[i] * v.ParticleVx[i] + v.ParticleVy[i] * v.ParticleVy[i] + v.ParticleVz[i] * v.ParticleVz[i]));
+                    }
+                    int wets = 0;
+                    for (int i = 0; i < v.WetCount; i++) if (v.WetLive[i] != 0u) wets++;
+                    peakWet = Math.Max(peakWet, wets);
+                }
+                double wet = 0.0;
+                for (int i = 0; i < s.View.WetCount; i++) if (s.View.WetLive[i] != 0u) wet += s.View.WetPatchVolume[i];
+                Console.WriteLine($"  {label} x{cuts}: fastest drop {fastest:F2} m/s, peak {peakWet} wet patches, {s.BloodEmitted * 1000.0:F1} L shed, backlog {s.BloodBacklog * 1000.0:F2} L, live {s.LiveDrops}");
+                Check(fastest < 12.0, $"{label} x{cuts}: a drop flew at {fastest:F1} m/s");
+                Check(Math.Abs(wet + s.LiveDrops * drop - s.BloodEmitted) < 1e-6, $"{label} x{cuts}: wet {wet} + live {s.LiveDrops} drops is not emitted {s.BloodEmitted} m^3");
+            }
+        }),
+
+        ("blood never asks for a lane the world has not freed: LiveCap 24 and no calm settling (SettleTicks 100000), six wounds shedding 6 drops a tick for 1200 ticks, neither CreateParticles nor Settle refuses and the live drops stay at most 24", () =>
+        {
+            var parameters = new BloodParameters { LiveCap = 24, SettleTicks = 100000 };
+            using var body = new SeatedBody(parameters);
+            var plan = SeatedPuppet.Plan;
+            var bleeds = new double[plan.Parts.Count];
+            foreach (var label in new[] { "LowerArm", "Thigh", "Shin" })
+            {
+                foreach (var side in new[] { Lodur.Side.Left, Lodur.Side.Right })
+                {
+                    int part = plan.PartIndex(label, side);
+                    var c = plan.Parts[part].Position;
+                    PartHit? hit = null;
+                    foreach (var (dx, dy, dz) in new[] { (1f, 0f, 0f), (-1f, 0f, 0f), (0f, 1f, 0f), (0f, -1f, 0f), (0f, 0f, 1f), (0f, 0f, -1f) })
+                    {
+                        if (body.Pick(new BodyPoint(c.X - dx, c.Y - dy, c.Z - dz), new BodyPoint(dx, dy, dz)) is { } h && h.Part == part) { hit = h; break; }
+                    }
+                    Check(hit is not null, $"no hit on {label} {side}");
+                    body.OpenWound(part, hit!.Value.Point, hit.Value.Normal);
+                    bleeds[part] = 6.0 * parameters.DropVolume * Hz / parameters.Gain / 6.0;
+                }
+            }
+            int peak = 0;
+            for (int t = 0; t < 1200; t++)
+            {
+                body.DriveAndStep(1.0 / Hz, bleeds); // a refused CreateParticles or Settle throws here
+                peak = Math.Max(peak, body.LiveDrops);
+            }
+            Check(peak <= 24, $"{peak} drops were live under a cap of 24");
+            Check(body.BloodEmitted > 24 * parameters.DropVolume, "the cap was never reached: the test pins nothing");
+        }),
+
+        ("seated airway pins: the pooled liquid reaches Lodur (a wound above the mouth settling on the face reads Pooled), down is the world's gravity (an upright mouth has no drop), and the blood material is slippery (wet friction 0.1, friction 0.3)", () =>
+        {
+            var plan = SeatedPuppet.Plan;
+            var mouth = plan.AirwayOpenings.First(a => a.Label == "Mouth");
+            var c = plan.Parts[mouth.Part].Position;
+            using var body = new SeatedBody(new BloodParameters { SettleSpeed = 100f, SettleTicks = 1 }); // drops settle on first touch: they pool where they land
+            Check(body.ReadAirway().Drop == 0.0, $"an upright seated mouth has a drop of {body.ReadAirway().Drop} m");
+            Check(body.View.MaterialWetFriction[1] == 0.1f && body.View.MaterialFriction[1] == 0.3f, $"material 1: friction {body.View.MaterialFriction[1]}, wet friction {body.View.MaterialWetFriction[1]}");
+            var hit = body.Pick(new BodyPoint(c.X, c.Y + mouth.Offset.Y + 0.04f, c.Z + 1f), new BodyPoint(0f, 0f, -1.5f));
+            Check(hit is { } h && h.Part == mouth.Part, "no hit on the face above the mouth");
+            body.OpenWound(hit!.Value.Part, hit.Value.Point, hit.Value.Normal);
+            var bleeds = new double[plan.Parts.Count];
+            bleeds[hit.Value.Part] = 0.0003;
+            double pooled = 0.0;
+            for (int t = 0; t < 300; t++)
+            {
+                body.DriveAndStep(1.0 / Hz, bleeds);
+                pooled = Math.Max(pooled, body.ReadAirway().Pooled);
+            }
+            Check(pooled > 1e-5, $"the pooled liquid at the mouth peaked at {pooled} m^3");
+            Console.WriteLine($"  airway: pooled peak {pooled * 1e6:F1} mL");
         }),
 
         ("seated world identity: a SeatedBody (a particle system, no wound) steps to the same positions and rotations as the same world with no particle system, 1200 driven ticks", () =>

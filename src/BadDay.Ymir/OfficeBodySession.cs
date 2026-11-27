@@ -22,7 +22,8 @@ public sealed class OfficeBodySession : IDisposable
     private readonly StressSession _session;
     private readonly Physiology _physiology;
     private readonly double _tickSeconds;
-    private readonly double[] _bleeds;
+    private readonly double[] _bleeds, _lastBleeds;
+    private readonly double _spillPerLoss;
     private readonly int _handL, _handR, _pelvisLane;
     private bool _disposed;
 
@@ -39,6 +40,7 @@ public sealed class OfficeBodySession : IDisposable
         {
             var plan = _body.Plan;
             _bleeds = new double[plan.Parts.Count];
+            _lastBleeds = new double[plan.Parts.Count];
             _body.ReadSenses();
             int head = plan.SenseIndex("Head");
             _handL = plan.SenseIndex("Hand", Side.Left);
@@ -46,6 +48,7 @@ public sealed class OfficeBodySession : IDisposable
             _pelvisLane = _body.BodyLane(plan.PartIndex("Pelvis"));
             var physiologyPlan = PhysiologyPlans.Humanoid();
             _physiology = new Physiology(plan, physiologyPlan, p.SlowScale);
+            _spillPerLoss = physiologyPlan.Blood.NominalVolume * physiologyPlan.Blood.LethalLossFraction; // real m^3 for one unit of BloodLoss
             // The desk's emitters sit where the head does and are sensed there.
             _session = new StressSession(p with { Setting = p.Setting.Shifted(_body.X[head], _body.Y[head], _body.Z[head]) }, seed,
                 plan.SensePoints.Count, OfficeBody.Poses, head, _physiology, plan, physiologyPlan);
@@ -106,9 +109,22 @@ public sealed class OfficeBodySession : IDisposable
             long tick = _session.TickIndex;
             _body.ReadSenses();
             var airway = _body.ReadAirway();
+            double lossBefore = _physiology.BloodLoss;
             var events = _session.Tick(_body.X, _body.Y, _body.Z, _body.Strengths, _body.Targets, airway);
             if (events != TickEvents.None) _body.Enqueue(tick, events);
-            for (int part = 0; part < _bleeds.Length; part++) _bleeds[part] = _physiology.Bleed(part);
+            if (_physiology.Dead)
+            {
+                // Bleed() reads 0 once dead, but the dying step still spilled what it took from the blood: that volume, shared as the step before shared its bleed.
+                double last = 0.0;
+                for (int part = 0; part < _bleeds.Length; part++) last += _lastBleeds[part];
+                double rate = (_physiology.BloodLoss - lossBefore) * _spillPerLoss / _tickSeconds;
+                for (int part = 0; part < _bleeds.Length; part++) _bleeds[part] = last > 0.0 && rate > 0.0 ? _lastBleeds[part] * rate / last : 0.0;
+                Array.Clear(_lastBleeds);
+            }
+            else
+            {
+                for (int part = 0; part < _bleeds.Length; part++) _lastBleeds[part] = _bleeds[part] = _physiology.Bleed(part);
+            }
             _body.DriveAndStep(_tickSeconds, _bleeds);
             return;
         }
