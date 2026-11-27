@@ -189,6 +189,7 @@ public partial class Smoke : Node
         Click(at, alt: false);
         Check(_main.Cuts.Count == 1 && _main.Cuts[0].Part == "LowerArm L", $"a left press on LowerArm L's centre left cuts [{string.Join(", ", _main.Cuts)}]");
         Check(office.Result().Timeline.Count > 0, "no timeline after a cut");
+        Check(Hud.Readout.Contains("airway "), "the readout has no airway line");
         await CheckAltGuard(at);
         await UntilTick(600);
 

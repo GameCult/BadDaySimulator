@@ -155,12 +155,14 @@ public sealed class OfficeBodySession : IBodyRun
 
     /// <summary>
     /// Wounds the part <paramref name="hit"/> names from the next tick, and opens the wound at the point it hit so the blood leaves from there;
-    /// false when refused (see <see cref="StressSession.Wound"/>), and then nothing is opened.
+    /// the point goes into the part's frame (<see cref="SeatedBody.ToPart"/>) for the layers the tool's depth reaches there.
+    /// False when refused (a part outside the plan, or see <see cref="StressSession.Wound"/>), and then nothing is opened.
     /// </summary>
     public bool Wound(in PartHit hit, WoundTool tool)
     {
         Live();
-        if (!_session.Wound(hit.Part, tool)) return false;
+        if ((uint)hit.Part >= (uint)_body.Plan.Parts.Count) return false;
+        if (!_session.Wound(hit.Part, _body.ToPart(hit.Part, hit.Point), tool)) return false;
         _body.OpenWound(hit.Part, hit.Point, hit.Normal);
         return true;
     }

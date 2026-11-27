@@ -1151,7 +1151,7 @@ public static class Program
             var physiologyPlan = Lodur.PhysiologyPlans.Humanoid();
             var physiology = new Lodur.Physiology(plan, physiologyPlan, p.SlowScale);
             var session = new StressSession(p, 1, plan.SensePoints.Count, OfficeBody.Poses, plan.SenseIndex("Head"), physiology, plan, physiologyPlan);
-            Check(session.Wound(plan.PartIndex("LowerArm", Lodur.Side.Left), WoundTool.Knife), "the knife was refused");
+            Check(session.Wound(plan.PartIndex("LowerArm", Lodur.Side.Left), default, WoundTool.Knife), "the knife was refused");
             var pts = new float[plan.SensePoints.Count];
             var strengths = new float[plan.Joints.Count];
             var targets = new Quat[plan.Joints.Count];
@@ -1171,26 +1171,25 @@ public static class Program
             Check(session.TickIndex - 1 == diedTick + (long)Math.Round(p.ReleaseSeconds / p.TickSeconds), $"the run ended at tick {session.TickIndex - 1}, the death was at {diedTick}");
         }),
 
-        ("office wound refusals: an out-of-range part and a headless session refuse, a tool with no layer the part has is refused, and a palm takes the knife on skin and muscle without fat", () =>
+        ("office wound refusals: an out-of-range part and a headless session refuse, and a palm takes the knife on skin, muscle and metacarpals", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             using (var s = new OfficeBodySession(p, 1))
             {
                 Check(!s.Wound(new PartHit(-1, default, default), WoundTool.Knife) && !s.Wound(new PartHit(SeatedPuppet.Plan.Parts.Count, default, default), WoundTool.Knife), "an out-of-range part was wounded");
             }
-            Check(!NewOffice(p, 1).Wound(0, WoundTool.Knife), "a headless session was wounded");
+            Check(!NewOffice(p, 1).Wound(0, default, WoundTool.Knife), "a headless session was wounded");
 
             var plan = SeatedPuppet.Plan;
             var physiologyPlan = Lodur.PhysiologyPlans.Humanoid();
             var physiology = new Lodur.Physiology(plan, physiologyPlan, p.SlowScale);
             var session = new StressSession(p, 1, plan.SensePoints.Count, OfficeBody.Poses, plan.SenseIndex("Head"), physiology, plan, physiologyPlan);
             int palm = plan.PartIndex("Palm", Lodur.Side.Left);
-            Check(!session.Wound(palm, new WoundTool(new[] { "Fat" }, 60.0)), "a palm took a fat-only wound");
-            Check(session.Wound(palm, WoundTool.Knife), "the palm refused the knife");
+            Check(session.Wound(palm, default, WoundTool.Knife), "the palm refused the knife");
             var pts = new float[plan.SensePoints.Count];
             session.Tick(pts, pts, pts, new float[plan.Joints.Count], new Quat[plan.Joints.Count]);
             Check(physiology.Integrity(palm, physiology.TissueIndex(palm, "Skin")) < 1.0 && physiology.Integrity(palm, physiology.TissueIndex(palm, "Muscle")) < 1.0, "the palm's skin or muscle is unhurt");
-            Check(physiology.Integrity(palm, physiology.TissueIndex(palm, "Metacarpals")) == 1.0, "the palm's metacarpals were hurt");
+            Check(physiology.Integrity(palm, physiology.TissueIndex(palm, "Metacarpals")) < 1.0, "the palm's metacarpals were not hurt");
         }),
 
         ("office slow clock: SlowScale reaches the physiology, so a skin wound's bleed ends (it heals on the acute clock) and the blood regrows sooner the larger the scale: 1 > 20 > 1000 ticks to recover", () =>
@@ -1200,7 +1199,7 @@ public static class Program
             long Recovered(double scale)
             {
                 using var s = new OfficeBodySession(p with { SlowScale = scale }, 1);
-                Check(s.Wound(Hit(s, arm), new WoundTool(new[] { "Skin" }, 0.006)), "the skin wound was refused");
+                Check(s.Wound(Hit(s, arm), new WoundTool(0.001, 0.006)), "the skin wound was refused");
                 bool bled = false;
                 while (!s.Finished)
                 {
@@ -1239,7 +1238,7 @@ public static class Program
             }
             using (var s = new OfficeBodySession(p, 1))
             {
-                Check(s.Wound(Hit(s, SeatedPuppet.Plan.PartIndex("Torso", Lodur.Side.Center)), new WoundTool(new[] { "LungLeft", "LungRight" }, 15.0)), "the lungs were refused");
+                Check(s.Wound(HitAt(s, SeatedPuppet.Plan.PartIndex("Torso", Lodur.Side.Center), (0f, 0.07f, -0.09f), alongZ: true), new WoundTool(0.065, 15.0)), "the lungs were refused");
                 double maxHunger = 0.0;
                 while (!s.Finished)
                 {
@@ -1293,33 +1292,33 @@ public static class Program
             var physiologyPlan = Lodur.PhysiologyPlans.Humanoid();
             var physiology = new Lodur.Physiology(plan, physiologyPlan, p.SlowScale);
             var session = new StressSession(p, 1, plan.SensePoints.Count, OfficeBody.Poses, plan.SenseIndex("Head"), physiology, plan, physiologyPlan);
-            var skin = new WoundTool(new[] { "Skin" }, 1.0);
+            var skin = new WoundTool(0.001, 1.0);
             int knives = physiologyPlan.AfflictionSlots / 3;
-            for (int i = 0; i < knives; i++) Check(session.Wound(arm, WoundTool.Knife), $"knife {i} was refused with room left");
+            for (int i = 0; i < knives; i++) Check(session.Wound(arm, default, WoundTool.Knife), $"knife {i} was refused with room left");
             int free = physiologyPlan.AfflictionSlots - 3 * knives;
             Check(free > 0 && free < 3, $"the table has {free} slots free; the test needs one or two");
-            Check(!session.Wound(arm, WoundTool.Knife), "a knife that does not fit was accepted");
-            for (int i = 0; i < free; i++) Check(session.Wound(arm, skin), $"the refused knife took a slot: skin wound {i} was refused");
-            Check(!session.Wound(arm, skin), "the table took more wounds than it has slots");
+            Check(!session.Wound(arm, default, WoundTool.Knife), "a knife that does not fit was accepted");
+            for (int i = 0; i < free; i++) Check(session.Wound(arm, default, skin), $"the refused knife took a slot: skin wound {i} was refused");
+            Check(!session.Wound(arm, default, skin), "the table took more wounds than it has slots");
 
             var foreign = new Lodur.Physiology(plan, physiologyPlan, p.SlowScale);
             var shared = new StressSession(p, 1, plan.SensePoints.Count, OfficeBody.Poses, plan.SenseIndex("Head"), foreign, plan, physiologyPlan);
             for (int i = 0; i < physiologyPlan.AfflictionSlots; i++) Check(foreign.Afflict(physiologyPlan.AfflictionIndex("Cut"), arm, 0, 1.0), "the table filled early");
             int refused = foreign.Refused;
-            Check(!shared.Wound(arm, skin), "a wound the physiology had no room for was accepted");
+            Check(!shared.Wound(arm, default, skin), "a wound the physiology had no room for was accepted");
             Check(foreign.Refused == refused + 1, "the full table's refusal is the physiology's, counted once");
 
             var healing = new Lodur.Physiology(plan, physiologyPlan, p.SlowScale);
             var healer = new StressSession(p, 1, plan.SensePoints.Count, OfficeBody.Poses, plan.SenseIndex("Head"), healing, plan, physiologyPlan);
-            var graze = new WoundTool(new[] { "Skin" }, 1e-3);
-            for (int i = 0; i < physiologyPlan.AfflictionSlots; i++) Check(healer.Wound(arm, graze), $"graze {i} was refused with room left");
-            Check(!healer.Wound(arm, graze), "the table took more wounds than it has slots");
+            var graze = new WoundTool(0.001, 1e-3);
+            for (int i = 0; i < physiologyPlan.AfflictionSlots; i++) Check(healer.Wound(arm, default, graze), $"graze {i} was refused with room left");
+            Check(!healer.Wound(arm, default, graze), "the table took more wounds than it has slots");
             var sensed = new float[plan.SensePoints.Count];
             var strengths = new float[plan.Joints.Count];
             var targets = new Lodur.Quat[plan.Joints.Count];
-            for (int t = 0; t < 2000 && !healer.Wound(arm, graze); t++) healer.Tick(sensed, sensed, sensed, strengths, targets);
+            for (int t = 0; t < 2000 && !healer.Wound(arm, default, graze); t++) healer.Tick(sensed, sensed, sensed, strengths, targets);
             Check(!healer.Finished, "the run ended before the grazes healed");
-            Check(healer.Wound(arm, graze), "healed wounds did not free their room: the session still counts them");
+            Check(healer.Wound(arm, default, graze), "healed wounds did not free their room: the session still counts them");
         }),
 
         ("SeatedBody hands out no ragdoll: nothing public returns or takes a Ragdoll, so DriveAndStep is the one driver", () =>
@@ -1457,6 +1456,56 @@ public static class Program
             Console.WriteLine($"  airway: liquid at the opening from tick {atAirway}, in the airway from tick {liquid}, peak {maxLiquid * 1e6:F2} mL, occlusion {maxOcclusion:F3}");
         }),
 
+        ("office throat click reaches the larynx and fills the airway: HitAt(Head, the front of the throat), Wound(hit, Knife) at tick 0 puts more than 20 mL in the airway within 5 s, occludes it fully before the death, and the death is BloodLoss", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            using var s = new OfficeBodySession(p, 1);
+            var head = SeatedPuppet.Plan.PartIndex("Head", Lodur.Side.Center);
+            Check(s.Wound(HitAt(s, head, (0f, -0.0778f, 0.0778f)), WoundTool.Knife), "the knife was refused at the throat");
+            double liquidAt5 = 0.0, maxOcclusion = 0.0, occludedAt = -1.0;
+            while (!s.Dead && !s.Finished)
+            {
+                s.Step();
+                if (s.TickIndex <= 5 * Hz) liquidAt5 = Math.Max(liquidAt5, s.AirwayLiquid);
+                maxOcclusion = Math.Max(maxOcclusion, s.Occlusion);
+                if (occludedAt < 0.0 && s.Occlusion >= 0.99) occludedAt = s.TickIndex / (double)Hz;
+            }
+            Console.WriteLine($"  throat: {liquidAt5 * 1e6:F1} mL in the airway by 5 s, full at {occludedAt:F1} s, died at {s.TickIndex / (double)Hz:F1} s");
+            Check(liquidAt5 > 20e-6, $"the airway held {liquidAt5 * 1e6:F2} mL by 5 s");
+            Check(occludedAt >= 0.0 && maxOcclusion >= 0.99, $"the airway never filled: occlusion peaked at {maxOcclusion:F3}");
+            Check(s.Dead && s.DeathCause == Lodur.DeathCause.BloodLoss, $"cause {s.DeathCause}");
+        }),
+
+        ("office reach by point: the throat front cuts the larynx and not the neck muscle; the chin cuts the muscle and not the larynx", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            var plan = SeatedPuppet.Plan;
+            var physiologyPlan = Lodur.PhysiologyPlans.Humanoid();
+            int head = plan.PartIndex("Head", Lodur.Side.Center);
+            foreach (var (point, larynx, muscle) in new[] { ((0f, -0.0778f, 0.0778f), true, false), ((0f, -0.11f, 0f), false, true) })
+            {
+                var physiology = new Lodur.Physiology(plan, physiologyPlan, p.SlowScale);
+                var session = new StressSession(p, 1, plan.SensePoints.Count, OfficeBody.Poses, plan.SenseIndex("Head"), physiology, plan, physiologyPlan);
+                Check(session.Wound(head, point, WoundTool.Knife), "the knife was refused");
+                var pts = new float[plan.SensePoints.Count];
+                session.Tick(pts, pts, pts, new float[plan.Joints.Count], new Quat[plan.Joints.Count]);
+                bool cutLarynx = physiology.Integrity(head, physiology.TissueIndex(head, "Larynx")) < 1.0;
+                bool cutMuscle = physiology.Integrity(head, physiology.TissueIndex(head, "Muscle")) < 1.0;
+                Check(cutLarynx == larynx && cutMuscle == muscle, $"at {point}: larynx cut {cutLarynx}, muscle cut {cutMuscle}");
+            }
+        }),
+
+        ("WoundTool refuses a depth that is 0, negative, NaN or infinite, and the knife is 2 cm", () =>
+        {
+            foreach (double depth in new[] { 0.0, -0.01, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+            {
+                bool threw = false;
+                try { _ = new WoundTool(depth, 60.0); } catch (ArgumentException) { threw = true; }
+                Check(threw, $"a depth of {depth} was accepted");
+            }
+            Check(WoundTool.Knife.Depth == 0.02 && WoundTool.Knife.Severity == 60.0, "the knife changed");
+        }),
+
         ("office blood is conserved to death and the death tick's blood is shed: one Knife (and three on one point), run to Finished, Emitted + Backlog == Gain x the real spill within 1e-9 m^3 (the dying step bleeds, though Bleed reads 0 once dead)", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
@@ -1478,7 +1527,7 @@ public static class Program
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             using var s = new OfficeBodySession(p, 1);
-            Check(s.Wound(Hit(s, SeatedPuppet.Plan.PartIndex("LowerArm", Lodur.Side.Left)), new WoundTool(new[] { "Skin", "Muscle" }, 3.0)), "the wound was refused");
+            Check(s.Wound(Hit(s, SeatedPuppet.Plan.PartIndex("LowerArm", Lodur.Side.Left)), new WoundTool(WoundTool.Knife.Depth, 3.0)), "the wound was refused");
             double before = 0.0;
             while (!s.Finished) { s.Step(); if (s.TickIndex == 100) before = s.BloodEmitted; }
             Check(!s.Dead && s.BloodEmitted > before + 1e-3, "the wound was not bleeding at the end of the run");
@@ -1706,6 +1755,31 @@ public static class Program
             if (hit is { } h && h.Part == part) return h;
         }
         throw new InvalidOperationException($"no ray from outside meets part {part} first");
+    }
+
+    /// <summary>
+    /// A hit on <paramref name="part"/> at <paramref name="local"/> (the part's frame) as it now stands: a ray from 0.5 m outside that point, in along the
+    /// outward direction (or along +z from behind when <paramref name="alongZ"/>), on through it; the ray must meet the part first.
+    /// </summary>
+    private static PartHit HitAt(OfficeBodySession s, int part, (float X, float Y, float Z) local, bool alongZ = false)
+    {
+        var v = s.View;
+        ulong id = SeatedPuppet.FirstStableId + (ulong)part;
+        int lane = -1;
+        for (int i = 0; i < v.StableId.Length; i++) if (v.StableId[i] == id) { lane = i; break; }
+        Check(lane >= 0, $"part {part} has no lane");
+        var q = new Quat(v.RotationX[lane], v.RotationY[lane], v.RotationZ[lane], v.RotationW[lane]);
+        q.Rotate(local.X, local.Y, local.Z, out var ox, out var oy, out var oz);
+        float wx = v.PositionX[lane] + ox, wy = v.PositionY[lane] + oy, wz = v.PositionZ[lane] + oz;
+        float dx = 0f, dy = 0f, dz = 1f;
+        if (!alongZ)
+        {
+            float len = MathF.Sqrt(ox * ox + oy * oy + oz * oz);
+            dx = -ox / len; dy = -oy / len; dz = -oz / len; // travelling inward
+        }
+        var hit = s.Pick(new BodyPoint(wx - 0.5f * dx, wy - 0.5f * dy, wz - 0.5f * dz), new BodyPoint(dx, dy, dz));
+        Check(hit is { } h && h.Part == part, $"a ray at part {part} met something else first");
+        return hit!.Value;
     }
 
     /// <summary>A hit on the head at the plan's Mouth opening: a ray from 1 m in front of it, straight back and on through it.</summary>

@@ -132,15 +132,32 @@ public sealed class SeatedBody : IDisposable
         return new PartHit((int)ordinal, new BodyPoint(hit.Point.X, hit.Point.Y, hit.Point.Z), new BodyPoint(hit.Normal.X, hit.Normal.Y, hit.Normal.Z));
     }
 
-    /// <summary>Opens a wound at a world point and normal on <paramref name="part"/>: from now on it sheds its share of the part's bleed, carried by the part.</summary>
-    public void OpenWound(int part, BodyPoint point, BodyPoint normal)
+    /// <summary>
+    /// A world point in <paramref name="part"/>'s frame: origin the part's position, axes its rotation, the frame the sites of Lodur's PartTissuesDef are
+    /// written in (the body's own, as the airway openings' offsets are). The inverse of the part's live pose.
+    /// </summary>
+    public (float X, float Y, float Z) ToPart(int part, BodyPoint world)
     {
         Live();
         int lane = _ragdoll.BodyLane(part);
         var v = _world.View;
-        var inverse = new Quat(v.RotationX[lane], v.RotationY[lane], v.RotationZ[lane], v.RotationW[lane]).Conjugate();
-        inverse.Rotate(point.X - v.PositionX[lane], point.Y - v.PositionY[lane], point.Z - v.PositionZ[lane], out var px, out var py, out var pz);
-        inverse.Rotate(normal.X, normal.Y, normal.Z, out var nx, out var ny, out var nz);
+        return Inverse(lane, world.X - v.PositionX[lane], world.Y - v.PositionY[lane], world.Z - v.PositionZ[lane]);
+    }
+
+    /// <summary>The part's inverse rotation applied to a vector: a world offset from the part's position, or a world direction, into the part's frame.</summary>
+    private (float X, float Y, float Z) Inverse(int lane, float x, float y, float z)
+    {
+        var v = _world.View;
+        new Quat(v.RotationX[lane], v.RotationY[lane], v.RotationZ[lane], v.RotationW[lane]).Conjugate().Rotate(x, y, z, out var rx, out var ry, out var rz);
+        return (rx, ry, rz);
+    }
+
+    /// <summary>Opens a wound at a world point and normal on <paramref name="part"/>: from now on it sheds its share of the part's bleed, carried by the part.</summary>
+    public void OpenWound(int part, BodyPoint point, BodyPoint normal)
+    {
+        Live();
+        var (px, py, pz) = ToPart(part, point);
+        var (nx, ny, nz) = Inverse(_ragdoll.BodyLane(part), normal.X, normal.Y, normal.Z);
         _blood.Open(part, px, py, pz, nx, ny, nz);
     }
 

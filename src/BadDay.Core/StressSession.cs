@@ -117,28 +117,19 @@ public sealed class StressSession
     }
 
     /// <summary>
-    /// The player wounds a part with a tool from the current tick on: one Cut affliction of the tool's severity on each
-    /// of the tool's layers the part has (a layer the part lacks is skipped), through <see cref="Physiology.Afflict"/>,
-    /// the only way harm enters. All of the layers or none: false, and nothing wounded, for a headless session, a body
-    /// that is dead (death is permanent, bds-death) or a run that is <see cref="Finished"/>, a part the body lacks, a tool
-    /// none of whose layers the part has, or when the physiology has no room for every layer (its answer, not counted here).
+    /// The player wounds a part with a tool from the current tick on: one Cut affliction of the tool's severity on each layer its
+    /// <see cref="WoundTool.Depth"/> reaches at <paramref name="point"/> (in the part's frame) through the part's PartTissuesDef.Reach,
+    /// through <see cref="Physiology.Afflict"/>, the only way harm enters. All of the layers or none: false, and nothing wounded, for a
+    /// headless session, a body that is dead (death is permanent, bds-death) or a run that is <see cref="Finished"/>, a part the body
+    /// lacks, or when the physiology has no room for every layer (its answer, not counted here).
     /// </summary>
-    public bool Wound(int part, WoundTool tool)
+    public bool Wound(int part, (float X, float Y, float Z) point, WoundTool tool)
     {
         if (_physiology is null || _physiologyPlan is null || _stackOf is null || (uint)part >= (uint)_stackOf.Length) return false;
         if (Finished || _physiology.Dead) return false;
-        var stack = _physiologyPlan.Parts[_stackOf[part]].Tissues;
-        Span<int> layers = stackalloc int[tool.Layers.Count];
-        int n = 0;
-        foreach (var label in tool.Layers)
-        {
-            for (int layer = 0; layer < stack.Count; layer++)
-            {
-                if (stack[layer].Label != label) continue;
-                layers[n++] = layer;
-                break;
-            }
-        }
+        var stack = _physiologyPlan.Parts[_stackOf[part]];
+        Span<int> layers = stackalloc int[stack.Tissues.Count];
+        int n = stack.Reach(point, tool.Depth, layers);
         return n > 0 && _physiology.Afflict(_cut, part, layers[..n], tool.Severity);
     }
 
