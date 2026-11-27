@@ -41,7 +41,7 @@ public sealed class SeatedBody : IDisposable
                 Fluid: blood.LiveCap, Wets: blood.WetLanes, Sensors: needs.Sensors));
         try
         {
-            _world.SetMaterial(blood.Material, blood.Friction, viscosity: blood.Viscosity, wetFriction: blood.WetFriction);
+            blood.ApplyTo(_world);
             _ragdoll = SeatedPuppet.Build(_world);
             var plan = _ragdoll.Plan;
             _blood = new Blood(_world, _ragdoll, blood);

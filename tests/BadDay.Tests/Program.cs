@@ -1389,7 +1389,7 @@ public static class Program
             }
             clock.Stop();
             Check(wetAt15 > 0, "no wet patch by 15 s");
-            // Measured: shipped peak 340 (319 before the spawn clearance), a settle by the cap alone (the cap-only-settle mutant) 504, this bound 384 between them.
+            // Measured: shipped peak 381 now (340 with clearance but no spread, 319 before the clearance), the cap-only-settle mutant 504, this bound 384, so the margin is 3 drops: the bound is not to be loosened, the shed pattern is to be changed instead.
             Check(peak <= bloodParameters.LiveCap * 3 / 4, $"{peak} drops were live at once: the cap, not the slow-settle rule, is carrying the blood (probe: 256 live at 300 drops/s)");
             double wet = 0.0;
             var volume = s.View.WetPatchVolume;
@@ -1397,7 +1397,7 @@ public static class Program
             for (int i = 0; i < volume.Length; i++) if (live[i] != 0u) wet += volume[i];
             double held = wet + s.LiveDrops * bloodParameters.DropVolume;
             Check(Math.Abs(held - s.BloodEmitted) < 1e-6, $"wet {wet} + live {s.LiveDrops} x drop is {held}, emitted {s.BloodEmitted} m^3");
-            Console.WriteLine($"  blood: {s.BloodEmitted * 1000.0:F1} L shed, backlog {s.BloodBacklog * 1000.0:F2} L, peak live {peak}, {s.View.WetCount} wet patches, {clock.Elapsed.TotalMilliseconds / (40 * Hz):F2} ms a tick whole (probe: +0.56 ms at 256 live)");
+            Console.WriteLine($"  blood: {s.BloodEmitted * 1000.0:F1} L shed, backlog {s.BloodBacklog * 1000.0:F2} L, peak live {peak}, {s.View.WetCount} wet patches, {clock.Elapsed.TotalMilliseconds / (40 * Hz):F2} ms a tick, the whole session (Soul measured the blood alone at +1.03 ms over the idle particle system at 300 drops/s)");
         }),
 
         ("office blood lands where it falls: every patch's support is the ground, the stool or a Fella lane, and six cuts give a ground patch (stable id 1) by 40 s", () =>
@@ -1549,6 +1549,70 @@ public static class Program
             }
             Check(peak <= 24, $"{peak} drops were live under a cap of 24");
             Check(body.BloodEmitted > 24 * parameters.DropVolume, "the cap was never reached: the test pins nothing");
+        }),
+
+        ("office blood keeps pace with the bleed at coincident and near-coincident cuts: five clicks on one PartHit and six points 1 cm apart on a lower arm; the unshed backlog never passes one second of the flow (0.78 L visible per knife) and, two ticks after the death, nothing more than a drop a point is left to shed", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            var parameters = new BloodParameters();
+            var arm = SeatedPuppet.Plan.PartIndex("LowerArm", Lodur.Side.Left);
+            foreach (var spread in new[] { 0.0, 0.01 })
+            {
+                using var s = new OfficeBodySession(p, 1);
+                var hits = new List<PartHit> { Hit(s, arm) };
+                if (spread == 0.0) { while (hits.Count < 5) hits.Add(hits[0]); }
+                else
+                {
+                    var c = SeatedPuppet.Plan.Parts[arm].Position;
+                    for (float u = -0.1f; u <= 0.1f && hits.Count < 6; u += 0.0025f)
+                    {
+                        // Rays along -Z... from the front, sliding up the arm: a point on the arm at least 1 cm from each chosen one.
+                        if (s.Pick(new BodyPoint(c.X, c.Y + u, c.Z + 1f), new BodyPoint(0f, 0f, -1f)) is { } h && h.Part == arm &&
+                            hits.All(o => Math.Sqrt(Math.Pow(o.Point.X - h.Point.X, 2) + Math.Pow(o.Point.Y - h.Point.Y, 2) + Math.Pow(o.Point.Z - h.Point.Z, 2)) >= 0.01)) hits.Add(h);
+                    }
+                    Check(hits.Count == 6, $"only {hits.Count} points 1 cm apart");
+                }
+                foreach (var h in hits) Check(s.Wound(h, WoundTool.Knife), "the knife was refused");
+                double bound = hits.Count * 0.78e-3, worst = 0.0, atDeath = -1.0;
+                int deadAt = -1;
+                for (int t = 0; !s.Finished; t++)
+                {
+                    s.Step();
+                    worst = Math.Max(worst, s.BloodBacklog);
+                    if (s.Dead && deadAt < 0) deadAt = t;
+                    if (deadAt >= 0 && t == deadAt + 2) atDeath = s.BloodEmitted;
+                }
+                Console.WriteLine($"  {hits.Count} points, spread {spread}: peak backlog {worst * 1000.0:F2} L (bound {bound * 1000.0:F2}), shed {s.BloodEmitted * 1000.0:F1} L, backlog at the end {s.BloodBacklog * 1e6:F1} mL");
+                Check(worst <= bound, $"{hits.Count} points, spread {spread}: the backlog peaked at {worst * 1000.0:F2} L, over {bound * 1000.0:F2} L");
+                Check(atDeath >= 0.0 && s.BloodEmitted - atDeath < 2.0 * parameters.DropVolume, $"{hits.Count} points: {(s.BloodEmitted - atDeath) * 1e6:F1} mL was still being shed after the death");
+                Check(s.BloodBacklog < hits.Count * parameters.DropVolume, $"{hits.Count} points: {s.BloodBacklog * 1e6:F1} mL was never shed");
+            }
+        }),
+
+        ("blood makes a surface slippery: the seated body's blood material (BloodParameters.ApplyTo, the one SeatedBody uses) lets a pushed box slide at least 5 cm further over a settled drop than over a dry floor", () =>
+        {
+            var parameters = new BloodParameters();
+            double Slide(bool patch)
+            {
+                float drop = 0.03f, scale = drop / parameters.DropRadius;
+                using var world = new global::Ymir.Box3D.Box3DSoaWorld(capacity: 8, gravityY: -9.81f,
+                    particles: new global::Ymir.Box3D.Box3DSoaParticleCapacities(8, 0, 0, 0, 0, parameters.Material + 1, Fluid: 8, Wets: 4));
+                world.AddStaticBox(1, (0f, -0.5f, 0f), (4f, 0.5f, 2f), friction: 0.6f);
+                world.SetMaterial(0, 0.6f);
+                parameters.ApplyTo(world);
+                world.CreateParticles(new[] { new global::Ymir.Box3D.Box3DSoaParticleDesc((0f, drop, 0f), (float)(parameters.Density * Math.Pow(2.0 * drop, 3.0)), drop,
+                    global::Ymir.Box3D.Box3DSoaPhase.Of(1, fluid: true), (uint)parameters.Material) });
+                for (int t = 0; t < 20; t++) world.Step(1f / 60f, 4);
+                var handle = new global::Ymir.Box3D.Box3DSoaParticleHandle(0, world.View.ParticleGeneration[0]);
+                if (patch) world.Settle(new[] { handle }); else world.DestroyParticles(new[] { handle });
+                int box = world.AddBox(10, (0f, 0.1f, 0f), (0.1f, 0.1f, 0.1f), 5f / 0.008f, friction: 0.6f);
+                double x0 = world.View.PositionX[box];
+                for (int t = 0; t < 40; t++) { world.View.ForceX[box] = 20f; world.Step(1f / 60f, 4); } // below the dry friction (29 N), above the wet one
+                return world.View.PositionX[box] - x0;
+            }
+            double dry = Slide(false), wet = Slide(true);
+            Console.WriteLine($"  slide over 40 ticks: dry {dry * 100.0:F1} cm, over blood {wet * 100.0:F1} cm");
+            Check(wet - dry >= 0.05, $"the box slid {wet * 100.0:F1} cm over blood and {dry * 100.0:F1} cm dry");
         }),
 
         ("seated airway pins: the pooled liquid reaches Lodur (a wound above the mouth settling on the face reads Pooled), down is the world's gravity (an upright mouth has no drop), and the blood material is slippery (wet friction 0.1, friction 0.3)", () =>

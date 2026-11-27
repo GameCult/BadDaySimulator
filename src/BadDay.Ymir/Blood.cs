@@ -36,6 +36,9 @@ public sealed record BloodParameters
     public float Viscosity { get; init; } = 0.01f;
     public float WetFriction { get; init; } = 0.1f;
 
+    /// <summary>Sets the blood material in <paramref name="world"/>: the one place the table entry is written, used by the seated body.</summary>
+    public void ApplyTo(Box3DSoaWorld world) => world.SetMaterial(Material, Friction, viscosity: Viscosity, wetFriction: WetFriction);
+
     /// <summary>One drop's volume in m^3.</summary>
     public double DropVolume => Math.Pow(2.0 * DropRadius, 3.0);
 }
@@ -49,7 +52,7 @@ public sealed record BloodParameters
 /// dropped. After every step a drop that has rested on something for <see cref="BloodParameters.SettleTicks"/> ticks
 /// settles into a wet patch, and the oldest supported drops settle until the live drops are at most LiveCap - MaxDropsPerTick, so
 /// they stay under <see cref="BloodParameters.LiveCap"/>. A lane Settle frees cannot be taken before the next Step, so a cap-bound run sheds fewer drops
-/// than it could (measured 69% of 8 a tick at saturation; the rest waits as backlog, none is lost); a lethal bleed (2.5 drops a tick) never reaches it. Ymir never settles by itself; this is the policy.
+/// than it could (measured 50% of 8 a tick at saturation, 19268 of 38400 drops over 4800 ticks at SettleTicks 30; the rest waits as backlog, none is lost); a lethal bleed (2.5 drops a tick) never reaches it. Ymir never settles by itself; this is the policy.
 /// Allocation-free once the wound points are open.
 /// </summary>
 public sealed class Blood
@@ -61,6 +64,7 @@ public sealed class Blood
         public double Volume;                 // visible m^3 gathered and not yet shed
     }
 
+    private const int SpiralSpots = 40;
     private readonly Box3DSoaWorld _world;
     private readonly Ragdoll _ragdoll;
     private readonly BloodParameters _p;
@@ -142,15 +146,34 @@ public sealed class Blood
                 var q = new Quat(v.RotationX[lane], v.RotationY[lane], v.RotationZ[lane], v.RotationW[lane]);
                 q.Rotate(w.Px, w.Py, w.Pz, out var px, out var py, out var pz);
                 q.Rotate(w.Nx, w.Ny, w.Nz, out var nx, out var ny, out var nz);
-                // Outside the surface, and then outward until clear of every drop already live or shed this tick (coincident cuts, a wound that sheds
-                // faster than a drop leaves): overlapped fluid blows up. A point still blocked after a few diameters waits; its volume stays gathered.
+                // Outside the surface at the picked point; when a live drop or one shed this tick is in the way (coincident cuts, a wound that sheds faster
+                // than a drop leaves), at a free spot on the cut around the point (a spiral over the tangent plane, so a cut spreads), then outward. Overlapped
+                // fluid blows up. A point with no free spot at all waits; its volume stays gathered.
                 float lift = r + 0.002f;
-                (float X, float Y, float Z) at = default;
-                bool clear = false;
-                for (int attempt = 0; attempt < 12 && !clear; attempt++, lift += r)
+                float bx = v.PositionX[lane] + px + nx * lift, by = v.PositionY[lane] + py + ny * lift, bz = v.PositionZ[lane] + pz + nz * lift;
+                (float X, float Y, float Z) at = (bx, by, bz);
+                bool clear = Clear(at, n, v);
+                if (!clear)
                 {
-                    at = (v.PositionX[lane] + px + nx * lift, v.PositionY[lane] + py + ny * lift, v.PositionZ[lane] + pz + nz * lift);
-                    clear = Clear(at, n, v);
+                    // The tangent basis: a deterministic pair across the normal.
+                    float ax = MathF.Abs(ny) < 0.9f ? 0f : 1f, ay = MathF.Abs(ny) < 0.9f ? 1f : 0f;
+                    float tx = -nz * ay, ty = nz * ax, tz = nx * ay - ny * ax; // n x axis
+                    float tl = MathF.Sqrt(tx * tx + ty * ty + tz * tz);
+                    tx /= tl; ty /= tl; tz /= tl;
+                    float ux = ny * tz - nz * ty, uy = nz * tx - nx * tz, uz = nx * ty - ny * tx; // n x t
+                    for (int spot = 1; spot <= SpiralSpots && !clear; spot++)
+                    {
+                        float angle = spot * 2.39996323f; // the golden angle
+                        float radius = 1.8f * r * MathF.Sqrt(spot);
+                        float c = MathF.Cos(angle) * radius, d = MathF.Sin(angle) * radius;
+                        at = (bx + tx * c + ux * d, by + ty * c + uy * d, bz + tz * c + uz * d);
+                        clear = Clear(at, n, v);
+                    }
+                    for (int step = 1; step <= 12 && !clear; step++)
+                    {
+                        at = (bx + nx * step * r, by + ny * step * r, bz + nz * step * r);
+                        clear = Clear(at, n, v);
+                    }
                 }
                 if (!clear) continue;
                 w.Volume -= _dropVolume;
