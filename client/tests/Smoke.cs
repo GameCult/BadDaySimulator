@@ -177,6 +177,18 @@ public partial class Smoke : Node
         Check(_main.Scenario == Scenario.Office && _main.Seed == Seed, $"the picker left Main in {_main.Scenario}, seed {_main.Seed}");
         var office = Office;
         Check(!_main.Chamber.Visible && _main.Chamber.Glow == 0f, "the chamber is drawn in the office");
+        await UntilTick(120);
+
+        // The knife: where the player clicks. An Alt+left press is the camera's emulated middle button and cuts nothing; a plain left press on
+        // LowerArm L's drawn centre opens one cut there, through the same CutAt a direct call takes.
+        int arm = SeatedPuppet.Plan.PartIndex("LowerArm", Lodur.Side.Left);
+        var camera = _main.GetNode<OrbitCamera>("Camera");
+        Vector2 at = camera.UnprojectPosition(_main.Bodies.PoseOf(SeatedPuppet.FirstStableId + (ulong)arm)!.Value.Origin);
+        Click(at, alt: true);
+        Check(_main.Cuts.Count == 0, "an Alt+left press cut");
+        Click(at, alt: false);
+        Check(_main.Cuts.Count == 1 && _main.Cuts[0].Part == "LowerArm L", $"a left press on LowerArm L's centre left cuts [{string.Join(", ", _main.Cuts)}]");
+        Check(office.Result().Timeline.Count > 0, "no timeline after a cut");
         await UntilTick(600);
 
         // The bars are the session's will and arousal, to the bit, once a frame has drawn them (stepping paused so the session holds still).
@@ -202,6 +214,13 @@ public partial class Smoke : Node
         Check(_main.Scenario == Scenario.Chamber && _main.Run is BodyPainBoxSession, "switching back did not make the pain box the live run");
         Check(_main.Chamber.Visible, "the chamber is hidden after switching back");
         Check(Throws(() => _ = office.TickIndex), "the office run was not disposed by the switch");
+    }
+
+    /// <summary>A left press and release at <paramref name="at"/> (viewport coordinates), pushed through the viewport like the mouse's.</summary>
+    private void Click(Vector2 at, bool alt)
+    {
+        foreach (bool pressed in new[] { true, false })
+            GetViewport().PushInput(new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = pressed, Position = at, GlobalPosition = at, AltPressed = alt, ButtonMask = pressed ? MouseButtonMask.Left : 0 }, inLocalCoords: true);
     }
 
     private static bool Throws(Action a)

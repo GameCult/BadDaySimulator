@@ -20,6 +20,8 @@ public static class Look
     public static readonly Color Grout = Color.Color8(0x0d, 0x15, 0x1d);
     public static readonly Color Skin = Color.Color8(196, 146, 120);
     public static readonly Color Glow = new(0.85f, 0.95f, 1f);
+    /// <summary>Blood: a saturated red, a placeholder tuned by eye later.</summary>
+    public static readonly Color Blood = new(0.78f, 0.04f, 0.05f);
 
     /// <summary>The key light's direction (where it comes from, in the world), its colour and the ambient: ps1.js's.</summary>
     public static readonly Vector3 KeyDirection = new Vector3(-0.4f, 0.8f, 0.45f).Normalized();
@@ -84,6 +86,32 @@ public static class Look
         material.SetShaderParameter("emissive", emissive);
         material.SetShaderParameter("tile", tile);
         return material;
+    }
+
+    /// <summary>
+    /// The office's mouse cursor: a knife, tip at the top left corner (the hotspot), blade running down to the right into a handle, 32 x 32,
+    /// drawn pixel by pixel here so the client carries no art file. The blade is steel with a dark edge; the handle is brown.
+    /// </summary>
+    public static Image KnifeCursor()
+    {
+        const int size = 32;
+        var image = Image.CreateEmpty(size, size, false, Image.Format.Rgba8);
+        image.Fill(new Color(0, 0, 0, 0));
+        var steel = Color.Color8(0xc8, 0xd0, 0xd8);
+        var edge = Color.Color8(0x20, 0x24, 0x2a);
+        var grip = Color.Color8(0x5a, 0x34, 0x1c);
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                // Distance from the pixel to the knife's axis, the diagonal x = y, and the position along it.
+                float along = (x + y) / 2f, across = Math.Abs(x - y) / 1.4142135f;
+                if (along > 29f) continue;
+                bool handle = along > 17f;
+                float half = handle ? 3f : 4.2f * (1f - 0.2f * along / 17f) * Math.Min(1f, along / 3f + 0.15f);
+                if (across > half) continue;
+                image.SetPixel(x, y, handle ? grip : across > half - 1f || along < 1f ? edge : steel);
+            }
+        return image;
     }
 
     private static ImageTexture Noise(int w, int h, Color baseColour, float spread, ulong seed, Func<int, int, bool>? grouted = null, Color? groutColour = null)

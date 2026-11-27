@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using BadDay.Core;
+using Lodur;
 using BadDay.Ymir;
 using Godot;
 
@@ -119,6 +120,7 @@ public partial class Main : Node3D
     {
         if (IsInstanceValid(GetWindow())) GetWindow().SizeChanged -= SetLines;
         Engine.PhysicsTicksPerSecond = StepsPerSecond(1.0);
+        Input.SetCustomMouseCursor(null);
         _run?.Dispose();
         _run = null;
     }
@@ -134,7 +136,35 @@ public partial class Main : Node3D
     public void SetScenario(Scenario scenario)
     {
         Scenario = scenario;
+        if (scenario == Scenario.Office) Input.SetCustomMouseCursor(ImageTexture.CreateFromImage(Look.KnifeCursor()), Input.CursorShape.Arrow, Vector2.Zero);
+        else Input.SetCustomMouseCursor(null);
         Reset(Seed);
+    }
+
+    public override void _UnhandledInput(InputEvent e)
+    {
+        // The knife takes plain left presses; Alt+left is the camera's emulated middle button, and the camera never binds a plain left.
+        if (Scenario == Scenario.Office && e is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left, AltPressed: false } press)
+        {
+            CutAt(press.Position);
+            GetViewport().SetInputAsHandled();
+        }
+    }
+
+    /// <summary>
+    /// The knife at a screen point: the camera's ray through it (20 m), the office's pick, and a cut where it hit. True when a cut opened;
+    /// then the part and the tick are appended to <see cref="Cuts"/>. A miss, a refusal and any other scenario do nothing.
+    /// </summary>
+    public bool CutAt(Vector2 screenPoint)
+    {
+        if (Scenario != Scenario.Office || _run is not OfficeBodySession office) return false;
+        var origin = _camera.ProjectRayOrigin(screenPoint);
+        var translation = _camera.ProjectRayNormal(screenPoint) * 20f;
+        if (office.Pick(new BodyPoint(origin.X, origin.Y, origin.Z), new BodyPoint(translation.X, translation.Y, translation.Z)) is not { } hit) return false;
+        if (!office.Wound(hit, WoundTool.Knife)) return false;
+        var part = SeatedPuppet.Plan.Parts[hit.Part];
+        _cuts.Add(new Cut(part.Side switch { Lodur.Side.Left => part.Label + " L", Lodur.Side.Right => part.Label + " R", _ => part.Label }, office.TickIndex));
+        return true;
     }
 
     /// <summary>Starts a new run of the current scenario from <paramref name="seed"/> (the box at the current intensity), replacing the live run.</summary>
