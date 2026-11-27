@@ -22,12 +22,12 @@ public sealed class OfficeBodySession : IBodyRun
     private readonly StressSession _session;
     private readonly Physiology _physiology;
     private readonly double _tickSeconds;
-    private readonly double[] _bleeds, _lastBleeds;
-    private readonly double _spillPerLoss;
+    private readonly double[] _bleeds;
     private readonly int _handL, _handR, _pelvisLane;
+    private bool _flows; // the latest step's physiology flows are live: it stepped (a dead physiology is not stepped, so its flows stand only on the tick it died)
     private bool _disposed;
 
-    public OfficeBodySession(StressParameters p, ulong seed)
+    public OfficeBodySession(StressParameters p, ulong seed, BloodParameters? blood = null)
     {
         if (Math.Abs(p.TickSeconds - OfficeBody.TickSeconds) > 1e-12)
         {
@@ -35,20 +35,19 @@ public sealed class OfficeBodySession : IBodyRun
         }
 
         _tickSeconds = p.TickSeconds;
-        _body = new SeatedBody();
+        blood ??= new BloodParameters();
+        _body = new SeatedBody(blood);
         try
         {
             var plan = _body.Plan;
             _bleeds = new double[plan.Parts.Count];
-            _lastBleeds = new double[plan.Parts.Count];
             _body.ReadSenses();
             int head = plan.SenseIndex("Head");
             _handL = plan.SenseIndex("Hand", Side.Left);
             _handR = plan.SenseIndex("Hand", Side.Right);
             _pelvisLane = _body.BodyLane(plan.PartIndex("Pelvis"));
             var physiologyPlan = PhysiologyPlans.Humanoid();
-            _physiology = new Physiology(plan, physiologyPlan, p.SlowScale);
-            _spillPerLoss = physiologyPlan.Blood.NominalVolume * physiologyPlan.Blood.LethalLossFraction; // real m^3 for one unit of BloodLoss
+            _physiology = new Physiology(plan, physiologyPlan, p.SlowScale, blood.Gain);
             // The desk's emitters sit where the head does and are sensed there.
             _session = new StressSession(p with { Setting = p.Setting.Shifted(_body.X[head], _body.Y[head], _body.Z[head]) }, seed,
                 plan.SensePoints.Count, OfficeBody.Poses, head, _physiology, plan, physiologyPlan);
@@ -84,9 +83,9 @@ public sealed class OfficeBodySession : IBodyRun
     public double BloodEmitted { get { Live(); return _body.BloodEmitted; } }
     public double BloodBacklog { get { Live(); return _body.BloodBacklog; } }
     public int LiveDrops { get { Live(); return _body.LiveDrops; } }
-    /// <summary>The blood bled into the airway (real m^3/s) and the live liquid drawn from it (world m^3) in the latest step, then what the airway owes the world (m^3, signed), the part of <see cref="BloodEmitted"/> that was cough and drain, and the cough and drain still waiting to be shed: the body's, display only.</summary>
-    public double AirwayBleed { get { Live(); return _physiology.AirwayBleed; } }
-    public double AirwayDrawnLive { get { Live(); return _physiology.DrawnLive; } }
+    /// <summary>The blood bled into the airway (real m^3/s, entering the airway at the body's blood gain; the HUD reads it) and the live liquid drawn from it (world m^3) in the latest step, then what the airway owes the world (m^3, signed), the part of <see cref="BloodEmitted"/> that was cough and drain, and the cough and drain still waiting to be shed: the body's, display only.</summary>
+    public double AirwayBleed { get { Live(); return _flows ? _physiology.AirwayBleed : 0.0; } }
+    public double AirwayDrawnLive { get { Live(); return _flows ? _physiology.DrawnLive : 0.0; } }
     public double AirwayOwed { get { Live(); return _body.Owed; } }
     public double BloodExpelled { get { Live(); return _body.BloodExpelled; } }
     public double ExpelBacklog { get { Live(); return _body.ExpelBacklog; } }
@@ -115,27 +114,21 @@ public sealed class OfficeBodySession : IBodyRun
             long tick = _session.TickIndex;
             _body.ReadSenses();
             var airway = _body.ReadAirway();
-            double lossBefore = _physiology.BloodLoss;
+            bool deadBefore = _physiology.Dead; // the Actor does not step a dead physiology, so its flows stand only on the tick it died
+            _flows = !deadBefore;
             var events = _session.Tick(_body.X, _body.Y, _body.Z, _body.Strengths, _body.Targets, airway);
             if (events != TickEvents.None) _body.Enqueue(tick, events);
-            _body.Exchange(_physiology.DrawnLive, _physiology.DrawnPooled, _physiology.Coughed, _physiology.Drained); // the dying step's flows are real; they read 0 after
-            if (_physiology.Dead)
+            if (!deadBefore)
             {
-                // Bleed() reads 0 once dead, but the dying step still spilled what it took from the blood: that volume, shared as the step before shared its bleed.
-                double last = 0.0;
-                for (int part = 0; part < _bleeds.Length; part++) last += _lastBleeds[part];
-                double rate = (_physiology.BloodLoss - lossBefore) * _spillPerLoss / _tickSeconds;
-                for (int part = 0; part < _bleeds.Length; part++) _bleeds[part] = last > 0.0 && rate > 0.0 ? _lastBleeds[part] * rate / last : 0.0;
-                Array.Clear(_lastBleeds);
+                _body.Exchange(_physiology.DrawnLive, _physiology.DrawnPooled, _physiology.Coughed, _physiology.Drained); // the dying step's flows are real
+                for (int part = 0; part < _bleeds.Length; part++) _bleeds[part] = _physiology.Bleed(part); // the dying step's bleed included: Lodur reports it
             }
-            else
-            {
-                for (int part = 0; part < _bleeds.Length; part++) _lastBleeds[part] = _bleeds[part] = _physiology.Bleed(part);
-            }
+            else Array.Clear(_bleeds);
             _body.DriveAndStep(_tickSeconds, _bleeds);
             return;
         }
         // After Finished the physiology no longer steps, so its last rates would run forever: no bleeds, and what is in flight settles.
+        _flows = false;
         _body.DriveAndStep(_tickSeconds); // the last strengths and targets again
     }
 

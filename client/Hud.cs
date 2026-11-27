@@ -149,6 +149,7 @@ public partial class Hud : CanvasLayer
         _text.Append($"blood loss {o.BloodLoss * 100:F0} % of lethal   blood spilled {o.BloodEmitted * 1000:F2} L\n");
         _text.Append($"consciousness {o.Consciousness:F2}   air hunger {o.AirHunger:F2}\n");
         _text.Append($"airway {o.AirwayLiquid * 1e6:F0} mL ({o.Occlusion * 100:F0} % full)\n");
+        _text.Append($"airway bleed {o.AirwayBleed * 1e6:F2} mL/s   drawn {o.AirwayDrawnLive * 1e6:F3} mL this step\n");
         if (o.Dead) _text.Append($"DEAD: {o.DeathCause}\n");
         else _text.Append(o.Finished ? "finished\n" : "running\n");
         _text.Append(_main.Cuts.Count > 0 ? $"last cut: {_main.Cuts[^1].Part} at tick {_main.Cuts[^1].Tick}\n" : "no cuts yet\n");

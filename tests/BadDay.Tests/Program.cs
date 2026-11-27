@@ -1476,30 +1476,55 @@ public static class Program
             Check(s.Dead && s.DeathCause == Lodur.DeathCause.BloodLoss, $"cause {s.DeathCause}");
         }),
 
-        ("a cut throat conserves liquid over the whole cycle: every tick the world's liquid, the airway's and the expulsion backlog, less what the airway owes, the drops the wounds shed and the blood bled into the airway, is what it started as (2e-5 of the world's liquid), and more than a litre is coughed and drained", () =>
+        ("the physiology bleeds into the airway at the body's gain: a throat cut at Gain 1 and at Gain 10 fills the airway, in its first tenth of a second, at least 3.16 times as far at Gain 10", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
-            using var s = new OfficeBodySession(p, 1);
             var head = SeatedPuppet.Plan.PartIndex("Head", Lodur.Side.Center);
-            Check(s.Wound(HitAt(s, head, (0f, -0.0778f, 0.0778f)), WoundTool.Knife), "the knife was refused at the throat");
-            double c0 = WorldLiquid(s) + s.AirwayLiquid, bledIn = 0.0, worst = 0.0, worstBound = 0.0;
-            long worstTick = 0;
-            int settling = 0; // the 600 ticks after Finished: in-flight drops settle and the backlog sheds
-            for (int t = 0; settling < 600 && t < 20 * 60 * Hz; t++)
+            double[] rise = new double[2];
+            for (int g = 0; g < 2; g++)
             {
-                bool running = !s.Finished;
-                s.Step();
-                if (running) bledIn += OfficeBody.TickSeconds * s.AirwayBleed;
-                if (s.Finished) settling++;
-                double w = WorldLiquid(s);
-                double residual = w + s.AirwayLiquid + s.ExpelBacklog - s.AirwayOwed - (s.BloodEmitted - s.BloodExpelled) - bledIn - c0;
-                double bound = 2e-5 * w + 1e-9;
-                if (Math.Abs(residual) > worst) { worst = Math.Abs(residual); worstBound = bound; worstTick = s.TickIndex; }
-                Check(Math.Abs(residual) <= bound, $"tick {s.TickIndex}: residual {residual * 1e6:F4} mL against a bound of {bound * 1e6:F4} mL (world {w * 1e6:F1} mL, airway {s.AirwayLiquid * 1e6:F1}, backlog {s.ExpelBacklog * 1e6:F1}, owed {s.AirwayOwed * 1e6:F2})");
+                using var s = new OfficeBodySession(p, 1, new BloodParameters { Gain = g == 0 ? 1.0 : 10.0 });
+                Check(s.Wound(HitAt(s, head, (0f, -0.0778f, 0.0778f)), WoundTool.Knife), "the knife was refused at the throat");
+                for (int t = 0; t < Hz / 10; t++) s.Step(); // a tenth of a second: at Gain 10 the 150 mL airway is full by 0.3 s
+                rise[g] = s.AirwayLiquid;
             }
-            Check(s.Finished, "the run did not finish");
-            Check(s.BloodExpelled > 1e-3, $"only {s.BloodExpelled * 1e6:F0} mL was coughed and drained as drops");
-            Console.WriteLine($"  throat: coughed and drained {s.BloodExpelled * 1e6:F0} mL as drops, {s.ExpelBacklog * 1e6:F0} mL waiting, owed {s.AirwayOwed * 1e6:F3} mL, worst residual {worst * 1e6:F4} mL (bound {worstBound * 1e6:F4}) at tick {worstTick}");
+            double ratio = rise[1] / rise[0];
+            Console.WriteLine($"  gain: the airway held {rise[0] * 1e6:F3} mL after 0.1 s at gain 1 and {rise[1] * 1e6:F3} mL at gain 10 (ratio {ratio:F3})");
+            // Bound by deterministic-bound-margin: shipped ratio 10.000 (5.477 and 54.769 mL), least mutant 1.000 (the physiology at gain 1 under a body at gain 10: the airway filling at a tenth of the visible bleed), separation 10, bound sqrt(10.000 x 1.000) = 3.16.
+            Check(rise[0] > 0.0 && ratio >= 3.16, $"the airway's first tenth of a second held {rise[0] * 1e6:F3} mL at gain 1 and {rise[1] * 1e6:F3} mL at gain 10 (ratio {ratio:F3}): the physiology did not bleed at the body's gain");
+        }),
+
+        ("a cut throat conserves liquid over the whole cycle at Gain 1 and Gain 10: every tick the world's liquid, the airway's and the expulsion backlog, less what the airway owes, the drops the wounds shed and the gain times the blood bled into the airway, is what it started as (1.8e-5 of the world's liquid), and at Gain 10 more than a litre is coughed and drained", () =>
+        {
+            // Bound by deterministic-bound-margin, as the fraction of the world's liquid over the 1e-9 m^3 constant (read once the world holds 100 mL): shipped worst 6.70e-6 (Gain 10; 1.72e-7 at Gain 1), least mutant 4.78e-5 (the bled-in term 5e-5 short, at Gain 1; 8.90e-5 at Gain 10), separation 7.1, bound sqrt(6.70e-6 x 4.78e-5) = 1.8e-5 (the bound it replaces was 2e-5). Leaving the gain out of the bled-in term is caught by the constant at the first tick.
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            var head = SeatedPuppet.Plan.PartIndex("Head", Lodur.Side.Center);
+            foreach (double gain in new[] { 1.0, 10.0 })
+            {
+                using var s = new OfficeBodySession(p, 1, new BloodParameters { Gain = gain });
+                Check(s.Wound(HitAt(s, head, (0f, -0.0778f, 0.0778f)), WoundTool.Knife), "the knife was refused at the throat");
+                double c0 = WorldLiquid(s) + s.AirwayLiquid, bledIn = 0.0, worst = 0.0, worstRel = 0.0, mutantRel = 0.0;
+                long worstTick = 0;
+                int settling = 0; // the 600 ticks after Finished: in-flight drops settle and the backlog sheds
+                for (int t = 0; settling < 600 && t < 20 * 60 * Hz; t++)
+                {
+                    bool running = !s.Finished;
+                    s.Step();
+                    if (running) bledIn += OfficeBody.TickSeconds * gain * s.AirwayBleed;
+                    if (s.Finished) settling++;
+                    double w = WorldLiquid(s);
+                    double rest = w + s.AirwayLiquid + s.ExpelBacklog - s.AirwayOwed - (s.BloodEmitted - s.BloodExpelled) - c0;
+                    double residual = rest - bledIn;
+                    double bound = 1.8e-5 * w + 1e-9;
+                    mutantRel = Math.Max(mutantRel, Over(rest - (1.0 - 5e-5) * bledIn, w));
+                    worstRel = Math.Max(worstRel, Over(residual, w));
+                    if (Math.Abs(residual) > worst) { worst = Math.Abs(residual); worstTick = s.TickIndex; }
+                    Check(Math.Abs(residual) <= bound, $"gain {gain}, tick {s.TickIndex}: residual {residual * 1e6:F4} mL against a bound of {bound * 1e6:F4} mL (world {w * 1e6:F1} mL, airway {s.AirwayLiquid * 1e6:F1}, backlog {s.ExpelBacklog * 1e6:F1}, owed {s.AirwayOwed * 1e6:F2})");
+                }
+                Check(s.Finished, $"gain {gain}: the run did not finish");
+                if (gain > 1.0) Check(s.BloodExpelled > 1e-3, $"gain {gain}: only {s.BloodExpelled * 1e6:F0} mL was coughed and drained as drops");
+                Console.WriteLine($"  throat at gain {gain}: coughed and drained {s.BloodExpelled * 1e6:F0} mL as drops, {s.ExpelBacklog * 1e6:F0} mL waiting, owed {s.AirwayOwed * 1e6:F3} mL, worst residual {worst * 1e6:F4} mL ({worstRel:E2} of the world) at tick {worstTick}; the bled-in term 5e-5 short: {mutantRel:E2}");
+            }
         }),
 
         ("what he breathes at the lips leaves the world and comes back as cough: Wound(MouthHit(s), Knife) for 100 s takes at least one live drop, keeps the airway's debt within half a drop of 0 plus that tick's draw on every tick, and coughs", () =>
@@ -1811,7 +1836,7 @@ public static class Program
             Console.WriteLine($"  airway: pooled peak {pooled * 1e6:F1} mL");
         }),
 
-        ("a take on the seated body: what Exchange asks of the pool leaves the patches the openings read, the ledger books the volume taken (a breath's share at 1/120 of the pool within 5e-8 of the pool, five times the pool takes the pool and owes the rest)", () =>
+        ("a take on the seated body: what Exchange asks of the pool leaves the patches the openings read, the ledger books the volume taken (a breath's share at 1/120 of the pool within 5e-8 of the pool, a 101 % ask of the pool takes the pool and owes the 1 % it did not get)", () =>
         {
             var plan = SeatedPuppet.Plan;
             var mouth = plan.AirwayOpenings.First(a => a.Label == "Mouth");
@@ -1836,8 +1861,11 @@ public static class Program
             double after = body.ReadAirway().Pooled;
             Check(Math.Abs((pool - after) - (ask - owed)) <= 1e-6 * pool, $"the pool fell {(pool - after) * 1e6:F4} mL for a take of {(ask - owed) * 1e6:F4} mL");
 
-            body.Exchange(0.0, 5.0 * after, 0.0, 0.0);
-            Check(Math.Abs(body.Owed - (owed + 4.0 * after)) <= 1e-6 * pool, $"taking five times the pool left {body.Owed * 1e6:F4} mL owed, expected {(owed + 4.0 * after) * 1e6:F4}");
+            // The take returns the whole pool, 99.0 % of this ask: the ledger books the 1 % it did not get, not the ask. A ledger booking the ask leaves 0.01 of the pool less owed (reading 9.9e-3 of the pool) against the shipped 1.02e-16 (float noise), separation 9.7e13, bound sqrt(1.02e-16 x 9.9e-3) = 1.0e-9; the bound is 1e-9 of the pool.
+            body.Exchange(0.0, 1.01 * after, 0.0, 0.0);
+            double shortfall = Math.Abs(body.Owed - (owed + 0.01 * after)) / pool;
+            Console.WriteLine($"  take: a 101 % ask of the pool left {body.Owed * 1e6:F4} mL owed, expected {(owed + 0.01 * after) * 1e6:F4}, off by {shortfall:E2} of the pool");
+            Check(shortfall <= 1e-9, $"asking for 101 % of the pool left {body.Owed * 1e6:F4} mL owed, expected {(owed + 0.01 * after) * 1e6:F4}: the ledger booked the ask, not the take");
             body.DriveAndStep(1.0 / Hz);
             Check(body.ReadAirway().Pooled <= 1e-6 * pool, $"{body.ReadAirway().Pooled * 1e6:F4} mL still pooled after the pool was taken");
             Console.WriteLine($"  take: pool {pool * 1e6:F1} mL, a 1/120 take owed {owed * 1e6:E2} mL");
@@ -1938,6 +1966,9 @@ public static class Program
 
     /// <summary>A hit on the head at the plan's Mouth opening: a ray from 1 m in front of it, straight back and on through it.</summary>
     /// <summary>The volume of liquid in the world: the live fluid particles' (2 r)^3 and the live wet patches', m^3.</summary>
+    /// <summary>How far a residual is over the conservation bound's constant 1e-9 m^3, as a fraction of the world's liquid: the bound is this times w plus 1e-9. Read only once the world holds 100 mL, where the relative term is the larger (below it the constant decides).</summary>
+    private static double Over(double residual, double w) => w < 1e-4 ? 0.0 : Math.Max(0.0, Math.Abs(residual) - 1e-9) / w;
+
     private static double WorldLiquid(OfficeBodySession s)
     {
         var v = s.View;
