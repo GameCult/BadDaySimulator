@@ -84,6 +84,12 @@ public sealed class OfficeBodySession : IBodyRun
     public double BloodEmitted { get { Live(); return _body.BloodEmitted; } }
     public double BloodBacklog { get { Live(); return _body.BloodBacklog; } }
     public int LiveDrops { get { Live(); return _body.LiveDrops; } }
+    /// <summary>The blood bled into the airway (real m^3/s) and the live liquid drawn from it (world m^3) in the latest step, then what the airway owes the world (m^3, signed), the part of <see cref="BloodEmitted"/> that was cough and drain, and the cough and drain still waiting to be shed: the body's, display only.</summary>
+    public double AirwayBleed { get { Live(); return _physiology.AirwayBleed; } }
+    public double AirwayDrawnLive { get { Live(); return _physiology.DrawnLive; } }
+    public double AirwayOwed { get { Live(); return _body.Owed; } }
+    public double BloodExpelled { get { Live(); return _body.BloodExpelled; } }
+    public double ExpelBacklog { get { Live(); return _body.ExpelBacklog; } }
     public DeathCause DeathCause { get { Live(); return _physiology.Cause; } }
     public OfficeGoal Goal { get { Live(); return OfficeBrain.GoalAt(_session.Actor.GoalIndex); } }
 
@@ -112,6 +118,7 @@ public sealed class OfficeBodySession : IBodyRun
             double lossBefore = _physiology.BloodLoss;
             var events = _session.Tick(_body.X, _body.Y, _body.Z, _body.Strengths, _body.Targets, airway);
             if (events != TickEvents.None) _body.Enqueue(tick, events);
+            _body.Exchange(_physiology.DrawnLive, _physiology.DrawnPooled, _physiology.Coughed, _physiology.Drained); // the dying step's flows are real; they read 0 after
             if (_physiology.Dead)
             {
                 // Bleed() reads 0 once dead, but the dying step still spilled what it took from the blood: that volume, shared as the step before shared its bleed.

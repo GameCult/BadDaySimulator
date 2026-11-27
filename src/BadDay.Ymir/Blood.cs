@@ -20,6 +20,10 @@ public sealed record BloodParameters
     public double Density { get; init; } = 1060.0;
     /// <summary>m/s along the wound's normal, over the part's own velocity.</summary>
     public float ExitSpeed { get; init; } = 0.5f;
+    /// <summary>m/s along an airway opening's outward normal: a cough's drops leave the mouth or nose at this speed (a balance knob).</summary>
+    public float CoughSpeed { get; init; } = 3.0f;
+    /// <summary>m/s along an airway opening's outward normal: what drains by gravity leaves at this speed (a balance knob).</summary>
+    public float DrainSpeed { get; init; } = 0.2f;
     /// <summary>m/s: a supported drop slower than this is calm.</summary>
     public float SettleSpeed { get; init; } = 0.05f;
     /// <summary>Consecutive calm ticks before a drop settles into a wet patch.</summary>
@@ -54,6 +58,12 @@ public sealed record BloodParameters
 /// they stay under <see cref="BloodParameters.LiveCap"/>. A lane Settle frees cannot be taken before the next Step, so a cap-bound run sheds fewer drops
 /// than it could (measured 50% of 8 a tick at saturation, 19268 of 38400 drops over 4800 ticks at SettleTicks 30; the rest waits as backlog, none is lost); a lethal bleed (2.5 drops a tick) never reaches it. Ymir never settles by itself; this is the policy.
 /// Allocation-free once the wound points are open.
+/// <para>
+/// The airway trades liquid with the world through this too (<see cref="SeatedBody.Exchange"/> owns the ledger): <see cref="TakeLive"/> destroys the live drops a breath drew in at an
+/// opening, and <see cref="Expel"/> gathers what the body coughed and drained at the lowest opening as world volume, never scaled by the gain. Each opening carries two expulsion points
+/// (cough at <see cref="BloodParameters.CoughSpeed"/>, drain at <see cref="BloodParameters.DrainSpeed"/>) just outside its sensor sphere, so a drop is not read back the tick it is born; they shed
+/// through the same loop as the wounds' points (speed per point, <see cref="BloodParameters.MaxDropsPerTick"/> shared, volume waiting as <see cref="ExpelBacklog"/>).
+/// </para>
 /// </summary>
 public sealed class Blood
 {
@@ -61,7 +71,9 @@ public sealed class Blood
     {
         public int Part;
         public float Px, Py, Pz, Nx, Ny, Nz; // the part's frame
-        public double Volume;                 // visible m^3 gathered and not yet shed
+        public double Volume;                 // m^3 gathered and not yet shed: visible (the gain applied) at a wound, world volume at an expulsion point
+        public float Speed;                   // m/s along the normal over the part's own velocity
+        public bool Expel;                    // an airway expulsion point: gathers only through Expel, never a part's bleed or the gain
     }
 
     private const int SpiralSpots = 40;
@@ -82,6 +94,8 @@ public sealed class Blood
     private readonly Box3DSoaParticleDesc[] _descs;
     private readonly Box3DSoaParticleHandle[] _created;
     private readonly Box3DSoaParticleHandle[] _settling;
+    private readonly Box3DSoaParticleHandle[] _doomed;
+    private readonly int[] _expelPoint; // per airway opening: the index of its cough point, the drain point next to it
 
     internal Blood(Box3DSoaWorld world, Ragdoll ragdoll, BloodParameters parameters)
     {
@@ -99,13 +113,44 @@ public sealed class Blood
         _descs = new Box3DSoaParticleDesc[parameters.MaxDropsPerTick];
         _created = new Box3DSoaParticleHandle[parameters.MaxDropsPerTick];
         _settling = new Box3DSoaParticleHandle[parameters.LiveCap];
+        _doomed = new Box3DSoaParticleHandle[parameters.LiveCap];
+        var openings = ragdoll.Plan.AirwayOpenings;
+        _expelPoint = new int[openings.Count];
+        for (int k = 0; k < openings.Count; k++)
+        {
+            var (ox, oy, oz) = openings[k].Offset;
+            float length = MathF.Sqrt(ox * ox + oy * oy + oz * oz);
+            if (!(length > 0f)) throw new ArgumentException($"Airway opening {openings[k].Label} sits at its part's origin: it has no outward normal.");
+            float outward = 1f + (openings[k].Radius + parameters.DropRadius) / length;
+            _expelPoint[k] = _pointCount;
+            for (int kind = 0; kind < 2; kind++)
+            {
+                AddPoint(new WoundPoint
+                {
+                    Part = openings[k].Part, Px = ox * outward, Py = oy * outward, Pz = oz * outward, Nx = ox / length, Ny = oy / length, Nz = oz / length,
+                    Speed = kind == 0 ? parameters.CoughSpeed : parameters.DrainSpeed, Expel = true,
+                });
+            }
+        }
+    }
+
+    private void AddPoint(in WoundPoint point)
+    {
+        if (_pointCount == _points.Length) Array.Resize(ref _points, _points.Length * 2);
+        _points[_pointCount++] = point;
     }
 
     /// <summary>Visible volume (m^3) shed as drops so far, settled or live.</summary>
     public double Emitted { get; private set; }
 
+    /// <summary>Visible volume (m^3) shed as drops by the expulsion points (what the body coughed and drained): part of <see cref="Emitted"/>, display only.</summary>
+    public double Expelled { get; private set; }
+
     /// <summary>Visible volume (m^3) gathered at the wounds and not yet shed.</summary>
-    public double Backlog { get { double b = 0.0; for (int i = 0; i < _pointCount; i++) b += _points[i].Volume; return b; } }
+    public double Backlog { get { double b = 0.0; for (int i = 0; i < _pointCount; i++) if (!_points[i].Expel) b += _points[i].Volume; return b; } }
+
+    /// <summary>World volume (m^3) coughed or drained and not yet shed as drops: display only.</summary>
+    public double ExpelBacklog { get { double b = 0.0; for (int i = 0; i < _pointCount; i++) if (_points[i].Expel) b += _points[i].Volume; return b; } }
 
     /// <summary>Drops in the air or resting, not yet settled.</summary>
     public int Live => _liveCount;
@@ -114,9 +159,59 @@ public sealed class Blood
     internal void Open(int part, float px, float py, float pz, float nx, float ny, float nz)
     {
         if ((uint)part >= (uint)_pointsOnPart.Length) throw new ArgumentOutOfRangeException(nameof(part));
-        if (_pointCount == _points.Length) Array.Resize(ref _points, _points.Length * 2);
-        _points[_pointCount++] = new WoundPoint { Part = part, Px = px, Py = py, Pz = pz, Nx = nx, Ny = ny, Nz = nz };
+        AddPoint(new WoundPoint { Part = part, Px = px, Py = py, Pz = pz, Nx = nx, Ny = ny, Nz = nz, Speed = _p.ExitSpeed });
         _pointsOnPart[part]++;
+    }
+
+    /// <summary>Gathers a tick's cough and drain (world m^3, the gain not applied) at <paramref name="opening"/>'s expulsion points; they shed at the next <see cref="BeforeStep"/>.</summary>
+    internal void Expel(int opening, double cough, double drain)
+    {
+        if ((uint)opening >= (uint)_expelPoint.Length) throw new ArgumentOutOfRangeException(nameof(opening));
+        if (!(cough >= 0.0 && drain >= 0.0) || double.IsInfinity(cough + drain)) throw new ArgumentOutOfRangeException(nameof(cough), "A cough and a drain are finite volumes of 0 or more.");
+        _points[_expelPoint[opening]].Volume += cough;
+        _points[_expelPoint[opening] + 1].Volume += drain;
+    }
+
+    /// <summary>
+    /// Destroys, oldest first, whole live drops whose centre lies inside an airway opening's sphere (the opening's Offset in its part's pose, its Radius: the sensor's own test) while
+    /// <paramref name="owed"/> is at least half a drop, so the volume the airway owes the world stays within half a drop of 0; returns the volume destroyed (m^3). Nothing is destroyed for an owed below half a drop.
+    /// </summary>
+    internal double TakeLive(double owed)
+    {
+        double half = 0.5 * _dropVolume;
+        if (owed < half || _liveCount == 0) return 0.0;
+        var v = _world.View;
+        var openings = _ragdoll.Plan.AirwayOpenings;
+        int doomed = 0, kept = 0;
+        for (int i = 0; i < _liveCount; i++)
+        {
+            bool take = false;
+            if (owed >= half)
+            {
+                int lane = _live[i].Lane;
+                for (int k = 0; k < openings.Count && !take; k++)
+                {
+                    var o = openings[k];
+                    int body = _ragdoll.BodyLane(o.Part);
+                    new Quat(v.RotationX[body], v.RotationY[body], v.RotationZ[body], v.RotationW[body]).Rotate(o.Offset.X, o.Offset.Y, o.Offset.Z, out var cx, out var cy, out var cz);
+                    float dx = v.ParticleX[lane] - (v.PositionX[body] + cx), dy = v.ParticleY[lane] - (v.PositionY[body] + cy), dz = v.ParticleZ[lane] - (v.PositionZ[body] + cz);
+                    take = dx * dx + dy * dy + dz * dz <= o.Radius * o.Radius;
+                }
+            }
+            if (take)
+            {
+                _doomed[doomed++] = _live[i];
+                owed -= _dropVolume;
+                continue;
+            }
+            _live[kept] = _live[i];
+            _calm[kept] = _calm[i];
+            kept++;
+        }
+        if (doomed == 0) return 0.0;
+        _world.DestroyParticles(_doomed.AsSpan(0, doomed));
+        _liveCount = kept;
+        return doomed * _dropVolume;
     }
 
     /// <summary>Gathers this tick's volume from <paramref name="bleedPerPart"/> (real m^3/s per part, empty for none) and sheds what whole drops it makes, before the step.</summary>
@@ -126,7 +221,7 @@ public sealed class Blood
         for (int i = 0; i < _pointCount; i++)
         {
             ref var w = ref _points[i];
-            if ((uint)w.Part < (uint)bleedPerPart.Length) w.Volume += _p.Gain * bleedPerPart[w.Part] / _pointsOnPart[w.Part] * dt;
+            if (!w.Expel && (uint)w.Part < (uint)bleedPerPart.Length) w.Volume += _p.Gain * bleedPerPart[w.Part] / _pointsOnPart[w.Part] * dt;
         }
 
         // A lane Settle freed is reusable only after the next Step, so the room is what the world says, not the cap alone.
@@ -177,8 +272,9 @@ public sealed class Blood
                 }
                 if (!clear) continue;
                 w.Volume -= _dropVolume;
+                if (w.Expel) Expelled += _dropVolume;
                 any = true;
-                var velocity = (v.VelocityX[lane] + nx * _p.ExitSpeed, v.VelocityY[lane] + ny * _p.ExitSpeed, v.VelocityZ[lane] + nz * _p.ExitSpeed);
+                var velocity = (v.VelocityX[lane] + nx * w.Speed, v.VelocityY[lane] + ny * w.Speed, v.VelocityZ[lane] + nz * w.Speed);
                 _descs[n++] = new Box3DSoaParticleDesc(at, _mass, r, _phase, (uint)_p.Material, velocity: velocity);
             }
         }

@@ -1476,6 +1476,81 @@ public static class Program
             Check(s.Dead && s.DeathCause == Lodur.DeathCause.BloodLoss, $"cause {s.DeathCause}");
         }),
 
+        ("a cut throat conserves liquid over the whole cycle: every tick the world's liquid, the airway's and the expulsion backlog, less what the airway owes, the drops the wounds shed and the blood bled into the airway, is what it started as (2e-5 of the world's liquid), and more than a litre is coughed and drained", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            using var s = new OfficeBodySession(p, 1);
+            var head = SeatedPuppet.Plan.PartIndex("Head", Lodur.Side.Center);
+            Check(s.Wound(HitAt(s, head, (0f, -0.0778f, 0.0778f)), WoundTool.Knife), "the knife was refused at the throat");
+            double c0 = WorldLiquid(s) + s.AirwayLiquid, bledIn = 0.0, worst = 0.0, worstBound = 0.0;
+            long worstTick = 0;
+            int settling = 0; // the 600 ticks after Finished: in-flight drops settle and the backlog sheds
+            for (int t = 0; settling < 600 && t < 20 * 60 * Hz; t++)
+            {
+                bool running = !s.Finished;
+                s.Step();
+                if (running) bledIn += OfficeBody.TickSeconds * s.AirwayBleed;
+                if (s.Finished) settling++;
+                double w = WorldLiquid(s);
+                double residual = w + s.AirwayLiquid + s.ExpelBacklog - s.AirwayOwed - (s.BloodEmitted - s.BloodExpelled) - bledIn - c0;
+                double bound = 2e-5 * w + 1e-9;
+                if (Math.Abs(residual) > worst) { worst = Math.Abs(residual); worstBound = bound; worstTick = s.TickIndex; }
+                Check(Math.Abs(residual) <= bound, $"tick {s.TickIndex}: residual {residual * 1e6:F4} mL against a bound of {bound * 1e6:F4} mL (world {w * 1e6:F1} mL, airway {s.AirwayLiquid * 1e6:F1}, backlog {s.ExpelBacklog * 1e6:F1}, owed {s.AirwayOwed * 1e6:F2})");
+            }
+            Check(s.Finished, "the run did not finish");
+            Check(s.BloodExpelled > 1e-3, $"only {s.BloodExpelled * 1e6:F0} mL was coughed and drained as drops");
+            Console.WriteLine($"  throat: coughed and drained {s.BloodExpelled * 1e6:F0} mL as drops, {s.ExpelBacklog * 1e6:F0} mL waiting, owed {s.AirwayOwed * 1e6:F3} mL, worst residual {worst * 1e6:F4} mL (bound {worstBound * 1e6:F4}) at tick {worstTick}");
+        }),
+
+        ("what he breathes at the lips leaves the world and comes back as cough: Wound(MouthHit(s), Knife) for 100 s takes at least one live drop, keeps the airway's debt within half a drop of 0 plus that tick's draw on every tick, and coughs", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            using var s = new OfficeBodySession(p, 1);
+            Check(s.Wound(MouthHit(s), WoundTool.Knife), "the knife was refused at the mouth");
+            double half = 0.5 * new BloodParameters().DropVolume, lowest = 0.0, highest = 0.0, drawn = 0.0;
+            for (int t = 0; t < 100 * Hz && !s.Finished; t++)
+            {
+                s.Step();
+                lowest = Math.Min(lowest, s.AirwayOwed);
+                highest = Math.Max(highest, s.AirwayOwed);
+                drawn += s.AirwayDrawnLive;
+                Check(Math.Abs(s.AirwayOwed) <= half + s.AirwayDrawnLive + 1e-12, $"tick {s.TickIndex}: the airway owes {s.AirwayOwed * 1e6:F3} mL (half a drop {half * 1e6:F3}, draw {s.AirwayDrawnLive * 1e6:F3})");
+            }
+            Check(drawn > 0.0, "nothing was drawn from the lips");
+            Check(lowest < -1e-9, $"the debt never went below 0 (lowest {lowest * 1e6:F3} mL): no drop was ever taken against it");
+            Check(s.BloodExpelled > 0.0, "nothing was coughed or drained");
+            Console.WriteLine($"  lips: drew {drawn * 1e6:F2} mL, owed within [{lowest * 1e6:F2}, {highest * 1e6:F2}] mL, coughed and drained {s.BloodExpelled * 1e6:F1} mL as drops");
+        }),
+
+        ("an expelled drop is born outside the openings: the first drop a drain sheds is, after its step, farther than the opening's radius from every opening's centre and not thrown", () =>
+        {
+            var plan = SeatedPuppet.Plan;
+            var parameters = new BloodParameters();
+            foreach (var (cough, drain) in new[] { (0.0, parameters.DropVolume), (parameters.DropVolume, 0.0) })
+            {
+                using var body = new SeatedBody(parameters);
+                body.Exchange(0.0, 0.0, cough, drain);
+                Check(body.ExpelBacklog > 0.0 && body.BloodExpelled == 0.0, "the volume was shed before the step");
+                body.DriveAndStep(OfficeBody.TickSeconds);
+                Check(body.BloodExpelled > 0.0 && body.LiveDrops == 1, $"{body.LiveDrops} drops after the first step of an expulsion");
+                var v = body.View;
+                int lane = 0;
+                while (v.ParticleLive[lane] == 0u) lane++;
+                double nearest = double.MaxValue;
+                foreach (var o in plan.AirwayOpenings)
+                {
+                    int b = body.BodyLane(o.Part);
+                    new Quat(v.RotationX[b], v.RotationY[b], v.RotationZ[b], v.RotationW[b]).Rotate(o.Offset.X, o.Offset.Y, o.Offset.Z, out var cx, out var cy, out var cz);
+                    double d = Math.Sqrt(Math.Pow(v.ParticleX[lane] - (v.PositionX[b] + cx), 2) + Math.Pow(v.ParticleY[lane] - (v.PositionY[b] + cy), 2) + Math.Pow(v.ParticleZ[lane] - (v.PositionZ[b] + cz), 2));
+                    Check(d > o.Radius, $"{(cough > 0.0 ? "cough" : "drain")} drop born {d * 1000.0:F1} mm from the {o.Label}'s centre, inside its {o.Radius * 1000.0:F1} mm sphere");
+                    nearest = Math.Min(nearest, d - o.Radius);
+                }
+                // Born a radius and a lift outside the point (2 r + 2 mm, Blood's own clearance), then a step at its exit speed; 5 mm is slack.
+                double reach = 2.0 * parameters.DropRadius + 0.002 + (cough > 0.0 ? parameters.CoughSpeed : parameters.DrainSpeed) * OfficeBody.TickSeconds + 0.005;
+                Check(nearest < reach, $"the drop is {nearest * 1000.0:F1} mm outside the nearest opening (at most {reach * 1000.0:F1}): it was thrown");
+            }
+        }),
+
         ("seated frame on a turned head: ToPart returns the point's part-frame coordinates and an opened wound sheds along the normal in that frame, with the neck driven so the head is 0.2+ rad off identity", () =>
         {
             var plan = SeatedPuppet.Plan;
@@ -1736,6 +1811,38 @@ public static class Program
             Console.WriteLine($"  airway: pooled peak {pooled * 1e6:F1} mL");
         }),
 
+        ("a take on the seated body: what Exchange asks of the pool leaves the patches the openings read, the ledger books the volume taken (a breath's share at 1/120 of the pool within 5e-8 of the pool, five times the pool takes the pool and owes the rest)", () =>
+        {
+            var plan = SeatedPuppet.Plan;
+            var mouth = plan.AirwayOpenings.First(a => a.Label == "Mouth");
+            var c = plan.Parts[mouth.Part].Position;
+            using var body = new SeatedBody(new BloodParameters { SettleSpeed = 100f, SettleTicks = 1 });
+            var hit = body.Pick(new BodyPoint(c.X, c.Y + mouth.Offset.Y + 0.04f, c.Z + 1f), new BodyPoint(0f, 0f, -1.5f));
+            Check(hit is { } h && h.Part == mouth.Part, "no hit on the face above the mouth");
+            body.OpenWound(hit!.Value.Part, hit.Value.Point, hit.Value.Normal);
+            var bleeds = new double[plan.Parts.Count];
+            bleeds[hit.Value.Part] = 0.0003;
+            for (int t = 0; t < 300; t++) body.DriveAndStep(1.0 / Hz, bleeds);
+            for (int t = 0; t < 120 && body.LiveDrops > 0; t++) body.DriveAndStep(1.0 / Hz); // the bleed stops and what is in the air settles, so no live drop is at an opening
+            Check(body.LiveDrops == 0, $"{body.LiveDrops} drops still live");
+            double pool = body.ReadAirway().Pooled;
+            Check(pool > 1e-5, $"the pool at the openings read {pool} m^3");
+
+            double ask = pool / 120.0;
+            body.Exchange(0.0, ask, 0.0, 0.0);
+            double owed = body.Owed;
+            Check(Math.Abs(owed) <= 5e-8 * pool, $"a take of {ask * 1e6:F3} mL from {pool * 1e6:F1} mL left {owed * 1e6:F6} mL owed (the budget is {5e-8 * pool * 1e6:F6})");
+            body.DriveAndStep(1.0 / Hz);
+            double after = body.ReadAirway().Pooled;
+            Check(Math.Abs((pool - after) - (ask - owed)) <= 1e-6 * pool, $"the pool fell {(pool - after) * 1e6:F4} mL for a take of {(ask - owed) * 1e6:F4} mL");
+
+            body.Exchange(0.0, 5.0 * after, 0.0, 0.0);
+            Check(Math.Abs(body.Owed - (owed + 4.0 * after)) <= 1e-6 * pool, $"taking five times the pool left {body.Owed * 1e6:F4} mL owed, expected {(owed + 4.0 * after) * 1e6:F4}");
+            body.DriveAndStep(1.0 / Hz);
+            Check(body.ReadAirway().Pooled <= 1e-6 * pool, $"{body.ReadAirway().Pooled * 1e6:F4} mL still pooled after the pool was taken");
+            Console.WriteLine($"  take: pool {pool * 1e6:F1} mL, a 1/120 take owed {owed * 1e6:E2} mL");
+        }),
+
         ("seated world identity: a SeatedBody (a particle system, no wound) steps to the same positions and rotations as the same world with no particle system, 1200 driven ticks", () =>
         {
             using var body = new SeatedBody();
@@ -1830,6 +1937,16 @@ public static class Program
     }
 
     /// <summary>A hit on the head at the plan's Mouth opening: a ray from 1 m in front of it, straight back and on through it.</summary>
+    /// <summary>The volume of liquid in the world: the live fluid particles' (2 r)^3 and the live wet patches', m^3.</summary>
+    private static double WorldLiquid(OfficeBodySession s)
+    {
+        var v = s.View;
+        double w = 0.0;
+        for (int i = 0; i < v.ParticleCount; i++) if (v.ParticleLive[i] != 0u) w += Math.Pow(2.0 * v.ParticleRadius[i], 3.0);
+        for (int i = 0; i < v.WetCount; i++) if (v.WetLive[i] != 0u) w += v.WetPatchVolume[i];
+        return w;
+    }
+
     private static PartHit MouthHit(OfficeBodySession s)
     {
         var plan = SeatedPuppet.Plan;

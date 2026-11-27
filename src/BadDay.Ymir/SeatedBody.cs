@@ -44,6 +44,7 @@ public sealed class SeatedBody : IDisposable
     private readonly Blood _blood;
     private readonly float[] _airLive, _airPooled, _airDrop;
     private readonly Queue<BodyEvent> _events = new();
+    private double _owed;
     private bool _disposed;
 
     public SeatedBody(BloodParameters? blood = null)
@@ -121,6 +122,27 @@ public sealed class SeatedBody : IDisposable
         return AirwaySample.Of(_airLive, _airPooled, _airDrop);
     }
 
+    /// <summary>
+    /// What the airway owes the world, m^3 signed: the liquid it holds that the world has not given up. Display only; <see cref="Exchange"/> is the one writer. Live drops at the openings are destroyed against it, so with them it stays within half a drop below 0 and half a drop plus a tick's draw above; it is carried across ticks,
+    /// never netted against a cough and never returned with an overdraw.
+    </summary>
+    public double Owed { get { Live(); return _owed; } }
+
+    /// <summary>
+    /// The airway's trade with the world for one tick, called once after the physiology stepped with its flows for that step (world m^3: Physiology owns how much is drawn, coughed and drained, this only
+    /// decides where the liquid goes). A breath's pooled draw leaves the wet patches at the openings (<see cref="Ragdoll.TakeDrawn"/>); what the world did not give up, and the live draw, is added to <see cref="Owed"/>, the
+    /// ledger books the volume the take returned, not the ask; live drops at the openings are destroyed against it; the cough and the drain come out of the lowest opening (<see cref="Ragdoll.LowestOpening"/>) as drops,
+    /// at 1x. The invariant: the world's liquid, the airway's, the expulsion backlog, less Owed, less the drops the wounds shed and the blood bled into the airway, is constant.
+    /// </summary>
+    public void Exchange(double drawnLive, double drawnPooled, double coughed, double drained)
+    {
+        Live();
+        double taken = _ragdoll.TakeDrawn(drawnPooled);
+        _owed += drawnLive + drawnPooled - taken;
+        _owed -= _blood.TakeLive(_owed);
+        if (coughed + drained > 0.0) _blood.Expel(_ragdoll.LowestOpening(_world.Gravity), coughed, drained);
+    }
+
     /// <summary>The part of the body a ray from <paramref name="origin"/> along <paramref name="translation"/> meets first, with the point and surface normal; null for a miss or when the first thing met is not a part of the body.</summary>
     public PartHit? Pick(BodyPoint origin, BodyPoint translation)
     {
@@ -164,6 +186,9 @@ public sealed class SeatedBody : IDisposable
     /// <summary>Visible blood volume (m^3) shed so far and still gathered at the wounds, and the drops not yet settled.</summary>
     public double BloodEmitted { get { Live(); return _blood.Emitted; } }
     public double BloodBacklog { get { Live(); return _blood.Backlog; } }
+    /// <summary>The part of <see cref="BloodEmitted"/> that was the body's own cough and drain (visible m^3), and what is still waiting to be shed of it: display only.</summary>
+    public double BloodExpelled { get { Live(); return _blood.Expelled; } }
+    public double ExpelBacklog { get { Live(); return _blood.ExpelBacklog; } }
     public int LiveDrops { get { Live(); return _blood.Live; } }
 
     public void Enqueue(long tick, TickEvents events)
