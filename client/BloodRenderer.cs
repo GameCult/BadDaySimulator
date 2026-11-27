@@ -13,10 +13,16 @@ namespace BadDay.Client;
 public partial class BloodRenderer : Node3D
 {
     /// <summary>A patch is a disc this thick (m), lifted this far (m) so it does not z-fight the surface it lies on.</summary>
-    private const float PatchThickness = 0.004f, PatchLift = 0.003f;
+    public const float PatchThickness = 0.004f, PatchLift = 0.003f;
 
     private readonly MultiMeshInstance3D _drops = Instances(new BoxMesh { Size = Vector3.One }, "Drops");
     private readonly MultiMeshInstance3D _patches = Instances(new CylinderMesh { TopRadius = 1f, BottomRadius = 1f, Height = 1f, RadialSegments = 8, Rings = 0 }, "Patches");
+
+    private readonly System.Collections.Generic.List<Transform3D> _dropPoses = new(), _patchPoses = new();
+
+    /// <summary>The transforms the latest Sync gave the drops and the patches, in lane order (a copy of what the MultiMeshes were told, display-only: a headless renderer keeps none).</summary>
+    public System.Collections.Generic.IReadOnlyList<Transform3D> Drops => _dropPoses;
+    public System.Collections.Generic.IReadOnlyList<Transform3D> Patches => _patchPoses;
 
     /// <summary>Drops and wet patches drawn by the latest <see cref="Sync"/>: the live fluid lanes and the live wet lanes.</summary>
     public int DropCount { get; private set; }
@@ -42,11 +48,14 @@ public partial class BloodRenderer : Node3D
         int drops = 0;
         for (int i = 0; i < live.Length; i++) if (live[i] != 0 && (phase[i] & Box3DSoaPhase.Fluid) != 0) drops++;
         Reserve(_drops.Multimesh, drops);
+        _dropPoses.Clear();
         int d = 0;
         for (int i = 0; i < live.Length && d < drops; i++)
         {
             if (live[i] == 0 || (phase[i] & Box3DSoaPhase.Fluid) == 0) continue;
-            _drops.Multimesh.SetInstanceTransform(d++, new Transform3D(Basis.FromScale(Vector3.One * 2f * radius[i]), new Vector3(view.ParticleX[i], view.ParticleY[i], view.ParticleZ[i])));
+            var pose = new Transform3D(Basis.FromScale(Vector3.One * 2f * radius[i]), new Vector3(view.ParticleX[i], view.ParticleY[i], view.ParticleZ[i]));
+            _dropPoses.Add(pose);
+            _drops.Multimesh.SetInstanceTransform(d++, pose);
         }
         DropCount = drops;
         _drops.Multimesh.VisibleInstanceCount = drops;
@@ -55,6 +64,7 @@ public partial class BloodRenderer : Node3D
         int patches = 0;
         for (int i = 0; i < wet.Length; i++) if (wet[i] != 0) patches++;
         Reserve(_patches.Multimesh, patches);
+        _patchPoses.Clear();
         int p = 0;
         for (int i = 0; i < wet.Length && p < patches; i++)
         {
@@ -70,7 +80,9 @@ public partial class BloodRenderer : Node3D
             else if (particle >= 0) at = new Vector3(view.ParticleX[particle], view.ParticleY[particle], view.ParticleZ[particle]);
             else at = local;
             float r = view.WetRadius[i];
-            _patches.Multimesh.SetInstanceTransform(p++, new Transform3D(Basis.FromScale(new Vector3(r, PatchThickness, r)), at + Vector3.Up * PatchLift));
+            var pose = new Transform3D(Basis.FromScale(new Vector3(r, PatchThickness, r)), at + Vector3.Up * PatchLift);
+            _patchPoses.Add(pose);
+            _patches.Multimesh.SetInstanceTransform(p++, pose);
         }
         PatchCount = patches;
         _patches.Multimesh.VisibleInstanceCount = patches;

@@ -148,8 +148,8 @@ public partial class Main : Node3D
 
     public override void _UnhandledInput(InputEvent e)
     {
-        // The knife takes plain left presses; Alt+left is the camera's emulated middle button, and the camera never binds a plain left.
-        if (Scenario == Scenario.Office && e is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left, AltPressed: false } press)
+        // The knife takes a left press the camera's binding table does not (Alt+left is its emulated middle button, whatever its mode).
+        if (Scenario == Scenario.Office && e is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } press && !OrbitCamera.Binds(press))
         {
             CutAt(press.Position);
             GetViewport().SetInputAsHandled();

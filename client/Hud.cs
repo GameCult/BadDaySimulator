@@ -24,9 +24,18 @@ public partial class Hud : CanvasLayer
 
     public OptionButton ScenarioPicker { get; } = new();
     /// <summary>His will, 0 to 1 (lodur:ruling:bds-will-visible).</summary>
-    public ProgressBar WillBar { get; } = new() { MinValue = 0, MaxValue = 1, Step = 0, ShowPercentage = false, CustomMinimumSize = new Vector2(220, 18) };
+    public ProgressBar WillBar { get; } = Bar(Color.Color8(0x4c, 0x9a, 0xd8));
     /// <summary>His arousal, 0 to 1 (lodur:ruling:stress-bar-shows-arousal-calm-silences).</summary>
-    public ProgressBar StressBar { get; } = new() { MinValue = 0, MaxValue = 1, Step = 0, ShowPercentage = false, CustomMinimumSize = new Vector2(220, 18) };
+    public ProgressBar StressBar { get; } = Bar(Color.Color8(0xd8, 0x8a, 0x2c));
+
+    /// <summary>A 0 to 1 bar with a visible track (dark, outlined), so an empty bar reads as empty, and a fill in <paramref name="fill"/>.</summary>
+    private static ProgressBar Bar(Color fill)
+    {
+        var bar = new ProgressBar { MinValue = 0, MaxValue = 1, Step = 0, ShowPercentage = false, CustomMinimumSize = new Vector2(220, 18) };
+        bar.AddThemeStyleboxOverride("background", new StyleBoxFlat { BgColor = Color.Color8(0x1c, 0x1c, 0x20), BorderColor = Ink, BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1 });
+        bar.AddThemeStyleboxOverride("fill", new StyleBoxFlat { BgColor = fill });
+        return bar;
+    }
     /// <summary>One button per stressor of the office's cause, by id.</summary>
     public IReadOnlyDictionary<string, Button> SilenceButtons => _silence;
     public SpinBox SeedBox { get; } = new() { MinValue = 0, MaxValue = 999999999, Step = 1, Value = 1 };

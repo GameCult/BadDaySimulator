@@ -43,6 +43,17 @@ public partial class OrbitCamera : Camera3D
     /// <summary>Alt+left-drag stands for the middle button (Blender's Emulate 3 Button Mouse).</summary>
     public bool Emulate3ButtonMouse { get; set; } = true;
 
+    /// <summary>
+    /// Whether <paramref name="press"/> is one of the camera's gestures: a button and modifier combination in its binding table. The knife leaves
+    /// every such press alone, in every camera mode (emulation off, a drag in progress): the camera's table is the one owner of what a press means to it.
+    /// </summary>
+    public static bool Binds(InputEventMouseButton press)
+    {
+        foreach (var row in Bindings)
+            if (row.Button == press.ButtonIndex && row.Alt == press.AltPressed && row.Shift == press.ShiftPressed && row.Ctrl == press.CtrlPressed) return true;
+        return false;
+    }
+
     /// <summary>Where an orbit turns, read once at each orbit press; null, or a null result, means the view centre.</summary>
     public Func<Vector3?>? Pivot { get; set; }
 

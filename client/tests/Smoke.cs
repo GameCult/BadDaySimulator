@@ -189,6 +189,7 @@ public partial class Smoke : Node
         Click(at, alt: false);
         Check(_main.Cuts.Count == 1 && _main.Cuts[0].Part == "LowerArm L", $"a left press on LowerArm L's centre left cuts [{string.Join(", ", _main.Cuts)}]");
         Check(office.Result().Timeline.Count > 0, "no timeline after a cut");
+        await CheckAltGuard(at);
         await UntilTick(600);
 
         // The blood drawn is the blood the world holds: a drop per live fluid lane, a disc per live wet lane, counted from the lanes here.
@@ -199,6 +200,8 @@ public partial class Smoke : Node
         Check(liveDrops + livePatches > 0, "no blood in the world 480 ticks after the cut");
         Check(_main.Blood.DropCount == liveDrops && _main.Blood.PatchCount == livePatches,
             $"blood draws {_main.Blood.DropCount} drops and {_main.Blood.PatchCount} patches; the lanes hold {liveDrops} and {livePatches}");
+
+        CheckBloodPlaced(view);
 
         // The bars are the session's will and arousal, to the bit, once a frame has drawn them (stepping paused so the session holds still).
         // Run on until the cut has cost his will, so a bar bound to resolve instead shows a different number.
@@ -226,6 +229,47 @@ public partial class Smoke : Node
         Check(_main.Scenario == Scenario.Chamber && _main.Run is BodyPainBoxSession, "switching back did not make the pain box the live run");
         Check(_main.Chamber.Visible, "the chamber is hidden after switching back");
         Check(Throws(() => _ = office.TickIndex), "the office run was not disposed by the switch");
+    }
+
+    /// <summary>Each drop is drawn at its lane's point and 2 x its radius wide; each disc at its body's pose applied to its point, lifted, and as wide as its radius (both in lane order).</summary>
+    private void CheckBloodPlaced(Box3DSoaView view)
+    {
+        int d = 0;
+        for (int i = 0; i < view.ParticleCount; i++)
+        {
+            if (view.ParticleLive[i] == 0 || (view.ParticlePhase[i] & Box3DSoaPhase.Fluid) == 0) continue;
+            var t = _main.Blood.Drops[d++];
+            Check(t.Origin == new Vector3(view.ParticleX[i], view.ParticleY[i], view.ParticleZ[i]) && Math.Abs(t.Basis.Scale.X - 2f * view.ParticleRadius[i]) < 1e-6f,
+                $"drop {d - 1} is drawn at {t.Origin} size {t.Basis.Scale.X}; lane {i} is at ({view.ParticleX[i]}, {view.ParticleY[i]}, {view.ParticleZ[i]}), radius {view.ParticleRadius[i]}");
+        }
+        int p = 0;
+        for (int i = 0; i < view.WetCount; i++)
+        {
+            if (view.WetLive[i] == 0) continue;
+            int b = view.WetBody[i];
+            if (b < 0) { p++; continue; }
+            var q = new Quaternion(view.RotationX[b], view.RotationY[b], view.RotationZ[b], view.RotationW[b]);
+            var want = new Vector3(view.PositionX[b], view.PositionY[b], view.PositionZ[b]) + q * new Vector3(view.WetX[i], view.WetY[i], view.WetZ[i]) + Vector3.Up * BloodRenderer.PatchLift;
+            var t = _main.Blood.Patches[p++];
+            Check(t.Origin.DistanceTo(want) < 1e-5f && Math.Abs(t.Basis.Scale.X - view.WetRadius[i]) < 1e-6f,
+                $"patch {p - 1} is drawn at {t.Origin} radius {t.Basis.Scale.X}; lane {i} puts it at {want}, radius {view.WetRadius[i]}");
+        }
+    }
+
+    /// <summary>The knife leaves the camera's presses alone in every mode: with emulation off, and while a middle drag is under way, an Alt+left press cuts nothing.</summary>
+    private async Task CheckAltGuard(Vector2 at)
+    {
+        var camera = _main.GetNode<OrbitCamera>("Camera");
+        int cuts = _main.Cuts.Count;
+        camera.Emulate3ButtonMouse = false;
+        Click(at, alt: true);
+        camera.Emulate3ButtonMouse = true;
+        Check(_main.Cuts.Count == cuts, "an Alt+left press cut with camera emulation off");
+        GetViewport().PushInput(new InputEventMouseButton { ButtonIndex = MouseButton.Middle, Pressed = true, Position = at, GlobalPosition = at, ButtonMask = MouseButtonMask.Middle }, true);
+        Click(at, alt: true);
+        Check(_main.Cuts.Count == cuts, "an Alt+left press cut during a middle drag");
+        GetViewport().PushInput(new InputEventMouseButton { ButtonIndex = MouseButton.Middle, Pressed = false, Position = at, GlobalPosition = at }, true);
+        await Task.CompletedTask;
     }
 
     /// <summary>A left press and release at <paramref name="at"/> (viewport coordinates), pushed through the viewport like the mouse's.</summary>
