@@ -125,7 +125,7 @@ public sealed class SeatedBody : IDisposable
     /// <summary>
     /// What the airway owes the world, m^3 signed: the liquid it holds that the world has not given up. Display only; <see cref="Exchange"/> is the one writer. Live drops at the openings are destroyed against it, so with them it stays within half a drop below 0 and half a drop plus a tick's draw above; it is carried across ticks,
     /// never netted against a cough and never returned with an overdraw.
-    </summary>
+    /// </summary>
     public double Owed { get { Live(); return _owed; } }
 
     /// <summary>
