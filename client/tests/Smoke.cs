@@ -26,7 +26,8 @@ public partial class Smoke : Node
     private bool _done;
 
     private Hud Hud => _main.Hud;
-    private BodyPainBoxSession Session => _main.Session;
+    private BodyPainBoxSession Session => _main.PainBox;
+    private OfficeBodySession Office => _main.Office;
 
     public override void _Ready() => _ = RunAsync();
 

@@ -12,6 +12,20 @@ public readonly record struct PartHit(int Part, BodyPoint Point, BodyPoint Norma
 /// <summary>What the Actor reported on one tick of a body run; only ticks that reported something are queued.</summary>
 public readonly record struct BodyEvent(long Tick, TickEvents Events);
 
+/// <summary>What a client needs of any body run to step it, draw it and drain its events: the pain box and the office. A client holds exactly one.</summary>
+public interface IBodyRun : IDisposable
+{
+    /// <summary>The live lanes of the world, for rendering.</summary>
+    Box3DSoaView View { get; }
+    /// <summary>Ticks run so far; the tick the next <see cref="Step"/> runs.</summary>
+    long TickIndex { get; }
+    bool Finished { get; }
+    /// <summary>One step of 1/120 s.</summary>
+    void Step();
+    /// <summary>Moves the queued events (oldest first) into <paramref name="buffer"/>; returns how many.</summary>
+    int DrainEvents(Span<BodyEvent> buffer);
+}
+
 /// <summary>
 /// The one owner of a BDS body world: the <see cref="Box3DSoaWorld"/> sized by <see cref="SeatedPuppet.Needs"/>, the
 /// ragdoll <see cref="SeatedPuppet.Build"/> puts in it, the body's blood (<see cref="Blood"/>, the one writer of fluid particles and wet patches in the world), the sense-point, strength and target lanes, and the queue of

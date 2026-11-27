@@ -67,7 +67,7 @@ public static class BodyPainBox
 /// client drains them with <see cref="DrainEvents"/>, so a frame that spans several steps loses none. After
 /// <see cref="Dispose"/> every member throws <see cref="ObjectDisposedException"/>.
 /// </summary>
-public sealed class BodyPainBoxSession : IDisposable
+public sealed class BodyPainBoxSession : IBodyRun
 {
     /// <summary>The box's half extent: the smallest 0.005 m step that keeps the hand in the box from the end of the ramp to the break on <see cref="BodyPainBox.Run"/> (on-body parameters, seed 1) at the hold pose below. Readings by half extent, ticks out from 2 s: 0.140 6, 0.145 3, 0.150 0, 0.155 0; excursions after the ramp: 0.150 1, 0.155 0.</summary>
     private const float BoxHalf = 0.155f;

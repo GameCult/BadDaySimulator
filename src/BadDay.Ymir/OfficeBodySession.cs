@@ -16,7 +16,7 @@ namespace BadDay.Ymir;
 /// no strength) and the run ends a release after the death. After <see cref="Finished"/> <see cref="Step"/> only keeps
 /// the body moving, as the chamber does.
 /// </summary>
-public sealed class OfficeBodySession : IDisposable
+public sealed class OfficeBodySession : IBodyRun
 {
     private readonly SeatedBody _body;
     private readonly StressSession _session;

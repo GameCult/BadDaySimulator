@@ -25,8 +25,17 @@ public partial class Chamber : Node3D
     /// <summary>The glow last drawn, 0 (dark) to 1.</summary>
     public float Glow { get; private set; }
 
+    /// <summary>The office has no chamber: hidden, and the glow light it casts off.</summary>
+    public void Hide()
+    {
+        Visible = false;
+        Glow = 0f;
+        Look.Set("ps1_glow_energy", 0f);
+    }
+
     public void Sync(BodyPainBoxSession session)
     {
+        Visible = true;
         double intensity = session.BoxIntensity; // 0 once the box is off
         var box = session.Chamber;
         Position = new Vector3(box.CenterX, box.CenterY, box.CenterZ);

@@ -30,7 +30,7 @@ public partial class RenderCheck : Node
     private string? _frames;
     private bool _done;
 
-    private BodyPainBoxSession Session => _main.Session;
+    private BodyPainBoxSession Session => _main.PainBox;
     private int Block => Look.BlockSize(Height);
 
     public override void _Ready()

@@ -6,10 +6,13 @@ using Godot;
 
 namespace BadDay.Client;
 
+/// <summary>The runs the client hosts: the Synaptic Induction Chamber's pain box, or the office with its knife.</summary>
+public enum Scenario { Chamber, Office }
+
 /// <summary>
 /// The client's root. Godot's physics frame decides when a tick happens (physics interpolation on, Godot's own
-/// physics engine Dummy); <see cref="BodyPainBoxSession"/> decides everything a tick does. This node only steps it,
-/// draws it and forwards the player's commands to it. A session that cannot start (the native library is missing, say)
+/// physics engine Dummy); the live <see cref="IBodyRun"/> (the pain box or the office, one at a time) decides everything a tick does.
+/// This node only steps whichever is live, draws it and forwards the player's commands to it. A session that cannot start (the native library is missing, say)
 /// is reported once in <see cref="Failure"/> and the log, and nothing ticks until a Reset succeeds.
 /// </summary>
 public partial class Main : Node3D
@@ -22,10 +25,19 @@ public partial class Main : Node3D
     private Chamber _chamber = null!;
     private OrbitCamera _camera = null!;
     private Hud _hud = null!;
-    private BodyPainBoxSession? _session;
+    private IBodyRun? _run;
     private double _intensity = new PainBoxParameters().BoxIntensity;
 
-    public BodyPainBoxSession Session => _session ?? throw new InvalidOperationException($"Main has no session ({Failure ?? "before _Ready"}).");
+    public Scenario Scenario { get; private set; } = Scenario.Chamber;
+
+    /// <summary>The live run, whichever scenario.</summary>
+    public IBodyRun Run => _run ?? throw new InvalidOperationException($"Main has no session ({Failure ?? "before _Ready"}).");
+
+    /// <summary>The live run as the pain box; throws in the office.</summary>
+    public BodyPainBoxSession PainBox => Run as BodyPainBoxSession ?? throw new InvalidOperationException("The live run is not the pain box.");
+
+    /// <summary>The live run as the office; throws in the chamber.</summary>
+    public OfficeBodySession Office => Run as OfficeBodySession ?? throw new InvalidOperationException("The live run is not the office.");
     public BodyRenderer Bodies => _bodies;
     public Chamber Chamber => _chamber;
     public Hud Hud => _hud;
@@ -36,6 +48,9 @@ public partial class Main : Node3D
 
     /// <summary>The intensity the box is set to; the next Reset starts with it.</summary>
     public double Intensity => _intensity;
+
+    /// <summary>The parameters of an office run: every default except the 1/120 s tick the body needs.</summary>
+    public static StressParameters OfficeParameters { get; } = new() { TickSeconds = OfficeBody.TickSeconds };
 
     public bool SlowMotion { get; private set; }
 
@@ -96,28 +111,37 @@ public partial class Main : Node3D
     {
         if (IsInstanceValid(GetWindow())) GetWindow().SizeChanged -= SetLines;
         Engine.PhysicsTicksPerSecond = StepsPerSecond(1.0);
-        _session?.Dispose();
-        _session = null;
+        _run?.Dispose();
+        _run = null;
     }
 
     public override void _PhysicsProcess(double delta)
     {
-        if (_session is null) return;
-        _session.Step(); // one step of 1/120 s per physics frame; never Godot's delta, whatever the frame rate
+        if (_run is null) return;
+        _run.Step(); // one step of 1/120 s per physics frame; never Godot's delta, whatever the frame rate
         Present(teleport: false);
     }
 
-    /// <summary>Starts a new run from <paramref name="seed"/> at the current intensity, replacing the session.</summary>
+    /// <summary>Switches to <paramref name="scenario"/> and starts it at the current seed.</summary>
+    public void SetScenario(Scenario scenario)
+    {
+        Scenario = scenario;
+        Reset(Seed);
+    }
+
+    /// <summary>Starts a new run of the current scenario from <paramref name="seed"/> (the box at the current intensity), replacing the live run.</summary>
     public void Reset(ulong seed)
     {
-        _session?.Dispose();
-        _session = null;
+        _run?.Dispose();
+        _run = null;
         Failure = null;
         _events.Clear();
         Seed = seed;
         try
         {
-            _session = new BodyPainBoxSession(ParametersFor(_intensity), seed);
+            _run = Scenario == Scenario.Office
+                ? new OfficeBodySession(OfficeParameters, seed)
+                : new BodyPainBoxSession(ParametersFor(_intensity), seed);
         }
         catch (Exception e) // the session's start can fail in native code (library missing, ABI mismatch): report once, tick nothing
         {
@@ -131,11 +155,11 @@ public partial class Main : Node3D
     /// <summary>Sets the box intensity now and for the next Reset.</summary>
     public void SetIntensity(double level)
     {
-        _session?.SetIntensity(level);
+        (_run as BodyPainBoxSession)?.SetIntensity(level);
         _intensity = level;
     }
 
-    public void SwitchOff() => _session?.SwitchOff();
+    public void SwitchOff() => (_run as BodyPainBoxSession)?.SwitchOff();
 
     /// <summary>
     /// Slow motion is fewer session steps per real second: Godot runs its physics frames at a quarter of the rate and each
@@ -150,9 +174,9 @@ public partial class Main : Node3D
 
     private void Present(bool teleport)
     {
-        var s = Session;
+        var s = Run;
         _bodies.Sync(s.View, teleport);
-        _chamber.Sync(s);
+        if (s is BodyPainBoxSession box) _chamber.Sync(box); else _chamber.Hide();
         Span<BodyEvent> events = stackalloc BodyEvent[8];
         int n;
         while ((n = s.DrainEvents(events)) > 0)

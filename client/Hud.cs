@@ -17,6 +17,9 @@ public partial class Hud : CanvasLayer
 
     public Hud(Main main) => _main = main;
 
+    private readonly VBoxContainer _chamberControls = new();
+
+    public OptionButton ScenarioPicker { get; } = new();
     public SpinBox SeedBox { get; } = new() { MinValue = 0, MaxValue = 999999999, Step = 1, Value = 1 };
     public Button ResetButton { get; } = new() { Text = "Reset" };
     public HSlider IntensitySlider { get; } = new() { MinValue = 0, MaxValue = PainBox.MaxLevel, Step = 0.05, CustomMinimumSize = new Vector2(220, 24) };
@@ -53,13 +56,19 @@ public partial class Hud : CanvasLayer
         ResetButton.Pressed += () => _main.Reset((ulong)SeedBox.Value);
         controls.AddChild(ResetButton);
 
-        controls.AddChild(new Label { Text = "Intensity", Modulate = Ink });
+        foreach (var scenario in System.Enum.GetValues<Scenario>()) ScenarioPicker.AddItem(scenario.ToString(), (int)scenario);
+        ScenarioPicker.Selected = (int)_main.Scenario;
+        ScenarioPicker.ItemSelected += i => _main.SetScenario((Scenario)ScenarioPicker.GetItemId((int)i));
+        controls.AddChild(ScenarioPicker);
+
+        controls.AddChild(_chamberControls);
+        _chamberControls.AddChild(new Label { Text = "Intensity", Modulate = Ink });
         IntensitySlider.Value = _main.Intensity;
         IntensitySlider.ValueChanged += v => _main.SetIntensity(v);
-        controls.AddChild(IntensitySlider);
+        _chamberControls.AddChild(IntensitySlider);
 
         BoxOffButton.Pressed += () => _main.SwitchOff();
-        controls.AddChild(BoxOffButton);
+        _chamberControls.AddChild(BoxOffButton);
         SlowToggle.Toggled += on => _main.SetSlowMotion(on);
         controls.AddChild(SlowToggle);
     }
@@ -72,9 +81,17 @@ public partial class Hud : CanvasLayer
             return;
         }
 
-        var s = _main.Session;
-        var r = s.Result();
+        _chamberControls.Visible = _main.Scenario == Scenario.Chamber;
         _text.Clear();
+        if (_main.Scenario == Scenario.Office)
+        {
+            _text.Append($"office   seed {_main.Seed}    t {_main.Run.TickIndex * OfficeBody.TickSeconds:F2} s  (tick {_main.Run.TickIndex})\n");
+            _readout.Text = _text.ToString();
+            return;
+        }
+
+        var s = _main.PainBox;
+        var r = s.Result();
         _text.Append($"seed {_main.Seed}    t {s.TickIndex * BodyPainBox.TickSeconds:F2} s  (tick {s.TickIndex})\n");
         _text.Append($"box intensity {s.BoxIntensity:F2}{(s.BoxOn ? "" : " off")}  (set {_main.Intensity:F2})\n");
         _text.Append($"pain {s.Pain:F2}   strain {s.Strain:F2}   resolve {s.Resolve:F2}\n");
