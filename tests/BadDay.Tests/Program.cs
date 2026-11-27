@@ -1476,6 +1476,52 @@ public static class Program
             Check(s.Dead && s.DeathCause == Lodur.DeathCause.BloodLoss, $"cause {s.DeathCause}");
         }),
 
+        ("seated frame on a turned head: ToPart returns the point's part-frame coordinates and an opened wound sheds along the normal in that frame, with the neck driven so the head is 0.2+ rad off identity", () =>
+        {
+            var plan = SeatedPuppet.Plan;
+            int head = plan.PartIndex("Head", Lodur.Side.Center);
+            int neck = Array.FindIndex(plan.Joints.ToArray(), j => j.Label == "Neck");
+            Check(neck >= 0, "no neck joint");
+            using var body = new SeatedBody(new BloodParameters { SettleSpeed = 100f, SettleTicks = 1 });
+            body.Strengths[neck] = 1f;
+            body.Targets[neck] = Quat.FromAxisAngle(1f, 0f, 0f, 0.6f);
+            int lane = body.BodyLane(head);
+            float turn = 0f;
+            for (int t = 0; t < 4 * Hz && turn < 0.5f; t++)
+            {
+                body.DriveAndStep(1.0 / Hz);
+                turn = 2f * MathF.Acos(Math.Min(1f, MathF.Abs(body.View.RotationW[lane])));
+            }
+            Console.WriteLine($"  head turned {turn:F3} rad");
+            Check(turn >= 0.2f, $"the head only turned {turn:F3} rad: the test would not see the frame");
+            var v = body.View;
+            var q = new Quat(v.RotationX[lane], v.RotationY[lane], v.RotationZ[lane], v.RotationW[lane]);
+            var local = (X: 0.03f, Y: 0.03f, Z: 0.1f); // on the face, clear of the torso the turned chin meets
+            q.Rotate(local.X, local.Y, local.Z, out var ox, out var oy, out var oz);
+            var world = new BodyPoint(v.PositionX[lane] + ox, v.PositionY[lane] + oy, v.PositionZ[lane] + oz);
+            var back = body.ToPart(head, world);
+            Check(Math.Abs(back.X - local.X) < 1e-4f && Math.Abs(back.Y - local.Y) < 1e-4f && Math.Abs(back.Z - local.Z) < 1e-4f, $"ToPart gave ({back.X}, {back.Y}, {back.Z}) for the part-frame point ({local.X}, {local.Y}, {local.Z})");
+
+            // The wound: picked from outside the throat, opened with its world normal; the first drop leaves along that normal (in the world), not along the normal read as a part-frame vector.
+            q.Rotate(0f, 0f, -1f, out var dx, out var dy, out var dz); // the head's own front, travelling in
+            var hit = body.Pick(new BodyPoint(world.X - 0.5f * dx, world.Y - 0.5f * dy, world.Z - 0.5f * dz), new BodyPoint(dx, dy, dz));
+            Check(hit is { } h && h.Part == head, $"the ray at the throat met part {hit?.Part} at {hit?.Point} first, not the head");
+            var pick = hit!.Value;
+            body.OpenWound(head, pick.Point, pick.Normal);
+            var bleeds = new double[plan.Parts.Count];
+            bleeds[head] = 0.0003;
+            int tick = 0;
+            while (body.LiveDrops == 0 && tick++ < Hz) body.DriveAndStep(1.0 / Hz, bleeds);
+            Check(body.LiveDrops > 0, "no drop in the first second");
+            var w = body.View;
+            int drop = 0;
+            while (w.ParticleLive[drop] == 0u) drop++;
+            float ex = w.ParticleX[drop] - pick.Point.X, ey = w.ParticleY[drop] - pick.Point.Y, ez = w.ParticleZ[drop] - pick.Point.Z;
+            float cos = (ex * pick.Normal.X + ey * pick.Normal.Y + ez * pick.Normal.Z) / MathF.Sqrt(ex * ex + ey * ey + ez * ez);
+            Console.WriteLine($"  first drop leaves at cos {cos:F3} to the surface normal");
+            Check(cos > 0.95f, $"the first drop left at cos {cos:F3} to the normal: the wound normal was not taken into the part's frame");
+        }),
+
         ("office reach by point: the throat front cuts the larynx and not the neck muscle; the chin cuts the muscle and not the larynx", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
