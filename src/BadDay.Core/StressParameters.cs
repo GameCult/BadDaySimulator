@@ -22,6 +22,12 @@ public sealed record StressParameters
     /// <summary>Seconds from one rage key to the next [P]: wind-up left, strike left, wind-up right, strike right.</summary>
     public double RageKeySeconds { get; init; } = 0.25;
 
+    /// <summary>The air hunger at which Fella clutches his throat, drive units [P] (ruling lodur:ruling:bds-air-hunger-clutch-then-thrash): a breath tried and not got reads 0.6.</summary>
+    public double ClutchAirHunger { get; init; } = 0.3;
+
+    /// <summary>Seconds from one thrash key to the next [P] (ruling lodur:ruling:bds-thrash-when-will-breaks): a look knob, tuned on the capture.</summary>
+    public double ThrashKeySeconds { get; init; } = 0.2;
+
     public Setting Setting { get; init; } = Setting.Office;
     public Character Character { get; init; } = Character.OfficeFella;
     public Cause Cause { get; init; } = Cause.Office;

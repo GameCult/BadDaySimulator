@@ -987,6 +987,7 @@ public static class Program
             Check(r.Outcome == Outcome.WillBroke && r.EndMs == 600000, $"outcome {r.Outcome}, read at {r.EndMs} ms");
             Check(r.Timeline.Count(e => e.Kind == StressEntryKind.GoalChanged) == 2 && r.Timeline.Where(e => e.Kind == StressEntryKind.Sample).Max(e => e.TimeMs) >= 599000, "the session stopped logging");
             Check(r.Timeline[^1].Goal == OfficeGoal.Calm, "the office left calm after its break");
+            Check(r.Timeline.All(e => e.Goal != OfficeGoal.Clutch && e.Goal != OfficeGoal.Thrash), "the headless office, which breathes freely, clutched or thrashed");
         }),
 
         ("office rage: a will that holds never switches, and the job's pull is the composure goal's alone", () =>
@@ -996,6 +997,23 @@ public static class Program
             var p = new StressParameters();
             var brain = OfficeBrain.Build(p, OfficePoses.Identity);
             Check(brain.Goals[OfficeBrain.ComposureIndex].Pull == p.Cause.ObjectivePull && brain.Goals[OfficeBrain.RageIndex].Pull == 0.0, "the pulls are not the cause's and zero");
+        }),
+
+        ("office brain data: clutch and thrash: priorities thrash > clutch > calm > rage > composure, the two gates, both involuntary throughout", () =>
+        {
+            var p = new StressParameters();
+            var g = OfficeBrain.Build(p, OfficePoses.Identity).Goals;
+            Check(OfficeBrain.GoalAt(OfficeBrain.ClutchIndex) == OfficeGoal.Clutch && OfficeBrain.GoalAt(OfficeBrain.ThrashIndex) == OfficeGoal.Thrash, "GoalAt does not name the two goals");
+            Check(g[OfficeBrain.ClutchIndex].Id == OfficeBrain.ClutchId && g[OfficeBrain.ThrashIndex].Id == OfficeBrain.ThrashId, "the ids");
+            Check(g[OfficeBrain.ThrashIndex].Priority > g[OfficeBrain.ClutchIndex].Priority && g[OfficeBrain.ClutchIndex].Priority > g[OfficeBrain.CalmIndex].Priority
+                && g[OfficeBrain.CalmIndex].Priority > g[OfficeBrain.RageIndex].Priority && g[OfficeBrain.RageIndex].Priority > g[OfficeBrain.ComposureIndex].Priority, "the priority order");
+            var clutch = g[OfficeBrain.ClutchIndex].When;
+            Check(clutch.Count == 1 && clutch[0].Quantity == Lodur.DriveQuantity.AirHunger && clutch[0].Op == Lodur.ConditionOp.AtLeast && clutch[0].Threshold == p.ClutchAirHunger, "the clutch gate is air hunger at ClutchAirHunger");
+            var thrash = g[OfficeBrain.ThrashIndex].When;
+            Check(thrash.Count == 2 && thrash.Any(c => c.Quantity == Lodur.DriveQuantity.WillBroken && c.Op == Lodur.ConditionOp.AtLeast && c.Threshold == 1.0)
+                && thrash.Any(c => c.Quantity == Lodur.DriveQuantity.AirHunger && c.Op == Lodur.ConditionOp.AtLeast && c.Threshold == p.ClutchAirHunger), "the thrash gate is WillBroken and air hunger");
+            Check(double.IsPositiveInfinity(g[OfficeBrain.ClutchIndex].InvoluntarySeconds) && double.IsPositiveInfinity(g[OfficeBrain.ThrashIndex].InvoluntarySeconds), "a struggle goal is voluntary at some point");
+            Check(g.Where(x => x.Id != OfficeBrain.ClutchId && x.Id != OfficeBrain.ThrashId).SelectMany(x => x.When).All(c => c.Quantity == Lodur.DriveQuantity.Breaks), "rage and calm keep their Breaks gates");
         }),
 
         ("office body: the rage is visible: both hands move at least 3x faster, and over 1 m/s (a limp rage gives 0.6), in the 2 s after the switch than in the 2 s before, the pelvis stays within 1 cm, and two runs agree", () =>
@@ -1450,21 +1468,54 @@ public static class Program
             Console.WriteLine($"  airway: liquid at the opening from tick {atAirway}, in the airway from tick {liquid}, peak {maxLiquid * 1e6:F2} mL, occlusion {maxOcclusion:F3}");
         }),
 
-        ("the front of the throat drowns him: HitAt(Head, the front of the throat), Wound(hit, Knife) at tick 0 puts more than 20 mL in the airway within 5 s, fills it (occlusion 0.99) within 12.9 s, and the death is Consciousness, not BloodLoss", () =>
+        ("throat clutch then thrash (the front of the throat drowns him): HitAt(Head, the front of the throat), Wound(hit, Knife) at tick 0 puts more than 20 mL in the airway within 5 s, fills it (occlusion 0.99) within 12.9 s, the goals go Clutch then Thrash, both palms stay within 0.287 m of the throat from 3 s after the cut to the thrash, the thrash starts within 0.2 s of the will's first break, both hands then move at 1.437 m/s or more, and the death is Consciousness", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             using var s = new OfficeBodySession(p, 1);
             var head = SeatedPuppet.Plan.PartIndex("Head", Lodur.Side.Center);
             Check(s.Wound(HitAt(s, head, (0f, -0.0778f, 0.0778f)), WoundTool.Knife), "the knife was refused at the throat");
             double liquidAt5 = 0.0, maxOcclusion = 0.0, occludedAt = -1.0;
+            var goals = new List<OfficeGoal>();
+            var handL = new List<BodyPoint>();
+            var handR = new List<BodyPoint>();
+            var palmFar = new List<double>(); // per tick, the farther palm from the throat point
             while (!s.Dead && s.TickIndex < 250 * Hz)
             {
                 s.Step();
                 if (s.TickIndex <= 5 * Hz) liquidAt5 = Math.Max(liquidAt5, s.AirwayLiquid);
                 maxOcclusion = Math.Max(maxOcclusion, s.Occlusion);
                 if (occludedAt < 0.0 && s.Occlusion >= 0.99) occludedAt = s.TickIndex / (double)Hz;
+                goals.Add(s.Goal);
+                handL.Add(s.HandL);
+                handR.Add(s.HandR);
+                var t = HitAtPoint(s, head, (0f, -0.0778f, 0.0778f)).Point;
+                double Dist(BodyPoint h) => Math.Sqrt(Math.Pow(h.X - t.X, 2) + Math.Pow(h.Y - t.Y, 2) + Math.Pow(h.Z - t.Z, 2));
+                palmFar.Add(Math.Max(Dist(s.HandL), Dist(s.HandR)));
             }
-            Console.WriteLine($"  throat: {liquidAt5 * 1e6:F1} mL in the airway by 5 s, full at {occludedAt:F1} s, died at {s.TickIndex / (double)Hz:F1} s");
+            var r = s.Result();
+            var changes = r.Timeline.Where(e => e.Kind == StressEntryKind.GoalChanged).ToList();
+            var broke = r.Timeline.First(e => e.Kind == StressEntryKind.WillBroke);
+            Check(changes.Count == 2 && changes[0].Goal == OfficeGoal.Clutch && changes[1].Goal == OfficeGoal.Thrash, $"the goals went {string.Join(", ", changes.Select(e => e.Goal))}");
+            int thrash = (int)Math.Round(changes[1].TimeMs * Hz / 1000.0), clutchFrom = 3 * Hz;
+            double gap = (changes[1].TimeMs - broke.TimeMs) / 1000.0;
+            Check(gap >= 0.0 && gap <= 0.2, $"the thrash came {gap:F3} s after the will broke");
+            for (int i = clutchFrom; i < thrash - 1; i++) Check(goals[i] == OfficeGoal.Clutch, $"tick {i + 1}: goal {goals[i]}, not Clutch, between the clutch and the thrash");
+            double palm = 0.0;
+            for (int i = clutchFrom; i < thrash - 1; i++) palm = Math.Max(palm, palmFar[i]);
+            // Bound by deterministic-bound-margin: shipped 0.1075 m, least mutant 0.7663 m (the composed pose in place of the clutch: arms down), separation 7.1, bound sqrt(0.1075 x 0.7663) = 0.287.
+            Check(palm <= 0.287, $"a palm was {palm:F4} m from the throat while he clutched");
+            double Rms(IReadOnlyList<BodyPoint> h, int from, int to)
+            {
+                double sum = 0.0;
+                for (int i = from + 1; i < to; i++) sum += (Math.Pow(h[i].X - h[i - 1].X, 2) + Math.Pow(h[i].Y - h[i - 1].Y, 2) + Math.Pow(h[i].Z - h[i - 1].Z, 2)) * Hz * Hz;
+                return Math.Sqrt(sum / (to - from - 1));
+            }
+            int from = thrash + Hz / 2, to = thrash + 5 * Hz / 2;
+            Check(handL.Count > to, $"he died at tick {handL.Count}, inside the thrash window");
+            double rms = Math.Sqrt(0.5 * (Math.Pow(Rms(handL, from, to), 2) + Math.Pow(Rms(handR, from, to), 2)));
+            // Bound by deterministic-bound-margin: both hands' RMS speed over [thrash+0.5, thrash+2.5] s: shipped 2.286 m/s, least mutant 0.903 (the thrash goal's InvoluntarySeconds 0: a will-weighted struggle goes limp), separation 2.53, bound sqrt(2.286 x 0.903) = 1.437.
+            Check(rms >= 1.437, $"the hands moved at {rms:F3} m/s in the thrash");
+            Console.WriteLine($"  throat: {liquidAt5 * 1e6:F1} mL in the airway by 5 s, full at {occludedAt:F1} s, clutch to thrash {changes[0].TimeMs / 1000.0:F2} s to {changes[1].TimeMs / 1000.0:F2} s ({gap:F3} s after the will broke), palms within {palm:F4} m, thrash hands {rms:F3} m/s, died at {s.TickIndex / (double)Hz:F1} s");
             Check(liquidAt5 > 20e-6, $"the airway held {liquidAt5 * 1e6:F2} mL by 5 s");
             // Bounds are Lodur's (VesselTests, the same physiology and the same gain: shipped 1.29 s here and there): full within 12.9 s = sqrt(1.29 x 129.95), the cough-2.0 mutant at 129.95 s; separation 10.
             Check(occludedAt >= 0.0 && occludedAt <= 12.9 && maxOcclusion >= 0.99, $"the airway filled at {occludedAt:F2} s, occlusion peaked at {maxOcclusion:F3}");

@@ -46,7 +46,9 @@ public static class OfficeBody
 
     /// <summary>
     /// The office puppet's poses [P]. Composed: every muscle at the creation pose, arms down. Rage: each arm winds up (the
-    /// elbow folded, the fist at the chest) and strikes (the shoulder forward, the elbow straight), left then right.
+    /// elbow folded, the fist at the chest) and strikes (the shoulder forward, the elbow straight), left then right. Clutch: both hands at the throat, the shoulders swung across and forward, the elbows folded.
+    /// Thrash: four keys, a flung and kicking one, its mirror, and two between where both arms drop back and the knees come up.
+    /// The clutch and the thrash are placeholders [P] Deru tunes on the capture.
     /// </summary>
     public static OfficePoses Poses { get; } = BuildPoses();
 
@@ -97,7 +99,50 @@ public static class OfficeBody
         foreach (var k in keys) { Arm(plan, k, left: true, strike: false); Arm(plan, k, left: false, strike: false); }
         Arm(plan, keys[1], left: true, strike: true);
         Arm(plan, keys[3], left: false, strike: true);
-        return new OfficePoses(composed, Pose(), keys);
+        return new OfficePoses(composed, Pose(), keys, Clutch(plan, Pose()), Thrash(plan, Pose));
+    }
+
+    // Both hands at the throat: the shoulder swings across (z) and forward (x), the elbow folds. Left is +sx, right -sx.
+    private static Quat[] Clutch(BodyPlan plan, Quat[] pose)
+    {
+        foreach (var (side, sx) in new[] { (Side.Left, 1f), (Side.Right, -1f) })
+        {
+            pose[plan.JointIndex("Shoulder", side)] = Quat.FromAxisAngle(0f, 0f, 1f, -sx * 1.0f) * Quat.FromAxisAngle(1f, 0f, 0f, -0.8f);
+            pose[plan.JointIndex("Elbow", side)] = Quat.FromAxisAngle(0f, 0f, 1f, -2.4f);
+        }
+        return pose;
+    }
+
+    // Keys 0 and 2 mirror each other (one arm flung up and out, the other forward, the trunk twisted, the head back, one leg kicking);
+    // keys 1 and 3 throw both arms down and back, the head forward, the knees up.
+    private static Quat[][] Thrash(BodyPlan plan, Func<Quat[]> fresh)
+    {
+        var k = new Quat[4][];
+        for (int i = 0; i < 4; i++) k[i] = fresh();
+        int Joint(string name, Side side) => plan.JointIndex(name, side);
+        Quat Q(float x, float y, float z, float a) => Quat.FromAxisAngle(x, y, z, a);
+        foreach (var (key, flip, up, fwd) in new[] { (0, 1f, Side.Left, Side.Right), (2, -1f, Side.Right, Side.Left) })
+        {
+            k[key][Joint("Shoulder", up)] = Q(0f, 0f, 1f, 1.3f * flip);
+            k[key][Joint("Elbow", up)] = Q(1f, 0f, 0f, -0.4f);
+            k[key][Joint("Shoulder", fwd)] = Q(1f, 0f, 0f, -1.2f);
+            k[key][Joint("Elbow", fwd)] = Q(1f, 0f, 0f, -1.6f);
+            k[key][Joint("Spine", Side.Center)] = Q(0f, 1f, 0f, 0.35f * flip);
+            k[key][Joint("Neck", Side.Center)] = Q(1f, 0f, 0f, -0.5f);
+            k[key][Joint("Hip", up)] = Q(1f, 0f, 0f, -0.5f);
+            k[key][Joint("Knee", up)] = Q(1f, 0f, 0f, 0.2f);
+        }
+        foreach (var key in new[] { 1, 3 })
+        {
+            foreach (var side in new[] { Side.Left, Side.Right })
+            {
+                k[key][Joint("Shoulder", side)] = Q(1f, 0f, 0f, 0.6f);
+                k[key][Joint("Elbow", side)] = Q(1f, 0f, 0f, -0.3f);
+                k[key][Joint("Knee", side)] = Q(1f, 0f, 0f, 0.6f);
+            }
+            k[key][Joint("Neck", Side.Center)] = Q(1f, 0f, 0f, 0.3f);
+        }
+        return k;
     }
 
     private static void Arm(BodyPlan plan, Quat[] pose, bool left, bool strike)
