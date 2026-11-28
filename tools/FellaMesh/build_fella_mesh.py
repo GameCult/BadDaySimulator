@@ -8,7 +8,7 @@ Pipeline (each step reads only the pinned inputs in tools/FellaMesh/input and th
   3. per plan part, an affine map from the MakeHuman bones it owns to the plan's creation pose: the part's
      joint-to-joint segment is rotated and stretched along its axis onto the plan's segment (girth kept); every vertex
      is linearly blended over the parts by MakeHuman's own weights (the LBS pose into the creation pose);
-  4. quadric edge-collapse decimation of the whole body, head and hands kept denser;
+  4. Blender's Decimate modifier (Collapse, symmetry on X, triangulate) on the whole body, run headless with private user folders;
   5. every face goes to the part with the most weight; a vertex on faces of two or more parts is a joint-ring vertex,
      emitted once per part with weight 0.5/0.5 on its two heaviest parts and one shared normal;
   6. one glTF primitive per part, JOINTS_0/WEIGHTS_0, one skin whose joints are the plan's parts, inverse binds from
@@ -19,7 +19,8 @@ Usage: build_fella_mesh.py [--out client/fella/fella_skin.glb] [--check] [--plan
 """
 import argparse
 import hashlib
-import heapq
+import os
+import tempfile
 import json
 import struct
 import subprocess
@@ -38,6 +39,9 @@ PINS = {
     "default.mhskel": (117790, "99f179bce0aa850b45d4191a1d0d234c5851f881c057439470ded3bddf729a24"),
     "default_weights.mhw": (897521, "0f3641d651ae3d00ad6b4ccee43142edb109d3bd909d27d9e4139ef1beed8625"),
 }
+# The Blender the glb is built with: its Decimate result is only reproducible on this version (--check refuses any other).
+BLENDER_VERSION = "5.3.0"
+BLENDER_DEFAULT = r"C:\Program Files (x86)\Steam\steamapps\common\Blender\blender.exe"  # or the BLENDER environment variable
 MAKEHUMAN_COMMIT = "a8bc2d54ff0ac92e78ff71431b1023eda42bf482"
 
 # MakeHuman's neutral macro values (its defaults: gender 0.5 is the androgynous base, lodur:ruling:default-fella-androgynous-base).
@@ -45,14 +49,9 @@ MAKEHUMAN_COMMIT = "a8bc2d54ff0ac92e78ff71431b1023eda42bf482"
 # until the follow-up fella-body-variety pins the macrodetails targets and ports their weighting.
 MACROS = {"gender": 0.5, "age": 0.5, "muscle": 0.5, "weight": 0.5, "height": 0.5, "proportions": 0.5}
 
-DENSE_PARTS = ("Head", "Palm", "Thumb", "Fingers")  # decimation keeps these denser
-DENSE_COST = 4.0  # their collapses cost this many times more
-TARGET_VERTICES = 450  # the whole body after decimation, before joint rings are copied per part
-NECK_BAND = 0.08  # metres below the plan's neck joint: the neck and the head above it are kept denser too
+TARGET_VERTICES = 450  # about the whole body after decimation, before joint rings are copied per part
 RING_PASSES = 8  # rounds of moving faces off a third part at a vertex; a vertex where three still meet is weighted to its two heaviest
 RING = 0.5  # a joint-ring vertex's weight on each of its two parts
-EDGE_WEIGHT = 3.0  # edge length to the fourth power, times this, is added to a collapse's quadric error: it keeps the mesh's edges even
-FLIP = 0.2  # a collapse may not turn a neighbouring face more than this cosine from its old normal
 
 SIDE_SUFFIX = {"Left": ".L", "Right": ".R"}
 
@@ -244,157 +243,26 @@ def fit(plan, mh_v, mh_faces, skeleton, mh_weights):
 
 # ---------------------------------------------------------------- decimation
 
-def decimate(pos, tris, w, uv, target, dense):
-    """Garland-Heckbert quadric edge collapse. A collapse puts the surviving vertex at one end or the midpoint (the
-    cheapest by quadric error) and keeps that vertex's attributes. Boundary edges carry a penalty plane. Deterministic."""
-    n = len(pos)
-    pos = pos.copy()
-    tri = [list(t) for t in tris]
-    alive_f = [True] * len(tri)
-    faces_of = [set() for _ in range(n)]
-    for f, t in enumerate(tri):
-        for v in t:
-            faces_of[v].add(f)
-    quad = np.zeros((n, 4, 4))
-
-    def plane(f):
-        a, b, c = (pos[v] for v in tri[f])
-        nrm = np.cross(b - a, c - a)
-        area2 = np.linalg.norm(nrm)
-        if area2 < 1e-18:
-            return None, 0.0
-        nrm = nrm / area2
-        return np.append(nrm, -np.dot(nrm, a)), area2 / 2.0
-
-    edge_faces = {}
-    for f, t in enumerate(tri):
-        pl, area = plane(f)
-        for k in range(3):
-            e = tuple(sorted((t[k], t[(k + 1) % 3])))
-            edge_faces.setdefault(e, []).append(f)
-        if pl is not None:
-            q = area * np.outer(pl, pl)
-            for v in t:
-                quad[v] += q
-    for e, fs in edge_faces.items():
-        if len(fs) == 1:  # boundary: a plane through the edge, perpendicular to its face
-            pl, area = plane(fs[0])
-            if pl is None:
-                continue
-            a, b = pos[e[0]], pos[e[1]]
-            nrm = np.cross(b - a, pl[:3])
-            length = np.linalg.norm(nrm)
-            if length < 1e-18:
-                continue
-            nrm = nrm / length
-            pb = np.append(nrm, -np.dot(nrm, a))
-            q = 100.0 * (np.linalg.norm(b - a) ** 2) * np.outer(pb, pb)
-            quad[e[0]] += q
-            quad[e[1]] += q
-
-    version = [0] * n
-    alive = [True] * n
-    count = [n]
-    heap, seq = [], [0]
-
-    def neighbours(v):
-        out = set()
-        for f in faces_of[v]:
-            out.update(tri[f])
-        out.discard(v)
-        return out
-
-    def error(q, p):
-        h = np.append(p, 1.0)
-        return float(h @ q @ h)
-
-    def push(a, b):
-        q = quad[a] + quad[b]
-        candidates = [(a, pos[a]), (b, pos[b]), (a, (pos[a] + pos[b]) / 2.0)]
-        m = q[:3, :3]
-        if abs(np.linalg.det(m)) > 1e-24:  # the point that minimises the summed squared plane distances, if it is well defined and near
-            opt = np.linalg.solve(m, -q[:3, 3])
-            reach = np.linalg.norm(pos[a] - pos[b])
-            if np.linalg.norm(opt - (pos[a] + pos[b]) / 2.0) < reach:
-                nearer = a if np.linalg.norm(opt - pos[a]) <= np.linalg.norm(opt - pos[b]) else b
-                candidates.append((nearer, opt))
-        best = None
-        for keep, p in candidates:
-            c = error(q, p)
-            if best is None or c < best[0] - 1e-18:
-                best = (c, keep, p)
-        cost = (best[0] + EDGE_WEIGHT * float(np.sum((pos[a] - pos[b]) ** 2)) ** 2) * (DENSE_COST if dense[a] and dense[b] else 1.0)
-        seq[0] += 1
-        heapq.heappush(heap, (cost, seq[0], a, b, version[a], version[b], best[1], tuple(best[2])))
-
-    def push_all():
-        heap.clear()
-        seen = set()
-        for f, t in enumerate(tri):
-            if not alive_f[f]:
-                continue
-            for k in range(3):
-                e = tuple(sorted((t[k], t[(k + 1) % 3])))
-                if e not in seen:
-                    seen.add(e)
-                    push(*e)
-
-    push_all()
-
-    def valid(a, b, keep, p):
-        shared = faces_of[a] & faces_of[b]
-        if len(neighbours(a) & neighbours(b)) != len(shared):
-            return False
-        for f in faces_of[a] | faces_of[b]:
-            if f in shared:
-                continue
-            t = tri[f]
-            before = np.cross(pos[t[1]] - pos[t[0]], pos[t[2]] - pos[t[0]])
-            moved = [(p if v in (a, b) else pos[v]) for v in t]
-            after = np.cross(moved[1] - moved[0], moved[2] - moved[0])
-            nb, na = np.linalg.norm(before), np.linalg.norm(after)
-            if na < 1e-12 * max(nb, 1e-12) or np.dot(before, after) < FLIP * nb * na:
-                return False
-        return True
-
-    collapsed = True
-    while count[0] > target and (heap or collapsed):
-        if not heap:  # every edge left was refused: neighbours have moved since, so ask them all again
-            collapsed = False
-            push_all()
-            continue
-        cost, _, a, b, va, vb, keep, p = heapq.heappop(heap)
-        if not (alive[a] and alive[b]) or version[a] != va or version[b] != vb:
-            continue
-        p = np.array(p)
-        if not valid(a, b, keep, p):
-            continue
-        collapsed = True
-        gone = b if keep == a else a
-        stay = a if keep == a else b
-        pos[stay] = p
-        quad[stay] = quad[a] + quad[b]
-        for f in list(faces_of[gone]):
-            if stay in tri[f]:
-                alive_f[f] = False
-                for v in tri[f]:
-                    faces_of[v].discard(f)
-            else:
-                tri[f] = [stay if v == gone else v for v in tri[f]]
-                faces_of[stay].add(f)
-        faces_of[gone].clear()
-        alive[gone] = False
-        count[0] -= 1
-        version[stay] += 1
-        for nb in sorted(neighbours(stay)):
-            version[nb] += 1
-        for nb in sorted(neighbours(stay)):
-            push(stay, nb) if stay < nb else push(nb, stay)
-
-    keep_v = [v for v in range(n) if alive[v] and faces_of[v]]
-    new = {v: i for i, v in enumerate(keep_v)}
-    out_tris = np.array([[new[v] for v in tri[f]] for f in range(len(tri)) if alive_f[f]])
-    return pos[keep_v], out_tris, w[keep_v], uv[keep_v]
+def decimate(pos, tris, w, uv, target):
+    """Blender's Decimate modifier (Collapse, symmetry on X, triangulate) reduces the posed body to about `target` vertices;
+    each surviving vertex takes the part weights and UV of the nearest vertex of the full mesh. Returns the Blender version used."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        np.save(tmp / "pos.npy", pos)
+        np.save(tmp / "tris.npy", tris)
+        env = dict(os.environ)
+        for name in ("CONFIG", "EXTENSIONS", "SCRIPTS"):  # Blender never reads or writes the operator's user folders
+            (tmp / name).mkdir()
+            env[f"BLENDER_USER_{name}"] = str(tmp / name)
+        run = subprocess.run([os.environ.get("BLENDER", BLENDER_DEFAULT), "--background", "--factory-startup", "--python", str(HERE / "decimate_blender.py"), "--", str(tmp), str(target)],
+                             env=env, capture_output=True, text=True)
+        line = next((l for l in run.stdout.splitlines() if l.startswith("BLENDER ")), None)
+        if run.returncode or line is None:
+            fail("Blender did not decimate:\n" + run.stdout[-800:] + run.stderr[-800:])
+        version = line.split()[1]
+        out_pos, out_tris = np.load(tmp / "out_pos.npy"), np.load(tmp / "out_tris.npy")
+    nearest = np.array([int(np.argmin(((pos - p) ** 2).sum(axis=1))) for p in out_pos])
+    return out_pos, out_tris, w[nearest], uv[nearest], version
 
 
 # ---------------------------------------------------------------- partition
@@ -568,13 +436,11 @@ def build(args):
         for v, c in zip(t, tu):
             if not uv[v].any():
                 uv[v] = mh_vt[c]
-    neck_y = plan.anchor("Neck", "Center")[1]
-    dense = [plan.parts[int(np.argmax(w[v]))]["label"] in DENSE_PARTS or pos[v][1] > neck_y - NECK_BAND for v in range(len(pos))]
-    pos, tris, w, uv = decimate(pos, tris, w, uv, TARGET_VERTICES, dense)
+    pos, tris, w, uv, blender = decimate(pos, tris, w, uv, TARGET_VERTICES)
     per_part, joints, weights, normals = partition(pos, tris, w)
     provenance = {"source": "makehumancommunity/makehuman", "commit": MAKEHUMAN_COMMIT, "license": "CC0 1.0",
-                  "inputs": {k: v[1] for k, v in PINS.items()}, "macros": MACROS}
-    return write_glb(plan, per_part, joints, weights, normals, pos, uv, provenance), len(pos)
+                  "inputs": {k: v[1] for k, v in PINS.items()}, "macros": MACROS, "blender": blender}
+    return write_glb(plan, per_part, joints, weights, normals, pos, uv, provenance), len(pos), blender
 
 
 def main():
@@ -585,13 +451,17 @@ def main():
     for name, value in MACROS.items():
         ap.add_argument(f"--{name}", type=float, default=value)
     args = ap.parse_args()
-    data, vertices = build(args)
+    data, vertices, blender = build(args)
     out = Path(args.out)
     if args.check:
+        if blender != BLENDER_VERSION:
+            fail(f"--check is only defined on Blender {BLENDER_VERSION}, the version the checked-in glb was built with; this run used Blender {blender}, so the bytes are not comparable (set BLENDER to a {BLENDER_VERSION} executable)")
         if not out.exists() or out.read_bytes() != data:
             fail(f"{out} differs from a rebuild")
         print(f"fella_skin.glb is the byte-identical rebuild ({len(data)} bytes, {vertices} decimated vertices)")
         return
+    if blender != BLENDER_VERSION:
+        print(f"warning: built with Blender {blender}, not the pinned {BLENDER_VERSION}: update BLENDER_VERSION and the input README, or --check will refuse", file=sys.stderr)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(data)
     print(f"wrote {out} ({len(data)} bytes, {vertices} decimated vertices)")

@@ -78,9 +78,9 @@ Needs the .NET 8+ SDK, cmake and a C compiler (MinGW gcc on Windows), the siblin
 (BDS's graph references no CultLib project, so Ymir's own revision check never runs here); the client was last verified against Lodur 2359142 (the gravity subtree gate) and
 Ymir 1d27114 (its `extern/box3d` submodule initialised).
 
-Fella's skin is generated: `py -3 tools/FellaMesh/build_fella_mesh.py` (Python 3 and numpy; it runs `baddaysim plan` for the skeleton, so the siblings above must build) writes
+Fella's skin is generated: `py -3 tools/FellaMesh/build_fella_mesh.py` (Python 3, numpy and Blender 5.3.0 headless for the decimation, pinned in `tools/FellaMesh/input/README.md`; it runs `baddaysim plan` for the skeleton, so the siblings above must build) writes
 `client/fella/fella_skin.glb` from the pinned MakeHuman files in `tools/FellaMesh/input` (see its README for source, commit, licence and SHA-256 sums), and `--check`
-rebuilds and compares bytes. The file is never edited by hand. The macro arguments (`--gender`, `--age`, `--muscle`, `--weight`, `--height`, `--proportions`) default to MakeHuman's neutral
+rebuilds and compares bytes (only on the pinned Blender; any other version is refused). The file is never edited by hand. The macro arguments (`--gender`, `--age`, `--muscle`, `--weight`, `--height`, `--proportions`) default to MakeHuman's neutral
 0.5 (the androgynous base, lodur:ruling:default-fella-androgynous-base); other values are refused until the macrodetails targets are pinned (lodur:follow_up:fella-body-variety).
 
 ```
@@ -103,11 +103,11 @@ blocks follow ps1.js's 4x4 ordered dither, that a wall at 9 m is fogged to the d
 the blend of its corners' light (per vertex, not per pixel), that a minified checker that carries mipmaps still draws only black and white (nearest, no
 mips), that a probe box's drawn blocks are those of its hull with the corners snapped to a coarse grid (the unsnapped hull differs in 8 blocks), that the
 texel runs of a checker triangle seen at 60 degrees keep equal widths along a scanline (affine), that the chamber at full glow lights the figure by at least
-1.2 levels over dark, that each dynamic body's lane origin projects within a block of a figure pixel, and that the figure has a neck (its width a centimetre below the neck joint over its width at the head, seen from the front). The check holds at 1280x720 only: at any other
+1.2 levels over dark, that each dynamic body's lane origin projects within a block of a figure pixel, and that the figure has a neck (its width a centimetre below the neck joint over its width at the head, seen from the front), and that the rest-pose mesh is left-right symmetric (the largest mirror distance of its vertices). The check holds at 1280x720 only: at any other
 window size it fails "window" before reading a frame (the grid is round(H / 240) px, 216 lines at 1080, and `Camera3D.UnprojectPosition` answers in the
 stretch base's coordinates). Bounds sit at the midpoint of the shipped worst and the least claimed mutant (`lodur:ruling:deterministic-bound-margin`),
 each stated in its comment; `client/tests/render-mutants.sh` applies one set of edits per claim (post off, 12-bit post, dither off, per-pixel blocks, 360 and
-120 lines, snap off, perspective-correct UVs, per-pixel light, fog off, mipmapped and linear textures, glow unwritten, carriers unposed, the primitive torso drawn again beside the skin, the skin drawn unposed) and wants that
+120 lines, snap off, perspective-correct UVs, per-pixel light, fog off, mipmapped and linear textures, glow unwritten, carriers unposed, the primitive torso drawn again beside the skin, the skin drawn unposed, the left half of the rest mesh stretched) and wants that
 claim's line to fail; with `UNCLAIMED=1` it runs the edits no line separates (per-pixel fog, so far), whose readings it records. It needs a display.
 
 
