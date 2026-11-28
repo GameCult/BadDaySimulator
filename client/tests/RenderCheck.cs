@@ -21,8 +21,8 @@ public partial class RenderCheck : Node
     private const int Width = 1280, Height = 720;
     private const double WatchdogSeconds = 120;
     // Bounds (shipped worst, least claimed mutant, separation) are in each check's comment.
-    private const int OddLevelFloor = 1245, FigureMisses = 3, DitherBlocks = 160;
-    private const double FogLevels = 6.6, LightLevels = 11, MipPercent = 6.5;
+    private const int OddLevelFloor = 1245, FigureMisses = 1, DitherBlocks = 160;
+    private const double NeckBound = 1.0, FogLevels = 6.6, LightLevels = 11, MipPercent = 6.5;
 
     private readonly List<string> _failures = new();
     private Main _main = null!;
@@ -88,6 +88,7 @@ public partial class RenderCheck : Node
         _main.Chamber.Volume.Visible = false; // the translucent box tints the hand bodies inside it
         CheckFigureWhereLanesAre(await Capture("play-clear"));
         _main.Chamber.Volume.Visible = true;
+        await CheckNeck();
 
         var home = _camera.Transform;
         _camera.Distance = 0.9f;
@@ -162,8 +163,8 @@ public partial class RenderCheck : Node
     /// <summary>
     /// Each dynamic body's lane origin, projected through the camera, lands within one block (3 px) of a figure pixel (skin is red over blue; floor,
     /// background and chamber are blue over red). A single pixel failed under unrelated edits (dither, snap, glow, post off each moved one origin onto a
-    /// dithered or edge pixel), so the neighbourhood is the block. Bound 3 of 19 = sqrt(0.5 x 19): shipped 0 (counted as half a body, lodur:ruling:deterministic-bound-zero-reading), carriers left
-    /// unposed 19, separation 38; post off, 12-bit, dither off, snap off, glow unset, fog off, per-pixel light, mipmapped and linear textures, 360 and 120
+    /// dithered or edge pixel), so the neighbourhood is the block. Bound 1 of 19 = sqrt(0.5 x 4) rounded down, a count: shipped 0 (counted as half a body, lodur:ruling:deterministic-bound-zero-reading), the least claimed mutant skin-unposed (the
+    /// skin drawn at its rest pose) 4, carriers left unposed 19, separation 8; post off, 12-bit, dither off, snap off, glow unset, fog off, per-pixel light, mipmapped and linear textures, 360 and 120
     /// lines, perspective UVs and per-block sampling each read 0, so no collateral edit turns it.
     /// </summary>
     private void CheckFigureWhereLanesAre(Frame play)
@@ -189,6 +190,45 @@ public partial class RenderCheck : Node
         }
         Report("figure at lanes", missed, FigureMisses);
         Check(checkedBodies > 5 && missed <= FigureMisses, "figure at lanes", $"{missed} of {checkedBodies} dynamic bodies' origins are not within a block of a figure pixel");
+    }
+
+    /// <summary>
+    /// A real neck is drawn. The chamber is hidden and the camera put straight in front of the head, 1.2 m away; the reading is the figure pixels on the row
+    /// 1 cm below the projected neck joint (the torso's pose times the joint's local anchor) over the figure pixels on the row through the projected head origin:
+    /// how wide the figure is at the neck against how wide at the head. Bound 1.0 = sqrt(0.58 x 1.72): shipped 0.58 (63 px over 108), the least claimed mutant
+    /// fella-primitives (the primitive box torso, 0.30 m wide, drawn again beside the skin) 1.72 (186 px over 108), separation 3.0; skin-unposed reads 0.54.
+    /// </summary>
+    private async Task CheckNeck()
+    {
+        var plan = SeatedPuppet.Plan;
+        int head = plan.PartIndex("Head"), torso = plan.PartIndex("Torso");
+        var headPose = _main.Bodies.PoseOf(SeatedPuppet.FirstStableId + (ulong)head)!.Value;
+        var torsoPose = _main.Bodies.PoseOf(SeatedPuppet.FirstStableId + (ulong)torso)!.Value;
+        var torsoDef = plan.Parts[torso];
+        var torsoCreation = new Transform3D(new Basis(new Quaternion(torsoDef.Rotation.X, torsoDef.Rotation.Y, torsoDef.Rotation.Z, torsoDef.Rotation.W)), new Vector3(torsoDef.Position.X, torsoDef.Position.Y, torsoDef.Position.Z));
+        var anchor = plan.Joints[plan.JointIndex("Neck")].Anchor;
+        var neck = torsoPose * (torsoCreation.AffineInverse() * new Vector3(anchor.X, anchor.Y, anchor.Z));
+
+        _main.Chamber.Visible = false;
+        var home = _camera.Transform;
+        _camera.GlobalTransform = new Transform3D(Basis.Identity, headPose.Origin + new Vector3(0, 0, 1.2f));
+        await Frames(3);
+        var frame = await Capture("neck");
+        var camera = GetViewport().GetCamera3D();
+        int neckRow = (int)camera.UnprojectPosition(neck + new Vector3(0, -0.01f, 0)).Y;
+        int headRow = (int)camera.UnprojectPosition(headPose.Origin).Y;
+        int FigureOn(int y)
+        {
+            int n = 0;
+            for (int x = 0; x < Width; x++) if ((frame.Rgb(x, y) >> 16 & 0xff) >= (frame.Rgb(x, y) & 0xff) + 16) n++;
+            return n;
+        }
+        int atNeck = FigureOn(neckRow), atHead = FigureOn(headRow);
+        double ratio = atHead > 0 ? atNeck / (double)atHead : double.PositiveInfinity;
+        Report($"neck: figure width at the neck over at the head ({atNeck} px over {atHead} px)", ratio, NeckBound);
+        Check(atHead > 0 && ratio <= NeckBound, "neck", $"the figure is {atNeck} px wide a centimetre below the neck joint and {atHead} px wide at the head: the ratio {ratio:0.##} is over {NeckBound}");
+        _camera.Transform = home;
+        _main.Chamber.Visible = true;
     }
 
     /// <summary>

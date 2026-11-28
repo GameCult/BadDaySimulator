@@ -18,6 +18,9 @@ public partial class Smoke : Node
 {
     private const ulong Seed = 1;
     private const double WatchdogSeconds = 150;
+    // The joint rings' bound, in micrometres (lodur:ruling:deterministic-bound-margin and deterministic-bound-zero-reading): shipped worst 0 (counted as half a micrometre),
+    // the least claimed mutant (split rings: each copy weighted to its own part only) 75768 at tick 240; sqrt(0.5 x 75768) = 195, separation 1.5e5.
+    private const double RingGapMicrometres = 195;
 
     private readonly List<string> _failures = new();
     private Main _main = null!;
@@ -94,6 +97,7 @@ public partial class Smoke : Node
         await UntilTick(240);
         CheckHand(reference.Hand[239], "tick 240");
         CheckPoses("tick 240");
+        CheckSkin("tick 240");
         await UntilTick(1500);
         CheckEvents(reference, "seed 1, default intensity");
         CheckHand(reference.Hand[^1], "tick 1500");
@@ -314,13 +318,28 @@ public partial class Smoke : Node
         Check(environment.Sky is null && environment.TonemapMode == Godot.Environment.ToneMapper.Linear && !environment.GlowEnabled, "the environment is not a linear colour environment with no sky and no glow");
     }
 
-    /// <summary>Every body with a shape is drawn by one mesh, made once: the anchor has none.</summary>
+    /// <summary>Every body with a shape that Fella's skin does not draw has one primitive mesh, made once (the anchor has none); the skin is one surface, made once.</summary>
     private void CheckMeshBuilds(string when)
     {
         var view = Session.View;
         int shaped = 0;
-        for (int i = 0; i < view.Count; i++) if ((Box3DSoaKind)view.Kind[i] != Box3DSoaKind.Anchor) shaped++;
-        Check(_main.Bodies.MeshBuilds == shaped, $"{when}: {_main.Bodies.MeshBuilds} body meshes were made for {shaped} bodies with a shape; a Reset makes none");
+        for (int i = 0; i < view.Count; i++) if ((Box3DSoaKind)view.Kind[i] != Box3DSoaKind.Anchor && SeatedPuppet.PartOf(view.StableId[i]) is null) shaped++;
+        Check(_main.Bodies.MeshBuilds == shaped, $"{when}: {_main.Bodies.MeshBuilds} body meshes were made for {shaped} bodies with a shape the skin does not draw; a Reset makes none");
+        Check(_main.Bodies.Skin.MeshBuilds == 1, $"{when}: the skin was built {_main.Bodies.Skin.MeshBuilds} times, not once");
+    }
+
+    /// <summary>
+    /// Fella's skin: every part of the plan owns vertices, and the copies of every joint-ring vertex are drawn together while the parts are joined.
+    /// The ring-gap bound is in micrometres (lodur:ruling:deterministic-bound-zero-reading: a shipped zero counts as half a micrometre).
+    /// </summary>
+    private void CheckSkin(string when)
+    {
+        var skin = _main.Bodies.Skin;
+        for (int part = 0; part < SeatedPuppet.Plan.Parts.Count; part++)
+            Check(skin.OwnedVertices(part) > 0, $"{when}: part {part} ({SeatedPuppet.Plan.Parts[part].Label}) owns no skin vertices");
+        double gap = skin.RingGap() * 1e6;
+        Check(gap < RingGapMicrometres, $"{when}: joint-ring copies are drawn {gap:F1} micrometres apart (bound {RingGapMicrometres})");
+        GD.Print($"SKIN {skin.VertexCount} vertices, ring gap {gap:F1} um, deform {skin.MedianDeformMicroseconds(1000):F1} us per frame (median of 1000, headless)");
     }
 
     private void CheckPoses(string when)

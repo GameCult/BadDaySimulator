@@ -4,6 +4,7 @@
 # from a run that died harder is refused at the start). Needs a window (RenderCheck draws). Run from anywhere:
 #   GODOT=<godot console exe> bash client/tests/render-mutants.sh              # every claimed mutant must fail its own line
 #   GODOT=<godot console exe> UNCLAIMED=1 bash client/tests/render-mutants.sh  # the unclaimed ones below must still pass (their readings are the record)
+#   ONLY="name name" bash client/tests/render-mutants.sh                        # just those mutants
 # A mutant's edits are old@@old|new@@new pairs in one file; the line it must fail is the RenderCheck check named in its last field.
 #
 # Readings (shipped / mutant) of the claims, from RenderCheck's bounds, which sit at the geometric midpoint of shipped worst and least mutant
@@ -42,6 +43,8 @@ MUTANTS=(
 'linear-filter|ps1.gdshader|filter_nearest, repeat_enable|filter_linear, repeat_enable|mips'
 'glow-unset|Chamber.cs|Look.GlowLightEnergy * glow|0f|glow'
 'carrier-unposed|BodyRenderer.cs|node.Transform = new Transform3D(new Basis(new Quaternion(rx[i]|_ = new Transform3D(new Basis(new Quaternion(rx[i]|figure at lanes'
+'fella-primitives|BodyRenderer.cs|SeatedPuppet.PartOf(ids[i]) is null && PrimitiveOf(|PrimitiveOf(|neck'
+'skin-unposed|FellaSkin.cs|is { } pose) _skin[p] = pose * _inverseCreation[p];|is { } pose) _skin[p] = Transform3D.Identity;|figure at lanes'
 )
 
 UNCLAIMED_MUTANTS=(
@@ -63,6 +66,7 @@ status=0
 if [ "${UNCLAIMED:-}" = 1 ]; then LIST=("${UNCLAIMED_MUTANTS[@]}"); else LIST=("${MUTANTS[@]}"); fi
 for m in "${LIST[@]}"; do
   IFS='|' read -r name file old new want <<<"$m"
+  if [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $name "* ]]; then continue; fi # ONLY="name name": just those
   cp "$file" "$file.orig"
   ACTIVE="$file"
   if ! python - "$file" "$old" "$new" <<'PY'

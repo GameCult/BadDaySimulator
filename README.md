@@ -37,7 +37,7 @@ recorder. It needs sibling checkouts of Lodur and Ymir (`LODUR_ROOT`, else
 - `src/BadDay.Core/Sweep.cs`: consecutive seeds, break-time min/median/max.
 - `src/BadDay.Ymir/BodyPainBox.cs`: the same run on the Ymir ragdoll, with the hand-out time.
 - `src/BadDay.Ymir/SeatedPuppet.cs`: the stool, ground and ragdoll every body is built from (`SeatedBody` holds the world).
-- `src/BadDay.Cli`: `baddaysim`.
+- `src/BadDay.Cli`: `baddaysim` (`baddaysim plan` prints the seated puppet's body plan as JSON: the skeleton `tools/FellaMesh` builds Fella's skin on).
 - `tests/BadDay.Tests`: determinism, break-time, monotonicity and body tests.
 - `tools/PainSweep`: the intensity x suppression table.
 
@@ -64,8 +64,10 @@ session, `BodyPainBoxSession` (create, `Step`, read `Hand` and the world's lanes
 `client/` is a Godot 4.7.2 (mono) project that renders the body run and takes the player's commands: the
 Synaptic Induction Chamber, the dummy strapped to a stool with its right hand in the box. It owns presentation and
 input only. Godot's physics engine is set to Dummy; each 120 Hz physics frame the client calls
-`BodyPainBoxSession.Step()` once and draws Ymir's lanes: one pose-carrying node per stable id (`BodyRenderer`), each holding its body's own
-primitive (a capsule, box or sphere of the lane's size; the figure is a placeholder of primitives until the anatomy meshes come). The look is
+`BodyPainBoxSession.Step()` once and draws Ymir's lanes: one pose-carrying node per stable id (`BodyRenderer`). Fella's 19 parts are drawn by one
+skinned mesh, `FellaSkin`, on those carriers' poses (MakeHuman's androgynous base body fitted to Lodur's plan by `tools/FellaMesh`; the file is
+`client/fella/fella_skin.glb`, CC0, see `client/fella/ATTRIBUTION.md`); every other body holds its own primitive (a capsule, box or sphere of the lane's
+size). The look is
 PlayStation-1-era 3D (lodur:ruling:bds-look-ps1-anatomy): every surface is `ps1.gdshader` (vertices snapped to the line grid, affine texture
 coordinates, unfiltered texels, light, glow and fog per vertex, in raw sRGB arithmetic), and `ps1_post.gdshader` on a full-screen rect under the
 HUD quantises the frame to one colour per block of a 240-line grid (`Look.Lines`, blocks of round(H / 240) pixels anchored at the screen centre)
@@ -75,6 +77,11 @@ Needs the .NET 8+ SDK, cmake and a C compiler (MinGW gcc on Windows), the siblin
 (`..\Lodur`, `..\Ymir`, or `LODUR_ROOT` and `YMIR_ROOT`), and Godot 4.7.2 mono. Nothing in this repository pins or checks the siblings' revisions
 (BDS's graph references no CultLib project, so Ymir's own revision check never runs here); the client was last verified against Lodur 2359142 (the gravity subtree gate) and
 Ymir 1d27114 (its `extern/box3d` submodule initialised).
+
+Fella's skin is generated: `py -3 tools/FellaMesh/build_fella_mesh.py` (Python 3 and numpy; it runs `baddaysim plan` for the skeleton, so the siblings above must build) writes
+`client/fella/fella_skin.glb` from the pinned MakeHuman files in `tools/FellaMesh/input` (see its README for source, commit, licence and SHA-256 sums), and `--check`
+rebuilds and compares bytes. The file is never edited by hand. The macro arguments (`--gender`, `--age`, `--muscle`, `--weight`, `--height`, `--proportions`) default to MakeHuman's neutral
+0.5 (the androgynous base, lodur:ruling:default-fella-androgynous-base); other values are refused until the macrodetails targets are pinned (lodur:follow_up:fella-body-variety).
 
 ```
 dotnet build client/BadDay.Client.csproj     # Lodur, Ymir (cmake) and BDS, plus ymir_box3d.dll, into client/.godot/mono/temp/bin/Debug
@@ -96,11 +103,11 @@ blocks follow ps1.js's 4x4 ordered dither, that a wall at 9 m is fogged to the d
 the blend of its corners' light (per vertex, not per pixel), that a minified checker that carries mipmaps still draws only black and white (nearest, no
 mips), that a probe box's drawn blocks are those of its hull with the corners snapped to a coarse grid (the unsnapped hull differs in 8 blocks), that the
 texel runs of a checker triangle seen at 60 degrees keep equal widths along a scanline (affine), that the chamber at full glow lights the figure by at least
-1.2 levels over dark, and that each dynamic body's lane origin projects within a block of a figure pixel. The check holds at 1280x720 only: at any other
+1.2 levels over dark, that each dynamic body's lane origin projects within a block of a figure pixel, and that the figure has a neck (its width a centimetre below the neck joint over its width at the head, seen from the front). The check holds at 1280x720 only: at any other
 window size it fails "window" before reading a frame (the grid is round(H / 240) px, 216 lines at 1080, and `Camera3D.UnprojectPosition` answers in the
 stretch base's coordinates). Bounds sit at the midpoint of the shipped worst and the least claimed mutant (`lodur:ruling:deterministic-bound-margin`),
 each stated in its comment; `client/tests/render-mutants.sh` applies one set of edits per claim (post off, 12-bit post, dither off, per-pixel blocks, 360 and
-120 lines, snap off, perspective-correct UVs, per-pixel light, fog off, mipmapped and linear textures, glow unwritten, carriers unposed) and wants that
+120 lines, snap off, perspective-correct UVs, per-pixel light, fog off, mipmapped and linear textures, glow unwritten, carriers unposed, the primitive torso drawn again beside the skin, the skin drawn unposed) and wants that
 claim's line to fail; with `UNCLAIMED=1` it runs the edits no line separates (per-pixel fog, so far), whose readings it records. It needs a display.
 
 
@@ -111,7 +118,8 @@ The client's drawing pipeline, one owner per decision (the paragraphs above say 
 | Owner | Inputs | Outputs | Derived state | Forbidden writers |
 |---|---|---|---|---|
 | Ymir (the session's world, ABI 8) | the session's commands and Lodur's torque lanes | pose, shape, stable-id and joint lanes, including each joint's origin in the world (the joint origin lanes) | none the client keeps | the client writes no lane; Ymir never reads the client |
-| `BodyRenderer` | the lanes (kind, size, stable id, pose), each physics frame | one carrier per stable id with one primitive `MeshInstance3D`; `PoseOf`, `InterpolatedPoseOf`, `PuppetCentre` (the union of the dynamic bodies' carrier-placed primitive boxes), `MeshBuilds` | `MeshBuilds`, the smoke's counter: a Reset with the same ids makes no mesh | geometry derived from anything but the lane's size; writing a lane |
+| `BodyRenderer` | the lanes (kind, size, stable id, pose), each physics frame | one carrier per stable id, and one primitive `MeshInstance3D` for each body `SeatedPuppet.PartOf` does not claim; `PoseOf`, `InterpolatedPoseOf`, `PuppetCentre` (the skin's centre), `MeshBuilds` | `MeshBuilds`, the smoke's counter: a Reset with the same ids makes no mesh | geometry derived from anything but the lane's size; a primitive for a body the skin draws
+| `FellaSkin` (a child of `BodyRenderer`) | `fella_skin.glb` (written only by `tools/FellaMesh`), `SeatedPuppet.Plan` (parts and creation frames), the carriers' interpolated poses | one dynamic skinned surface in world space; `Centre`, `MeshBuilds` (1), `RingGap`, `OwnedVertices` | the per-vertex rest data read from the glb at `_Ready`; the posed vertices, rewritten in place every frame | carriers, lanes or the session; any hand edit of the glb; Lodur reading the mesh |; writing a lane |
 | `ps1.gdshader` | `Look`'s numbers and the `ps1_*` globals, the mesh's vertices, normals and UVs | every surface's colour: snapped vertices, affine texels, per-vertex light, glow and fog | none | skinning; a second light model; a `Light3D` |
 | `ps1_post.gdshader` | the frame and `ps1_res` | the framebuffer at the line grid in 15-bit colour with the dither | none | a second resolution owner (viewport scaling, a SubViewport; the project's `canvas_items` stretch, base 1280x720, only scales canvas items and `Camera3D.UnprojectPosition`'s answers, and the pass reads the real pixels, so it owns no resolution) |
 | `Look`, `Main`, `Chamber` | `Look`: constants and textures; `Main`: the window size; `Chamber`: the box's intensity | `Look`: the constant globals and `Look.Ps1` materials; `Main`: `ps1_res` and the post layer; `Chamber`: `ps1_glow_*` | `ps1_res` is the window over `Look.BlockSize`, never set elsewhere | any other writer of a `ps1_*` global |
