@@ -1522,6 +1522,33 @@ public static class Program
             Check(s.Dead && s.DeathCause == Lodur.DeathCause.Consciousness, $"cause {s.DeathCause}");
         }),
 
+        ("a cut during the rage clutches before it thrashes, and the body session never finishes: a throat cut at tick 10800 (the rage from 83.47 s) gives Clutch then Thrash, the thrash 0.2 s or less after the second break of the will, and on every tick past the old end (12300) Finished is false and the tick index grows by one a step", () =>
+        {
+            var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
+            using var s = new OfficeBodySession(p, 1);
+            var head = SeatedPuppet.Plan.PartIndex("Head", Lodur.Side.Center);
+            const int cutTick = 10800, endTick = 12420, oldEnd = 12300;
+            while (s.TickIndex < cutTick) s.Step();
+            Check(s.Goal == OfficeGoal.Rage, $"the goal at the cut is {s.Goal}, not Rage");
+            Check(s.Wound(HitAtPoint(s, head, (0f, -0.0778f, 0.0778f)), WoundTool.Knife), "the knife was refused at the throat");
+            while (s.TickIndex < endTick)
+            {
+                long before = s.TickIndex;
+                s.Step();
+                if (before >= oldEnd) Check(!s.Finished && s.TickIndex == before + 1, $"tick {before}: Finished {s.Finished}, index {s.TickIndex}");
+            }
+            var r = s.Result();
+            var after = r.Timeline.Where(e => e.TimeMs > cutTick * 1000L / Hz).ToList();
+            var changes = after.Where(e => e.Kind == StressEntryKind.GoalChanged).ToList();
+            var breaks = after.Where(e => e.Kind == StressEntryKind.WillBroke).ToList();
+            Check(changes.Count == 2 && changes[0].Goal == OfficeGoal.Clutch && changes[1].Goal == OfficeGoal.Thrash, $"after the cut the goals went {string.Join(", ", changes.Select(e => e.Goal))}");
+            Check(breaks.Count >= 1, "the will did not break a second time");
+            double gap = (changes[1].TimeMs - breaks[0].TimeMs) / 1000.0;
+            Console.WriteLine($"  rage cut: clutch at {changes[0].TimeMs / 1000.0:F2} s, second break at {breaks[0].TimeMs / 1000.0:F3} s, thrash at {changes[1].TimeMs / 1000.0:F3} s ({gap:F3} s after the break)");
+            Check(gap >= 0.0 && gap <= 0.2, $"the thrash came {gap:F3} s after the second break");
+            Check(changes[0].TimeMs < breaks[0].TimeMs - 1000, "the clutch did not come before the second break, which gates the thrash");
+        }),
+
         ("the physiology bleeds into the airway at the body's gain: a throat cut at Gain 1 and at Gain 10 fills the airway, in its first tenth of a second, at least 3.16 times as far at Gain 10", () =>
         {
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
