@@ -590,6 +590,26 @@ public static class Program
             Check(Run("run", "--seed", "5", "--pay", "20") != Run("run", "--seed", "5", "--pay", "400"), "--pay changed nothing");
         }),
 
+        ("plan prints the seated puppet's 19 parts and 18 joints as JSON, and PartOf claims exactly the parts' stable ids", () =>
+        {
+            var w = new StringWriter();
+            Check(BadDay.Cli.Program.Execute(new[] { "plan" }, w) == 0, "plan did not succeed");
+            using var json = System.Text.Json.JsonDocument.Parse(w.ToString());
+            var plan = SeatedPuppet.Plan;
+            var parts = json.RootElement.GetProperty("parts");
+            var joints = json.RootElement.GetProperty("joints");
+            Check(parts.GetArrayLength() == 19 && joints.GetArrayLength() == 18, $"plan has {parts.GetArrayLength()} parts and {joints.GetArrayLength()} joints");
+            var neck = joints.EnumerateArray().Single(j => j.GetProperty("label").GetString() == "Neck").GetProperty("anchor");
+            var want = plan.Joints[plan.JointIndex("Neck")].Anchor;
+            Check(neck[1].GetSingle() == want.Y && neck[0].GetSingle() == want.X && neck[2].GetSingle() == want.Z, "the neck anchor is not the plan's");
+            for (ulong id = 0; id < SeatedPuppet.FirstStableId + 25; id++)
+            {
+                bool part = id >= SeatedPuppet.FirstStableId && id < SeatedPuppet.FirstStableId + 19;
+                var owner = SeatedPuppet.PartOf(id);
+                Check(part ? owner == (int)(id - SeatedPuppet.FirstStableId) : owner is null, $"PartOf({id}) is {owner}");
+            }
+        }),
+
         ("office: a stressor is silent before its onset, on for its duration, and back every period", () =>
         {
             var printer = Cause.Office.Stressors.Single(s => s.Id == "printer"); // 5 s on, 8 s period, 1 s long, 0.25

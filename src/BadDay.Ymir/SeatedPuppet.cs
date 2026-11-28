@@ -17,6 +17,10 @@ public static class SeatedPuppet
     /// <summary>The stable id of the first of Fella's parts: a part's stable id is this plus its ordinal. The ground is 1 and the stool 2.</summary>
     public const ulong FirstStableId = 100;
 
+    /// <summary>The part ordinal of Fella's body with this stable id (<see cref="FirstStableId"/> plus the ordinal), or null for any other body: the one rule from stable id to part.</summary>
+    public static int? PartOf(ulong stableId) =>
+        stableId >= FirstStableId && stableId - FirstStableId < (ulong)Plan.Parts.Count ? (int)(stableId - FirstStableId) : null;
+
     /// <summary>Bodies, joints and sensors a world needs for <see cref="Build"/>: the ragdoll, the ground and the stool, the weld, and the airway sensors (the world must also have a particle system for them).</summary>
     public static (int Bodies, int Joints, int Sensors) Needs => (Ragdoll.Needs(Plan).Bodies + 2, Ragdoll.Needs(Plan).Joints + 1, Ragdoll.Needs(Plan).Sensors);
 

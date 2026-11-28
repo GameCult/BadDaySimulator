@@ -12,6 +12,7 @@ public static class Program
     private const string Usage = """
         baddaysim: the Synaptic Induction Chamber (the pain box)
 
+        baddaysim plan                            the seated puppet's body plan as JSON: parts and joints in their creation pose (the mesh build's skeleton)
         baddaysim run   --seed N [options]        one run, full timeline
         baddaysim run   --seed N --body [options] the same run on the Ymir ragdoll, with the hand-out time
         baddaysim sweep --seed N --count M [options]   seeds N..N+M-1, break-time summary
@@ -52,6 +53,7 @@ public static class Program
 
     public static int Execute(string[] args, System.IO.TextWriter output)
     {
+        if (args.Length == 1 && args[0] == "plan") { output.Write(PlanJson()); return 0; }
         if (args.Length == 0 || (args[0] != "run" && args[0] != "sweep" && args[0] != "office" && args[0] != "office-sweep"))
             throw new ArgumentException("expected 'run', 'sweep', 'office' or 'office-sweep'");
         var opts = ParseOptions(args);
@@ -96,6 +98,17 @@ public static class Program
         output.WriteLine($"runs {sweep.Runs}: broke {sweep.Broke}, box disabled {sweep.BoxDisabled}, endured {sweep.Endured}; " +
                          $"time to break min/median/max ms: {Fmt(sweep.MinBreakMs)}/{Fmt(sweep.MedianBreakMs)}/{Fmt(sweep.MaxBreakMs)}");
         return 0;
+    }
+
+    /// <summary>SeatedPuppet.Plan as JSON, floats in round-trip form: per part label, side, creation position and rotation (x, y, z, w); per joint label, side, parent and child part ordinals and anchor.</summary>
+    private static string PlanJson()
+    {
+        string F(float v) => v.ToString("R", CultureInfo.InvariantCulture);
+        string V((float X, float Y, float Z) v) => $"[{F(v.X)}, {F(v.Y)}, {F(v.Z)}]";
+        var plan = SeatedPuppet.Plan;
+        var parts = plan.Parts.Select(p => $"    {{\"label\": \"{p.Label}\", \"side\": \"{p.Side}\", \"position\": {V(p.Position)}, \"rotation\": [{F(p.Rotation.X)}, {F(p.Rotation.Y)}, {F(p.Rotation.Z)}, {F(p.Rotation.W)}]}}");
+        var joints = plan.Joints.Select(j => $"    {{\"label\": \"{j.Label}\", \"side\": \"{j.Side}\", \"parent\": {j.Parent}, \"child\": {j.Child}, \"anchor\": {V(j.Anchor)}}}");
+        return "{\n  \"parts\": [\n" + string.Join(",\n", parts) + "\n  ],\n  \"joints\": [\n" + string.Join(",\n", joints) + "\n  ]\n}\n";
     }
 
     private static int ExecuteOffice(bool sweep, ulong seed, Dictionary<string, string> opts, System.IO.TextWriter output)
