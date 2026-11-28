@@ -22,7 +22,7 @@ public partial class RenderCheck : Node
     private const double WatchdogSeconds = 120;
     // Bounds (shipped worst, least claimed mutant, separation) are in each check's comment.
     private const int OddLevelFloor = 1245, FigureMisses = 1, DitherBlocks = 160;
-    private const double NeckBound = 1.0, FogLevels = 6.6, LightLevels = 11, MipPercent = 6.5;
+    private const double SymmetryMillimetres = 85, NeckBound = 1.14, FogLevels = 6.6, LightLevels = 11, MipPercent = 6.5;
 
     private readonly List<string> _failures = new();
     private Main _main = null!;
@@ -89,6 +89,7 @@ public partial class RenderCheck : Node
         CheckFigureWhereLanesAre(await Capture("play-clear"));
         _main.Chamber.Volume.Visible = true;
         await CheckNeck();
+        CheckSymmetry();
 
         var home = _camera.Transform;
         _camera.Distance = 0.9f;
@@ -195,8 +196,8 @@ public partial class RenderCheck : Node
     /// <summary>
     /// A real neck is drawn. The chamber is hidden and the camera put straight in front of the head, 1.2 m away; the reading is the figure pixels on the row
     /// 1 cm below the projected neck joint (the torso's pose times the joint's local anchor) over the figure pixels on the row through the projected head origin:
-    /// how wide the figure is at the neck against how wide at the head. Bound 1.0 = sqrt(0.58 x 1.72): shipped 0.58 (63 px over 108), the least claimed mutant
-    /// fella-primitives (the primitive box torso, 0.30 m wide, drawn again beside the skin) 1.72 (186 px over 108), separation 3.0; skin-unposed reads 0.54.
+    /// how wide the figure is at the neck against how wide at the head. Bound 1.14 = sqrt(0.73 x 1.79): shipped 0.73 (66 px over 90), the least claimed mutant
+    /// fella-primitives (the primitive box torso, 0.30 m wide, drawn again beside the skin) 1.79 (183 px over 102), separation 2.45; skin-unposed reads 0.72.
     /// </summary>
     private async Task CheckNeck()
     {
@@ -229,6 +230,17 @@ public partial class RenderCheck : Node
         Check(atHead > 0 && ratio <= NeckBound, "neck", $"the figure is {atNeck} px wide a centimetre below the neck joint and {atHead} px wide at the head: the ratio {ratio:0.##} is over {NeckBound}");
         _camera.Transform = home;
         _main.Chamber.Visible = true;
+    }
+
+    /// <summary>
+    /// The rest-pose mesh is left-right symmetric: no rendering, a count of the skin's own vertices (<see cref="FellaSkin.MirrorGap"/>, millimetres).
+    /// Bound 85 mm = sqrt(55.9 x 128.9): shipped 55.9 mm, the least claimed mutant skin-lopsided (the left half's vertices stretched 1.5 times in x) 128.9 mm, separation 2.3.
+    /// </summary>
+    private void CheckSymmetry()
+    {
+        double gap = _main.Bodies.Skin.MirrorGap() * 1000.0;
+        Report("symmetry: largest mirror distance of the rest mesh in mm", gap, SymmetryMillimetres);
+        Check(gap <= SymmetryMillimetres, "symmetry", $"the rest mesh is {gap:0.#} mm from its mirror image at worst (bound {SymmetryMillimetres})");
     }
 
     /// <summary>

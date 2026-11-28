@@ -44,6 +44,7 @@ MUTANTS=(
 'glow-unset|Chamber.cs|Look.GlowLightEnergy * glow|0f|glow'
 'carrier-unposed|BodyRenderer.cs|node.Transform = new Transform3D(new Basis(new Quaternion(rx[i]|_ = new Transform3D(new Basis(new Quaternion(rx[i]|figure at lanes'
 'fella-primitives|BodyRenderer.cs|SeatedPuppet.PartOf(ids[i]) is null && PrimitiveOf(|PrimitiveOf(|neck'
+'skin-lopsided|FellaSkin.cs|positions.Add(v[i]);|positions.Add(v[i].X > 0f ? new Vector3(1.5f * v[i].X, v[i].Y, v[i].Z) : v[i]);|symmetry'
 'skin-unposed|FellaSkin.cs|is { } pose) _skin[p] = pose * _inverseCreation[p];|is { } pose) _skin[p] = Transform3D.Identity;|figure at lanes'
 )
 

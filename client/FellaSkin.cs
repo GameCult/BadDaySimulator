@@ -60,6 +60,23 @@ public partial class FellaSkin : Node3D
         return worst;
     }
 
+    /// <summary>
+    /// How far the rest pose is from left-right symmetric, in metres: the largest distance from any rest vertex mirrored across x = 0 to the nearest rest vertex.
+    /// The plan is symmetric about x = 0, so a lopsided build shows here whatever the pose.
+    /// </summary>
+    public float MirrorGap()
+    {
+        float worst = 0f;
+        foreach (var v in _rest)
+        {
+            float nearest = float.MaxValue;
+            var mirrored = new Vector3(-v.X, v.Y, v.Z);
+            foreach (var u in _rest) nearest = Math.Min(nearest, mirrored.DistanceTo(u));
+            worst = Math.Max(worst, nearest);
+        }
+        return worst;
+    }
+
     public override void _Ready()
     {
         var plan = SeatedPuppet.Plan;
