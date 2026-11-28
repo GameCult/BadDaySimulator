@@ -1567,9 +1567,9 @@ public static class Program
             Check(rise[0] > 0.0 && ratio >= 3.16, $"the airway's first tenth of a second held {rise[0] * 1e6:F3} mL at gain 1 and {rise[1] * 1e6:F3} mL at gain 10 (ratio {ratio:F3}): the physiology did not bleed at the body's gain");
         }),
 
-        ("a cut throat conserves liquid over the whole cycle at Gain 1 and Gain 10: every tick the world's liquid, the airway's and the expulsion backlog, less what the airway owes, the drops the wounds shed and the gain times the blood bled into the airway, is what it started as (1.76e-5 of the world's liquid), and at Gain 10 more than a litre is coughed and drained", () =>
+        ("a cut throat conserves liquid over the whole cycle at Gain 1 and Gain 10: every tick the world's liquid, the airway's and the expulsion backlog, less what the airway owes, the drops the wounds shed and the gain times the blood bled into the airway, is what it started as (1.24e-5 of the world's liquid), and at Gain 10 more than a litre is coughed and drained", () =>
         {
-            // Bound by deterministic-bound-margin, as the fraction of the world's liquid over the 1e-9 m^3 constant (read once the world holds 100 mL): shipped worst 6.68e-6 (Gain 10; 5.66e-8 at Gain 1), least mutant 4.62e-5 (the bled-in term 5e-5 short, at Gain 1; 8.41e-5 at Gain 10), separation 6.9, bound sqrt(6.68e-6 x 4.62e-5) = 1.76e-5 (the bound it replaces was 2e-5). Leaving the gain out of the bled-in term is caught by the constant at the first tick.
+            // Bound by deterministic-bound-margin, as the fraction of the world's liquid over the 1e-9 m^3 constant (read once the world holds 100 mL), each gain run to 1 s past death (167 s at Gain 10, 381 s at Gain 1): shipped worst 3.34e-6 (Gain 10; 2.68e-7 at Gain 1), least mutant 4.62e-5 (the bled-in term 5e-5 short, at Gain 1; 8.41e-5 at Gain 10), separation 13.8, bound sqrt(3.34e-6 x 4.62e-5) = 1.24e-5 (the bound it replaces was 1.76e-5, derived over a Gain 1 run cut at 200 s, before the Gain 1 death). Leaving the gain out of the bled-in term is caught by the constant at the first tick.
             var p = new StressParameters { TickSeconds = OfficeBody.TickSeconds };
             var head = SeatedPuppet.Plan.PartIndex("Head", Lodur.Side.Center);
             foreach (double gain in new[] { 1.0, 10.0 })
@@ -1578,19 +1578,23 @@ public static class Program
                 Check(s.Wound(HitAt(s, head, (0f, -0.0778f, 0.0778f)), WoundTool.Knife), "the knife was refused at the throat");
                 double c0 = WorldLiquid(s) + s.AirwayLiquid, bledIn = 0.0, worst = 0.0, worstRel = 0.0, mutantRel = 0.0;
                 long worstTick = 0;
-                for (int t = 0; t < 200 * Hz; t++) // death comes at 175 s at Gain 10 (380 s at Gain 1): the whole bleed, cough and drain
+                long deadTick = -1;
+                for (int t = 0; t < 420 * Hz; t++) // to 1 s past death (167 s at Gain 10, 381 s at Gain 1): the whole bleed, cough and drain
                 {
                     s.Step();
+                    if (s.Dead && deadTick < 0) deadTick = s.TickIndex;
+                    if (deadTick >= 0 && s.TickIndex > deadTick + Hz) break;
                     bledIn += OfficeBody.TickSeconds * gain * s.AirwayBleed;
                     double w = WorldLiquid(s);
                     double rest = w + s.AirwayLiquid + s.ExpelBacklog - s.AirwayOwed - (s.BloodEmitted - s.BloodExpelled) - c0;
                     double residual = rest - bledIn;
-                    double bound = 1.76e-5 * w + 1e-9;
+                    double bound = 1.24e-5 * w + 1e-9;
                     mutantRel = Math.Max(mutantRel, Over(rest - (1.0 - 5e-5) * bledIn, w));
                     worstRel = Math.Max(worstRel, Over(residual, w));
                     if (Math.Abs(residual) > worst) { worst = Math.Abs(residual); worstTick = s.TickIndex; }
                     Check(Math.Abs(residual) <= bound, $"gain {gain}, tick {s.TickIndex}: residual {residual * 1e6:F4} mL against a bound of {bound * 1e6:F4} mL (world {w * 1e6:F1} mL, airway {s.AirwayLiquid * 1e6:F1}, backlog {s.ExpelBacklog * 1e6:F1}, owed {s.AirwayOwed * 1e6:F2})");
                 }
+                Check(s.Dead, $"gain {gain}: alive at the 420 s cap");
                 if (gain > 1.0) Check(s.BloodExpelled > 1e-3, $"gain {gain}: only {s.BloodExpelled * 1e6:F0} mL was coughed and drained as drops");
                 Console.WriteLine($"  throat at gain {gain}: coughed and drained {s.BloodExpelled * 1e6:F0} mL as drops, {s.ExpelBacklog * 1e6:F0} mL waiting, owed {s.AirwayOwed * 1e6:F3} mL, worst residual {worst * 1e6:F4} mL ({worstRel:E2} of the world) at tick {worstTick}; the bled-in term 5e-5 short: {mutantRel:E2}");
             }
