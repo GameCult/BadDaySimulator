@@ -206,8 +206,9 @@ public partial class Smoke : Node
 
         // The bars are the session's will and arousal, to the bit, once a frame has drawn them (stepping paused so the session holds still).
         // Run on until the cut has cost his will, so a bar bound to resolve instead shows a different number.
-        await UntilTick(1800);
-        Check(office.Will < office.Resolve - 0.1, $"will {office.Will} and resolve {office.Resolve} are too close at tick 1800 for the bars to tell them apart");
+        // The knife is severity 20 (the arm bleeds for 191 s), so the will falls behind resolve later than tick 1800: run to the first tick it has, within the break.
+        while (office.Will >= office.Resolve - 0.1 && office.TickIndex < 12000) await Frame();
+        Check(office.Will < office.Resolve - 0.1, $"will {office.Will} and resolve {office.Resolve} are too close at tick {office.TickIndex} for the bars to tell them apart");
         _main.SetPhysicsProcess(false);
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
